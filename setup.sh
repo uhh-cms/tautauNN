@@ -55,8 +55,7 @@ action() {
     # minimal local software setup
     #
 
-    # update paths and flags
-
+    # increase stack size
     ulimit -s unlimited
 
     # conda base environment
