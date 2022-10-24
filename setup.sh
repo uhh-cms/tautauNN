@@ -101,6 +101,7 @@ EOF
         pip install \
             'tensorflow==2.10.*' \
             'awkward==1.10.*' \
+	    'ipython' \
             matplotlib \
             numpy \
             livelossplot \
