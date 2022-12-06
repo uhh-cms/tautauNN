@@ -102,6 +102,7 @@ EOF
             'tensorflow==2.10.*' \
             'awkward==1.10.*' \
 	    'ipython' \
+	    'uproot4' \
             matplotlib \
             numpy \
             livelossplot \
