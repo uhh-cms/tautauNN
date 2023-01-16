@@ -394,7 +394,6 @@ def training_loop(
         # helpers to add tensors and metrics to tensorboard for monitoring
         tb_log_dir = lambda kind: tensorboard_dir and os.path.join(tensorboard_dir, kind)
         tb_train_add, tb_train_flush = create_tensorboard_callbacks(tb_log_dir("train"))
-        tb_debug_add, tb_debug_flush = create_tensorboard_callbacks(tb_log_dir("debug"))
         tb_valid_add, tb_valid_flush = create_tensorboard_callbacks(tb_log_dir("valid"))
         tb_best_add, tb_best_flush = create_tensorboard_callbacks(tb_log_dir("best"))
 
@@ -429,13 +428,6 @@ def training_loop(
                     flush()
                 return is_best
             return metrics[f"loss_mse_valid"] == metrics["mse_valid_best"]
-        elif kind == "debug":
-            if tensorboard_dir is not None:
-                tb_debug_add("scalar", "optimizer/learning_rate", learning_rate, step=step)
-                tb_debug_add("scalar", "loss/total", tf.reduce_mean(total_loss), step=step)
-                for key, l in losses.items():
-                    tb_debug_add("scalar", "loss/" + key, tf.reduce_mean(l), step=step)
-                tb_debug_flush()
         else:
             if tensorboard_dir is not None:
                 tb_train_add("scalar", "optimizer/learning_rate", learning_rate, step=step)
@@ -488,17 +480,6 @@ def training_loop(
             do_log = step % log_every == 0
             if do_log:
                 update_metrics(bar, "train", step, targets, predictions, losses, loss)
-                predictions_debug = model([float_inputs, int_inputs], training=False)
-                losses_debug = {
-                    name: loss_fn(
-                        targets,
-                        predictions_debug[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions,
-                        eventweights,
-                    )
-                    for name, loss_fn in loss_fns.items()
-                }
-                loss_debug = tf.add_n(list(losses_debug.values()))
-                update_metrics(bar, "debug", step, targets, predictions_debug, losses_debug, loss_debug)
 
             # validation
             do_validate = step % validate_every == 0
