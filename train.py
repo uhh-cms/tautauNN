@@ -2,10 +2,8 @@
 # coding: utf-8
 import tensorflow as tf
 import numpy as np
-from tqdm import tqdm
 import sys
 import os
-import gc
 import functools
 from operator import mul
 from collections import defaultdict
@@ -13,9 +11,10 @@ from util import load_sample, phi_mpi_to_pi, split_train_validation_mask, calc_n
 from custom_layers import CustomEmbeddingLayer, CustomOutputScalingLayer
 from multi_dataset import MultiDataset
 
-def main(basepath                   =   "/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v2_31Aug22",
+def main(model_name                 =   "test",
+         basepath                   =   "/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v2_31Aug22",
                                         # "/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_llr_2018_forTraining",
-        tensorboard_dir            =   "/tmp/tensorboard",
+         tensorboard_dir            =   "/tmp/tensorboard",
          samples                    =   {
                                         "SKIM_GGHH_SM": (1./35, 1.), # (batch fraction weight, event weight factor)
                                         "SKIM_ggF_Radion_m300": (1./35, 1.),
@@ -148,7 +147,6 @@ def main(basepath                   =   "/nfs/dust/cms/user/kramerto/hbt_resonan
          l2_norm                    =   50.0,
          dropout_rate               =   0,
          batch_size                 =   2048,
-         epochs                     =   2000,
          train_valid_fraction       =   0.75,
          train_valid_seed           =   0,
          initial_learning_rate      =   0.0025,
@@ -268,7 +266,7 @@ def main(basepath                   =   "/nfs/dust/cms/user/kramerto/hbt_resonan
                                         )
 
         model.set_weights(best_weights)
-        model.save("models/best_model")
+        model.save(f"models/{model_name}")
 
 def create_dataset(float_input_vecs, int_input_vecs, target_vecs, event_weights, shuffle=False, repeat=1, batch_size=1024, seed=None, **kwargs):
     nevents =  float_input_vecs.shape[0]
@@ -394,7 +392,6 @@ def training_loop(
     loss_fns,
     optimizer,
     learning_rate,
-    max_steps=10000,
     log_every=10,
     validate_every=100,
     tensorboard_dir = None,
@@ -415,15 +412,6 @@ def training_loop(
         for kind in ["train", "valid"]:
             metrics[f"loss_{name}_{kind}"] = 0
 
-    # progress bar format
-    fmt = ["{percentage:3.0f}% {bar} Step: {postfix[0][step]}/{total}, Validations: {postfix[0][step_val]}, Early stopping counter: {postfix[0][early_stopping_counter]}, Learning rate: {postfix[0][learning_rate]:.5f}"]
-    for name in loss_fns:
-        if "mse" in name:
-            fmt.append(f"Loss '{name}': {{postfix[0][loss_{name}_train]:.4f}} | {{postfix[0][loss_{name}_valid]:.4f}} | {{postfix[0][mse_valid_best]:.4f}}")
-        else:
-            fmt.append(f"Loss '{name}': {{postfix[0][loss_{name}_train]:.4f}} | {{postfix[0][loss_{name}_valid]:.4f}}")
-    fmt = " --- ".join(fmt)
-
     if tensorboard_dir is not None:
         # helpers to add tensors and metrics to tensorboard for monitoring
         tb_log_dir = lambda kind: tensorboard_dir and os.path.join(tensorboard_dir, kind)
@@ -435,7 +423,6 @@ def training_loop(
     # helper to update metrics
     def update_metrics(kind, step, losses, total_loss):
 
-        # update bar data
         metrics["step"] = step + 1
         for name, loss in losses.items():
             metrics[f"loss_{name}_{kind}"] = tf.reduce_mean(loss)
@@ -486,83 +473,87 @@ def training_loop(
     # start the loop
     early_stopping_counter = 0
     message = ""
-    with tqdm(total=max_steps, bar_format=fmt, postfix=[metrics]) as bar:
-        losses_avg = defaultdict(list)
-        loss_avg = []
-        for step, (float_inputs, int_inputs, targets, event_weights) in enumerate(dataset_train):
+    losses_avg = defaultdict(list)
+    loss_avg = []
+    for step, (float_inputs, int_inputs, targets, event_weights) in enumerate(dataset_train):
+        if step == 0 and tensorboard_dir is not None:
+            tb_train_add("trace_on", graph=True)
+            tb_train_add("trace_export", "graph", step=step)
+            tb_train_add("trace_off")
+
+        # do a train step
+        with tf.GradientTape() as tape:
+            # get predictions
+            predictions = model([float_inputs, int_inputs], training=True)
+
+            # compute all losses and combine them into the total loss
+
+            losses = {
+                name: loss_fn(
+                    targets,
+                    predictions[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions,
+                    event_weights,
+                )
+                for name, loss_fn in loss_fns.items()
+            }
             
-            if step == 0 and tensorboard_dir is not None:
-                tb_train_add("trace_on", graph=True)
-                tb_train_add("trace_export", "graph", step=step)
-                tb_train_add("trace_off")
+            loss = tf.add_n(list(losses.values()))
 
-            # do a train step
-            with tf.GradientTape() as tape:
-                # get predictions
-                predictions = model([float_inputs, int_inputs], training=True)
+        # validation
+        do_validate = step % validate_every == 0
+        if do_validate:
+            float_inputs_valid, int_inputs_valid, targets_valid, event_weights_valid = next(iter(dataset_valid))
 
-                # compute all losses and combine them into the total loss
+            predictions_valid = model([float_inputs_valid, int_inputs_valid], training=False)
+            losses_valid = {
+                name: loss_fn(
+                    targets_valid,
+                    predictions_valid[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions_valid,
+                    event_weights_valid,
+                )
+                for name, loss_fn in loss_fns.items()
+            }
+            total_loss_valid = tf.add_n(list(losses_valid.values()))
+            is_best = update_metrics("valid", step, losses_valid, total_loss_valid)
 
-                losses = {
-                    name: loss_fn(
-                        targets,
-                        predictions[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions,
-                        event_weights,
-                    )
-                    for name, loss_fn in loss_fns.items()
-                } 
-                
-                loss = tf.add_n(list(losses.values()))
+            # store the best model
+            if is_best:
+                best_weights = model.get_weights()
+                early_stopping_counter = 0
+            else:
+                early_stopping_counter += 1
+                if early_stopping_counter == learning_rate_patience:
+                    learning_rate.assign(learning_rate/2)
+                if early_stopping_counter > early_stopping_patience:
+                    message = f"early stopping: validation loss did not improve within the last {early_stopping_patience} validation steps"
+                    break
 
-            # validation
-            do_validate = step % validate_every == 0
-            if do_validate:
-                float_inputs_valid, int_inputs_valid, targets_valid, event_weights_valid = next(iter(dataset_valid))
+        # get and propagate gradients
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
-                predictions_valid = model([float_inputs_valid, int_inputs_valid], training=False)
-                losses_valid = {
-                    name: loss_fn(
-                        targets_valid,
-                        predictions_valid[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions_valid,
-                        event_weights_valid,
-                    )
-                    for name, loss_fn in loss_fns.items()
-                }
-                total_loss_valid = tf.add_n(list(losses_valid.values()))
-                is_best = update_metrics("valid", step, losses_valid, total_loss_valid)
+        for name, loss_tensor in losses.items():
+            losses_avg[name].append(loss_tensor)
 
-                # store the best model
-                if is_best:
-                    best_weights = model.get_weights()
-                    early_stopping_counter = 0
-                else:
-                    early_stopping_counter += 1
-                    if early_stopping_counter == learning_rate_patience:
-                        learning_rate.assign(learning_rate/2)
-                    if early_stopping_counter > early_stopping_patience:
-                        message = f"early stopping: validation loss did not improve within the last {early_stopping_patience} validation steps"
-                        break
+        loss_avg.append(loss)
+        # logging
+        do_log = step % log_every == 0
+        if do_log:
+            update_metrics("train_batch", step,  losses, loss)
+            update_metrics("train", step,  losses_avg, loss_avg)
+            losses_avg.clear()
+            del loss_avg[:]
 
-            # get and propagate gradients
-            gradients = tape.gradient(loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-            for name, loss_tensor in losses.items():
-                losses_avg[name].append(loss_tensor)
-
-            loss_avg.append(loss)
-            # logging
-            do_log = step % log_every == 0
-            if do_log:
-                update_metrics("train_batch", step,  losses, loss)
-                update_metrics("train", step,  losses_avg, loss_avg)
-                losses_avg.clear()
-                del loss_avg[:]
-
-            bar.update()
-
-        else:
-            message = "dataset exhausted, stopping training"
+        update = [f"Step: {metrics['step']}, Validations: {metrics['step_val']}, Early stopping counter: {metrics['early_stopping_counter']}, Learning rate: {metrics['learning_rate']:.5f}"]
+        for name in loss_fns:
+            if "mse" in name:
+                update.append(f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f} | {metrics[f'mse_valid_best']:.4f}")
+            else:
+                update.append(f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f}")
+        update = " --- ".join(update)
+        print(update, end="\r")
+    else:
+        message = "dataset exhausted, stopping training"
     
     print(message)
     print("validation metrics of the best model:")
