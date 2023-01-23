@@ -154,6 +154,7 @@ def main(model_name="test",
          learning_rate_patience=10,
          early_stopping_patience=20,
          output_scaling=True,
+         use_batch_fraction=False,
          ):
 
     device = get_device(device="gpu", num_device=0)
@@ -168,6 +169,8 @@ def main(model_name="test",
     target_valid = []
 
     batch_weights = []
+
+    nevents = []
 
     event_weights_train = []
     event_weights_valid = []
@@ -202,6 +205,8 @@ def main(model_name="test",
 
         train_mask = split_train_validation_mask(len(event_weights), fraction=train_valid_fraction, seed=train_valid_seed)
 
+        nevents.append(len(train_mask))
+
         float_input_train.append(float_input_vecs[train_mask])
         float_input_valid.append(float_input_vecs[~train_mask])
 
@@ -225,11 +230,26 @@ def main(model_name="test",
         target_means = None
         target_stds = None
 
-    dataset_train = MultiDataset(zip(zip(float_input_train, int_input_train, target_train, event_weights_train), batch_weights), batch_size, True, True)
-    dataset_valid = MultiDataset(zip(zip(float_input_valid, int_input_valid, target_valid, event_weights_valid), batch_weights), batch_size, False, False)
-
     float_input_means = np.mean(float_input_means, axis=0)
     float_input_vars = np.mean(float_input_vars, axis=0)
+
+    if use_batch_fraction:
+        dataset_train = MultiDataset(zip(zip(float_input_train, int_input_train, target_train, event_weights_train), batch_weights), batch_size, True, True)
+        dataset_valid = MultiDataset(zip(zip(float_input_valid, int_input_valid, target_valid, event_weights_valid), batch_weights), batch_size, False, False)
+    else:
+        float_input_train = np.concatenate(float_input_train)
+        float_input_valid = np.concatenate(float_input_valid)
+        int_input_train = np.concatenate(int_input_train)
+        int_input_valid = np.concatenate(int_input_valid)
+        target_train = np.concatenate(target_train)
+        target_valid = np.concatenate(target_valid)
+        event_weights_train = np.concatenate([event_weights_train[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))])
+        event_weights_valid = np.concatenate([event_weights_valid[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))])
+        avg_weight = np.mean(np.concatenate([event_weights_train, event_weights_valid]))
+        event_weights_train /= avg_weight
+        event_weights_valid /= avg_weight
+        dataset_train = create_dataset(float_input_train, int_input_train, target_train, event_weights_train, shuffle=True, repeat=-1, batch_size=batch_size, seed=None)
+        dataset_valid = create_dataset(float_input_valid, int_input_valid, target_valid, event_weights_valid, shuffle=False, repeat=1, batch_size=-1, seed=None)
 
     with device:
         model, regularization_weights = create_model(len(float_inputs),
