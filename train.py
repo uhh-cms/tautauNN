@@ -427,6 +427,7 @@ def training_loop(
     if tensorboard_dir is not None:
         # helpers to add tensors and metrics to tensorboard for monitoring
         tb_log_dir = lambda kind: tensorboard_dir and os.path.join(tensorboard_dir, kind)
+        tb_train_batch_add, tb_train_batch_flush = create_tensorboard_callbacks(tb_log_dir("train_batch"))
         tb_train_add, tb_train_flush = create_tensorboard_callbacks(tb_log_dir("train"))
         tb_valid_add, tb_valid_flush = create_tensorboard_callbacks(tb_log_dir("valid"))
         tb_best_add, tb_best_flush = create_tensorboard_callbacks(tb_log_dir("best"))
@@ -459,6 +460,17 @@ def training_loop(
                     flush()
                 return is_best
             return metrics[f"loss_mse_valid"] == metrics["mse_valid_best"]
+        elif kind == "train_batch":
+            if tensorboard_dir is not None:
+                tb_train_batch_add("scalar", "optimizer/learning_rate", learning_rate, step=step)
+                tb_train_batch_add("scalar", "loss/total", tf.reduce_mean(total_loss), step=step)
+                for key, l in losses.items():
+                    tb_train_batch_add("scalar", "loss/" + key, tf.reduce_mean(l), step=step)
+                for v in model.trainable_variables:
+                    tb_train_batch_add("histogram", "weight/{}".format(v.name), v, step=step)
+                for v, g in zip(model.trainable_variables, gradients):
+                    tb_train_batch_add("histogram", "gradient/{}".format(v.name), g, step=step)
+                tb_train_batch_flush()
         else:
             if tensorboard_dir is not None:
                 tb_train_add("scalar", "optimizer/learning_rate", learning_rate, step=step)
@@ -542,6 +554,7 @@ def training_loop(
             # logging
             do_log = step % log_every == 0
             if do_log:
+                update_metrics("train_batch", step,  losses, loss)
                 update_metrics("train", step,  losses_avg, loss_avg)
                 losses_avg.clear()
                 del loss_avg[:]
