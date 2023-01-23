@@ -282,7 +282,7 @@ def main(model_name="test",
                                         learning_rate,
                                         log_every=10,
                                         validate_every=100,
-                                        tensorboard_dir=tensorboard_dir,
+                                        tensorboard_dir=os.path.join(tensorboard_dir, model_name),
                                         early_stopping_patience=early_stopping_patience,
                                         learning_rate_patience=learning_rate_patience,
                                         )
@@ -448,7 +448,8 @@ def training_loop(
     if tensorboard_dir is not None:
 
         # helpers to add tensors and metrics to tensorboard for monitoring
-        def tb_log_dir(kind): return tensorboard_dir and os.path.join(tensorboard_dir, kind)
+        def tb_log_dir(kind):
+            return tensorboard_dir and os.path.join(tensorboard_dir, kind)
 
         tb_train_batch_add, tb_train_batch_flush = create_tensorboard_callbacks(tb_log_dir("train_batch"))
         tb_train_add, tb_train_flush = create_tensorboard_callbacks(tb_log_dir("train"))
