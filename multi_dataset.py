@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import tensorflow as tf
 
+
 class MultiDataset(object):
 
     def __init__(
@@ -35,22 +36,21 @@ class MultiDataset(object):
         # determine batch sizes per dataset
         self.batch_sizes = []
         sum_weights = sum(self.weights)
-        
+
         carry = 0.0
         for weight in self.weights:
             bs = weight / sum_weights * batch_size - carry
             bs_int = int(round(bs))
             carry = bs_int - bs
             self.batch_sizes.append(bs_int)
-            
+
         if batch_size != sum(self.batch_sizes):
             print(f"batch size is {sum(self.batch_sizes)} but should be {batch_size}")
-            from IPython import embed; embed()
-                
+
         self.datasets = [
-                dataset.batch(bs_size)
-                for dataset, bs_size in zip(self.datasets, self.batch_sizes)
-            ]
+            dataset.batch(bs_size)
+            for dataset, bs_size in zip(self.datasets, self.batch_sizes)
+        ]
 
         # shuffling
         if shuffle:
@@ -61,9 +61,9 @@ class MultiDataset(object):
 
         # repitition
         self.datasets = [
-                dataset.repeat(-1 if repeat else 1)
-                for dataset in self.datasets
-            ]
+            dataset.repeat(-1 if repeat else 1)
+            for dataset in self.datasets
+        ]
 
     @property
     def n_datasets(self):
@@ -93,10 +93,7 @@ class MultiDataset(object):
             if do_break:
                 break
 
-            yield tuple(
-                tf.concat([batch[i] for batch in dataset_batches], axis=0)
-                for i in range(self.tuple_length)
-            )
+            yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0)for i in range(self.tuple_length))
 
             self.batches_seen += 1
 
