@@ -1,7 +1,7 @@
 # coding: utf-8
 
 from __future__ import annotations
-
+import math
 import numpy as np
 import tensorflow as tf
 
@@ -12,11 +12,14 @@ class MultiDataset(object):
         self,
         data: tuple[tuple[np.array] | np.array, float],
         batch_size: int = 128,
-        repeat: bool = True,
-        shuffle: bool = True,
+        kind: str = "train",
         seed: int | None = None,
     ):
         super().__init__()
+
+        assert kind in ["train", "valid"]
+        self.kind = kind
+        self.seed = seed
 
         # create datasets, store counts and relative weights
         self.datasets = []
@@ -47,23 +50,7 @@ class MultiDataset(object):
         if batch_size != sum(self.batch_sizes):
             print(f"batch size is {sum(self.batch_sizes)} but should be {batch_size}")
 
-        self.datasets = [
-            dataset.batch(bs_size)
-            for dataset, bs_size in zip(self.datasets, self.batch_sizes)
-        ]
-
-        # shuffling
-        if shuffle:
-            self.datasets = [
-                dataset.shuffle(10 * count, reshuffle_each_iteration=True, seed=seed)
-                for dataset, count in zip(self.datasets, self.counts)
-            ]
-
-        # repitition
-        self.datasets = [
-            dataset.repeat(-1 if repeat else 1)
-            for dataset in self.datasets
-        ]
+        self.max_iter_valid = int(math.ceil(max([c/bs for c, bs in zip(self.counts, self.batch_sizes)])))
 
     @property
     def n_datasets(self):
@@ -72,7 +59,28 @@ class MultiDataset(object):
     def __iter__(self):
         self.batches_seen = 0
 
-        its = [iter(dataset) for dataset in self.datasets]
+        datasets = self.datasets
+
+        if self.kind == "train":
+            # shuffling
+            datasets = [
+                dataset.shuffle(10 * count, reshuffle_each_iteration=True, seed=self.seed)
+                for dataset, count in zip(datasets, self.counts)
+            ]
+
+        # repitition
+        datasets = [
+            dataset.repeat(-1)
+            for dataset in datasets
+        ]
+
+        # batching
+        datasets = [
+            dataset.batch(bs_size)
+            for dataset, bs_size in zip(datasets, self.batch_sizes)
+        ]
+
+        its = [iter(dataset) for dataset in datasets]
         while True:
             dataset_batches = []
             do_continue = False
@@ -96,6 +104,8 @@ class MultiDataset(object):
             yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0)for i in range(self.tuple_length))
 
             self.batches_seen += 1
+            if self.kind == "valid" and self.batches_seen >= self.max_iter_valid:
+                break
 
     def map(self, *args, **kwargs):
         for key, dataset in list(self._datasets.items()):
