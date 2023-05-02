@@ -136,3 +136,26 @@ def create_tensorboard_callbacks(log_dir):
             with writer.as_default():
                 getattr(tf.summary, attr)(*args, **kwargs)
     return add, flush
+
+
+def get_device(device="cpu", num_device=0):
+    """
+    Check if there is a main gpu and raises error if not. Returns a tf.device wrapper with the device
+    Args:
+        device: cpu or gpu, Default: CPU
+
+    Returns: tf.device
+    """
+    if device == "gpu":
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        if len(gpus) == 0:
+            print("There is no GPU on the working machine, default to CPU")
+        else:
+            if gpus:
+                try:
+                    tf.config.experimental.set_memory_growth(gpus[num_device], True)
+                except RuntimeError as e:
+                    print(e)
+            return tf.device(f"/device:GPU:{num_device}")
+
+    return tf.device(f"/device:CPU:{num_device}")
