@@ -107,6 +107,7 @@ EOF
             numpy \
             livelossplot \
             tqdm \
+            mplhep \
         || return "$?"
     fi
 }
