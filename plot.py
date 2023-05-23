@@ -7,14 +7,14 @@ import numpy.lib.recfunctions as rfn
 import matplotlib.pyplot as plt
 import mplhep as hep
 from pathlib import Path
+from sklearn.metrics import roc_curve, roc_auc_score
 from util import load_sample, phi_mpi_to_pi, split_train_validation_mask, calc_new_columns
 
 
 def main(
         basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_02Mar23",
-        # basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v2_forTim",
-        outputdir="plots/no_singleH_add_bjetvars/",
-        modelpath="models/no_singleH_add_bjetvars/",
+        outputdir="plots/no_singleH_add_bjetvars_3classification_massloss_simonesSelection/",
+        modelpath="models/no_singleH_add_bjetvars_3classification_massloss_simonesSelection/",
         samples={
             "SKIM_GGHH_SM": (1./35, 1.),  # (batch fraction weight, event weight factor)
             "SKIM_ggF_Radion_m300": (1./35, 1.),
@@ -52,7 +52,6 @@ def main(
             "SKIM_ggF_BulkGraviton_m1500": (1./35, 1.),
             "SKIM_ggF_BulkGraviton_m1750": (1./35, 1.),
             "SKIM_DY_amc_incl": (1., 1.),
-            # "SKIM_DY_NLO_incl": (1., 1.),
             "SKIM_TT_fullyLep": (1., 1.),
             "SKIM_TT_semiLep": (1., 1.),
             # "SKIM_GluGluHToTauTau": (1., 1.),
@@ -73,6 +72,8 @@ def main(
             "matchedGenLepton1_pt", "matchedGenLepton1_eta", "matchedGenLepton1_phi", "matchedGenLepton1_e",
             "matchedGenLepton2_pt", "matchedGenLepton2_eta", "matchedGenLepton2_phi", "matchedGenLepton2_e",
             "DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py",
+            "bH_pt", "bH_eta", "bH_phi", "bH_e", "bH_mass", "HH_pt", "HH_mass", "HHKin_mass",
+            "lumi_weight", "plot_weight"
         ],
         columns_to_add={
             "DeepMET_ResolutionTune_phi": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"), (lambda a, b: np.arctan2(a, b))),
@@ -135,20 +136,18 @@ def main(
         cat_input_names=[
             "pairType", "dau1_decayMode", "dau2_decayMode"
         ],
-        # target_names=[
-        #     # "dau1_pt_factor",
-    #     # "dau2_pt_factor",
-    #     "genNu1_px", "genNu1_py", "genNu1_pz", "genNu1_e",
-    #     "genNu2_px", "genNu2_py", "genNu2_pz", "genNu2_e",
-    # ],
-    selections=[(("pairType",), (lambda a: a < 3)),
-                (("nbjetscand",), (lambda a: a > 1)),
-                # (("genLeptons_matched",), (lambda a: a == 1)),
-                (("nleps",), (lambda a: a == 0)),
-                ],
-    train_valid_fraction=0.75,
-    train_valid_seed=0,
-    plot_only="valid",
+
+        selections=[(("pairType",), (lambda a: a < 3)),
+                    (("nbjetscand",), (lambda a: a > 1)),
+                    # (("genLeptons_matched",), (lambda a: a == 1)),
+                    (("nleps",), (lambda a: a == 0)),
+                    (("isOS",), (lambda a: a == 1)),
+                    (("dau2_deepTauVsJet",), (lambda a: a >= 5)),
+                    (("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"), (lambda a, b, c, d: (((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
+                    ],
+        train_valid_fraction=0.75,
+        train_valid_seed=0,
+        plot_only="valid",
 ):
     hep.style.use("CMS")
 
@@ -176,17 +175,11 @@ def main(
         cat_inputs = cat_inputs.astype([(name, np.float32) for name in cat_inputs.dtype.names], copy=False).view(np.float32).reshape((-1, len(cat_inputs.dtype)))
 
         predictions = model.predict([inputs, cat_inputs])
-        # d = rfn.rec_append_fields(d, ["reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "reg_nu1_e", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz", "reg_nu2_e"], [
-        #                           predictions[1][:, i] for i in range(predictions[1].shape[1])], dtypes=["<f4"] * predictions[1].shape[1])
 
         d = rfn.rec_append_fields(d, ["reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"], [
                                   predictions[1][:, i] for i in range(predictions[1].shape[1])], dtypes=["<f4"] * predictions[1].shape[1])
 
-        # d = rfn.rec_append_fields(d, ["reg_tau1_px", "reg_tau1_py", "reg_tau1_pz", "reg_tau2_px", "reg_tau2_py", "reg_tau2_pz"], [
-        #                           predictions[1][:, i] for i in range(predictions[1].shape[1])], dtypes=["<f4"] * predictions[1].shape[1])
-
         reg_H = {
-            # "reg_H_e": (("dau1_e", "reg_nu1_e", "dau2_e", "reg_nu2_e"), (lambda a, b, c, d: a + b + c + d)),
             "reg_H_e": (("dau1_e", "reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "dau2_e", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"), (lambda a, b, c, d, e, f, g, h: a + np.sqrt(b**2+c**2+d**2) + e + np.sqrt(f**2+g**2+h**2))),
             "reg_H_px": (("dau1_px", "reg_nu1_px", "dau2_px", "reg_nu2_px"), (lambda a, b, c, d: a + b + c + d)),
             "reg_H_py": (("dau1_py", "reg_nu1_py", "dau2_py", "reg_nu2_py"), (lambda a, b, c, d: a + b + c + d)),
@@ -197,73 +190,136 @@ def main(
             "reg_H_phi": (("reg_H_px", "reg_H_py"), (lambda a, b: np.arctan2(a, b))),
         }
 
-        # reg_H = {
-        #     "reg_H_e": (("reg_tau1_px", "reg_tau1_py", "reg_tau1_pz", "reg_tau2_px", "reg_tau2_py", "reg_tau2_pz"), (lambda a, b, c, d, e, f: np.sqrt(a**2 + b**2 + c**2 + 1.77686**2) + np.sqrt(d**2 + e**2 + f**2 + 1.77686**2))),
-        #     "reg_H_px": (("reg_tau1_px", "reg_tau2_px"), (lambda a, b: a + b)),
-        #     "reg_H_py": (("reg_tau1_py", "reg_tau2_py"), (lambda a, b: a + b)),
-        #     "reg_H_pz": (("reg_tau1_pz", "reg_tau2_pz"), (lambda a, b: a + b)),
-        #     "reg_H_m": (("reg_H_e", "reg_H_px", "reg_H_py", "reg_H_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
-        # }
-
         d = calc_new_columns(d, reg_H)
+
+        reg_HH = {
+            "reg_HH_e": (("reg_H_e", "bH_e"), (lambda a, b: a + b)),
+            "reg_HH_px": (("reg_H_px", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d: a + b * np.cos(phi_mpi_to_pi(c-d)))),
+            "reg_HH_py": (("reg_H_py", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d: a + b * np.sin(phi_mpi_to_pi(c-d)))),
+            "reg_HH_pz": (("reg_H_pz", "bH_pt", "bH_eta"), (lambda a, b, c: a + b * np.sinh(c))),
+            "reg_HH_m": (("reg_HH_e", "reg_HH_px", "reg_HH_py", "reg_HH_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+            "reg_HH_pt": (("reg_HH_px", "reg_HH_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
+        }
+
+        d = calc_new_columns(d, reg_HH)
+
+        svfit_HH = {
+            "svfit_HH_e": (("tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_SVFIT_eta", "bH_e"), (lambda a, b, c, d: np.sqrt(a**2 + (b * np.cosh(c))**2) + d)),
+            "svfit_HH_px": (("tauH_SVFIT_pt", "tauH_SVFIT_phi", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d, e: a * np.cos(phi_mpi_to_pi(b-e)) + c * np.cos(phi_mpi_to_pi(d-e)))),
+            "svfit_HH_py": (("tauH_SVFIT_pt", "tauH_SVFIT_phi", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d, e: a * np.sin(phi_mpi_to_pi(b-e)) + c * np.sin(phi_mpi_to_pi(d-e)))),
+            "svfit_HH_pz": (("tauH_SVFIT_pt", "tauH_SVFIT_eta", "bH_pt", "bH_eta"), (lambda a, b, c, d: a * np.sinh(b) + c * np.sinh(d))),
+            "svfit_HH_m": (("svfit_HH_e", "svfit_HH_px", "svfit_HH_py", "svfit_HH_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+            "svfit_HH_pt": (("svfit_HH_px", "svfit_HH_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
+        }
+
+        d = calc_new_columns(d, svfit_HH)
+
+        d = rfn.rec_append_fields(d, ["class_HH", "class_DY", "class_TT"], [
+                                  predictions[2][:, i] for i in range(predictions[2].shape[1])], dtypes=["<f4"] * predictions[2].shape[1])
         data[sample] = d
 
-    for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "reg_H_eta", "reg_H_phi", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_mass", "tauH_pt", "tauH_eta", "tauH_phi", "recoGenTauH_mass", "recoGenTauH_pt", "recoGenTauH_eta", "recoGenTauH_phi"],
-                                       [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$\eta_{\tau\tau,reg}$", r"$\phi_{\tau\tau,reg}$", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$\eta_{\tau\tau,SVfit}$", r"$\phi_{\tau\tau,SVfit}$",
-                                        r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$\eta_{\tau\tau,vis}$", r"$\phi_{\tau\tau,vis}$", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$\eta_{\tau\tau,gen\ \nu}$", r"$\phi_{\tau\tau,gen\ \nu}$"],
-                                       [0, 0, -5, -3.5, 0, 0, -5, -3.5, 0, 0, -5, -3.5, 0, 0, -5, -3.5],
-                                       [200, 800, 5, 3.5, 200, 800, 5, 3.5, 200, 800, 5, 3.5, 200, 800, 5, 3.5]):
+    # plot_ROC(outputdir,
+    #          "ROC_classHH_HHvsDY",
+    #          "HH class (HH vs DY)",
+    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_DY_amc_incl"])]),
+    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_DY_amc_incl"]["class_HH"]]),
+    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #                                 [data["SKIM_DY_amc_incl"]["weight"]])
+    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
+    #          )
+    #
+    # plot_ROC(outputdir,
+    #          "ROC_classHH_HHvsTTdl",
+    #          r"HH class (HH vs $t\overline{t}$ dl)",
+    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_TT_fullyLep"])]),
+    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_TT_fullyLep"]["class_HH"]]),
+    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #                                 [data["SKIM_TT_fullyLep"]["weight"]])
+    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
+    #          )
+    #
+    # plot_ROC(outputdir,
+    #          "ROC_classHH_HHvsTTsl",
+    #          r"HH class (HH vs $t\overline{t}$ sl)",
+    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_TT_semiLep"])]),
+    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_TT_semiLep"]["class_HH"]]),
+    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #                                 [data["SKIM_TT_semiLep"]["weight"]])
+    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
+    #          )
+    #
+    # plot_ROC(outputdir,
+    #          "ROC_classHH_HHvsTTH",
+    #          r"HH class (HH vs $t\overline{t}$H*)",
+    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_ttHToTauTau"])]),
+    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_ttHToTauTau"]["class_HH"]]),
+    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #                                 [data["SKIM_ttHToTauTau"]["weight"]])
+    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
+    #          )
+    #
+    # exit()
+
+    for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m", "reg_HH_pt", "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m", "class_HH", "class_DY", "class_TT", "class_H"],
+                                       [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]",
+                                        "Classifier HH output", "Classifier DY output", "Classifier TT output"],
+                                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                       [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000, 1, 1, 1]):
 
         # for var, xlabel in zip(["reg_H_m",],
         #                        [r"$m_{\tau\tau,reg}$ [GeV]"]):
-        plot(outputdir,
-             f"{var}",
-             [
-                 [data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
-                 # [data["SKIM_GluGluHToTauTau"][f"{var}"]],
-                 [data["SKIM_DY_amc_incl"][f"{var}"]],
-                 [data["SKIM_TT_fullyLep"][f"{var}"]],
-                 [data["SKIM_TT_semiLep"][f"{var}"]],
-                 [data["SKIM_ttHToTauTau"][f"{var}"]]
-             ],
-             weights=[
-                 [data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
-                 # [data["SKIM_GluGluHToTauTau"]["weight"]],
-                 [data["SKIM_DY_amc_incl"]["weight"]],
-                 [data["SKIM_TT_fullyLep"]["weight"]],
-                 [data["SKIM_TT_semiLep"]["weight"]],
-                 [data["SKIM_ttHToTauTau"]["weight"]]],
-             labels=[
-                 "HH",
-                 # "H*",
-                 "DY",
-                 r"$t\overline{t}$ dl",
-                 r"$t\overline{t}$ sl*",
-                 r"$t\overline{t}$H*"
-             ],
-             nbins=50,
-             xmin=xmin,
-             xmax=xmax,
-             xlabel=xlabel,
-             normalized=True,
-             )
+        plot_1Dhist(outputdir,
+                    f"{var}",
+                    [
+                        [data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
+                        # [data["SKIM_GluGluHToTauTau"][f"{var}"]],
+                        [data["SKIM_DY_amc_incl"][f"{var}"]],
+                        [data["SKIM_TT_fullyLep"][f"{var}"]],
+                        [data["SKIM_TT_semiLep"][f"{var}"]],
+                        [data["SKIM_ttHToTauTau"][f"{var}"]]
+                    ],
+                    weights=[
+                        [data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
+                        # [data["SKIM_GluGluHToTauTau"]["weight"]],
+                        [data["SKIM_DY_amc_incl"]["weight"]],
+                        [data["SKIM_TT_fullyLep"]["weight"]],
+                        [data["SKIM_TT_semiLep"]["weight"]],
+                        [data["SKIM_ttHToTauTau"]["weight"]]
+                    ],
+                    labels=[
+                        "HH",
+                        # "H*",
+                        "DY",
+                        r"$t\overline{t}$ dl",
+                        r"$t\overline{t}$ sl*",
+                        r"$t\overline{t}$H*"
+                    ],
+                    nbins=50,
+                    xmin=xmin,
+                    xmax=xmax,
+                    xlabel=xlabel,
+                    normalized=True,
+                    )
 
-    # for var in ["reg_H_m", "tauH_SVFIT_mass", "tauH_mass", "recoGenTauH_mass"]:
-    #     plot(outputdir,
-    #          f"{var}",
-    #          [[data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"][f"{var}"]], [data["SKIM_DY_NLO_incl"][f"{var}"]],
-    #           [data["SKIM_TT_fullyLep"][f"{var}"]], [data["SKIM_TT_semiLep"][f"{var}"]]],
-    #          weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_NLO_incl"]["weight"]],
-    #                   [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #          labels=["HH", "H*", "DY", "tt_dl", "tt_sl*"],
-    #          nbins=50,
-    #          xmin=0,
-    #          xmax=200,
-    #          xlabel=f"{var}",
-    #          normalized=True,
-    #          )
-    #
-    # plot(outputdir,
+    for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m", "reg_HH_pt", "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m", "class_HH", "class_DY", "class_TT", "class_H"],
+                                       [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]",
+                                        "Classifier HH output", "Classifier DY output", "Classifier TT output"],
+                                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                       [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000, 1, 1, 1]):
+        plot_1Dhist(outputdir + "/signals",
+                    f"{var}",
+                    [[data["SKIM_GGHH_SM"][f"{var}"]], [data["SKIM_ggF_Radion_m300"][f"{var}"]], [data["SKIM_ggF_Radion_m700"][f"{var}"]], [data["SKIM_ggF_Radion_m1750"][f"{var}"]]],
+                    weights=[[data["SKIM_GGHH_SM"]["weight"]], [data["SKIM_ggF_Radion_m300"]["weight"]], [data["SKIM_ggF_Radion_m700"]["weight"]], [data["SKIM_ggF_Radion_m1750"]["weight"]]],
+                    labels=["HH SM", "HH m=300", "HH m=700", "HH m=1750"],
+                    nbins=50, xmin=xmin, xmax=xmax,
+                    xlabel=xlabel,
+                    normalized=True)
+
+    # plot_1Dhist(outputdir,
     #      "diff_to_truth_mass",
     #      [[data[f"{s}"]["recoGenTauH_mass"] - data[f"{s}"]["reg_H_m"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["recoGenTauH_mass"] - data["SKIM_GluGluHToTauTau"]["reg_H_m"]], [data["SKIM_DY_amc_incl"]["recoGenTauH_mass"] - data["SKIM_DY_amc_incl"]["reg_H_m"]],
     #       [data["SKIM_TT_fullyLep"]["recoGenTauH_mass"] - data["SKIM_TT_fullyLep"]["reg_H_m"]], [data["SKIM_TT_semiLep"]["recoGenTauH_mass"] - data["SKIM_TT_semiLep"]["reg_H_m"]]],
@@ -276,205 +332,10 @@ def main(
     #      xlabel=r"$m_{\tau\tau,gen}$ - $m_{\tau\tau,reg}$ [GeV]",
     #      normalized=True,
     #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_px",
-    #      [[data[f"{s}"]["genNu1_px"] - data[f"{s}"]["reg_nu1_px"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu1_px"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_px"]], [data["SKIM_DY_amc_incl"]["genNu1_px"] - data["SKIM_DY_amc_incl"]["reg_nu1_px"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu1_px"] - data["SKIM_TT_fullyLep"]["reg_nu1_px"]], [data["SKIM_TT_semiLep"]["genNu1_px"] - data["SKIM_TT_semiLep"]["reg_nu1_px"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_x^{gen}(\nu_1)$ - $p_x^{reg}(\nu_1)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_py",
-    #      [[data[f"{s}"]["genNu1_py"] - data[f"{s}"]["reg_nu1_py"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu1_py"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_py"]], [data["SKIM_DY_amc_incl"]["genNu1_py"] - data["SKIM_DY_amc_incl"]["reg_nu1_py"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu1_py"] - data["SKIM_TT_fullyLep"]["reg_nu1_py"]], [data["SKIM_TT_semiLep"]["genNu1_py"] - data["SKIM_TT_semiLep"]["reg_nu1_py"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_y^{gen}(\nu_1)$ - $p_y^{reg}(\nu_1)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_pz",
-    #      [[data[f"{s}"]["genNu1_pz"] - data[f"{s}"]["reg_nu1_pz"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu1_pz"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_pz"]], [data["SKIM_DY_amc_incl"]["genNu1_pz"] - data["SKIM_DY_amc_incl"]["reg_nu1_pz"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu1_pz"] - data["SKIM_TT_fullyLep"]["reg_nu1_pz"]], [data["SKIM_TT_semiLep"]["genNu1_pz"] - data["SKIM_TT_semiLep"]["reg_nu1_pz"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_z^{gen}(\nu_1)$ - $p_z^{reg}(\nu_1)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_px",
-    #      [[data[f"{s}"]["genNu2_px"] - data[f"{s}"]["reg_nu2_px"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu2_px"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_px"]], [data["SKIM_DY_amc_incl"]["genNu2_px"] - data["SKIM_DY_amc_incl"]["reg_nu2_px"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu2_px"] - data["SKIM_TT_fullyLep"]["reg_nu2_px"]], [data["SKIM_TT_semiLep"]["genNu2_px"] - data["SKIM_TT_semiLep"]["reg_nu2_px"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_x^{gen}(\nu_2)$ - $p_x^{reg}(\nu_2)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_py",
-    #      [[data[f"{s}"]["genNu2_py"] - data[f"{s}"]["reg_nu2_py"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu2_py"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_py"]], [data["SKIM_DY_amc_incl"]["genNu2_py"] - data["SKIM_DY_amc_incl"]["reg_nu2_py"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu2_py"] - data["SKIM_TT_fullyLep"]["reg_nu2_py"]], [data["SKIM_TT_semiLep"]["genNu2_py"] - data["SKIM_TT_semiLep"]["reg_nu2_py"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_y^{gen}(\nu_2)$ - $p_y^{reg}(\nu_2)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_pz",
-    #      [[data[f"{s}"]["genNu2_pz"] - data[f"{s}"]["reg_nu2_pz"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["genNu2_pz"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_pz"]], [data["SKIM_DY_amc_incl"]["genNu2_pz"] - data["SKIM_DY_amc_incl"]["reg_nu2_pz"]],
-    #       [data["SKIM_TT_fullyLep"]["genNu2_pz"] - data["SKIM_TT_fullyLep"]["reg_nu2_pz"]], [data["SKIM_TT_semiLep"]["genNu2_pz"] - data["SKIM_TT_semiLep"]["reg_nu2_pz"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$p_z^{gen}(\nu_2)$ - $p_z^{reg}(\nu_2)$ [GeV]",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_mass_norm",
-    #      [[(data[f"{s}"]["recoGenTauH_mass"] - data[f"{s}"]["reg_H_m"])/data[f"{s}"]["recoGenTauH_mass"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["recoGenTauH_mass"] - data["SKIM_GluGluHToTauTau"]["reg_H_m"])/data["SKIM_GluGluHToTauTau"]["recoGenTauH_mass"]], [(data["SKIM_DY_amc_incl"]["recoGenTauH_mass"] - data["SKIM_DY_amc_incl"]["reg_H_m"])/data["SKIM_DY_amc_incl"]["recoGenTauH_mass"]],
-    #       [(data["SKIM_TT_fullyLep"]["recoGenTauH_mass"] - data["SKIM_TT_fullyLep"]["reg_H_m"])/data["SKIM_TT_fullyLep"]["recoGenTauH_mass"]], [(data["SKIM_TT_semiLep"]["recoGenTauH_mass"] - data["SKIM_TT_semiLep"]["reg_H_m"])/data["SKIM_TT_semiLep"]["recoGenTauH_mass"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($m_{\tau\tau,gen}$ - $m_{\tau\tau,reg}$)/$m_{\tau\tau,gen}$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_px_norm",
-    #      [[(data[f"{s}"]["genNu1_px"] - data[f"{s}"]["reg_nu1_px"])/data[f"{s}"]["genNu1_px"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu1_px"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_px"])/data["SKIM_GluGluHToTauTau"]["genNu1_px"]], [(data["SKIM_DY_amc_incl"]["genNu1_px"] - data["SKIM_DY_amc_incl"]["reg_nu1_px"])/data["SKIM_DY_amc_incl"]["genNu1_px"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu1_px"] - data["SKIM_TT_fullyLep"]["reg_nu1_px"])/data["SKIM_TT_fullyLep"]["genNu1_px"]], [(data["SKIM_TT_semiLep"]["genNu1_px"] - data["SKIM_TT_semiLep"]["reg_nu1_px"])/data["SKIM_TT_semiLep"]["genNu1_px"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_x^{gen}(\nu_1)$ - $p_x^{reg}(\nu_1)$)/$p_x^{gen}(\nu_1)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_py_norm",
-    #      [[(data[f"{s}"]["genNu1_py"] - data[f"{s}"]["reg_nu1_py"])/data[f"{s}"]["genNu1_py"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu1_py"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_py"])/data["SKIM_GluGluHToTauTau"]["genNu1_py"]], [(data["SKIM_DY_amc_incl"]["genNu1_py"] - data["SKIM_DY_amc_incl"]["reg_nu1_py"])/data["SKIM_DY_amc_incl"]["genNu1_py"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu1_py"] - data["SKIM_TT_fullyLep"]["reg_nu1_py"])/data["SKIM_TT_fullyLep"]["genNu1_py"]], [(data["SKIM_TT_semiLep"]["genNu1_py"] - data["SKIM_TT_semiLep"]["reg_nu1_py"])/data["SKIM_TT_semiLep"]["genNu1_py"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_y^{gen}(\nu_1)$ - $p_y^{reg}(\nu_1)$)/$p_y^{gen}(\nu_1)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu1_pz_norm",
-    #      [[(data[f"{s}"]["genNu1_pz"] - data[f"{s}"]["reg_nu1_pz"])/data[f"{s}"]["genNu1_pz"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu1_pz"] - data["SKIM_GluGluHToTauTau"]["reg_nu1_pz"])/data["SKIM_GluGluHToTauTau"]["genNu1_pz"]], [(data["SKIM_DY_amc_incl"]["genNu1_pz"] - data["SKIM_DY_amc_incl"]["reg_nu1_pz"])/data["SKIM_DY_amc_incl"]["genNu1_pz"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu1_pz"] - data["SKIM_TT_fullyLep"]["reg_nu1_pz"])/data["SKIM_TT_fullyLep"]["genNu1_pz"]], [(data["SKIM_TT_semiLep"]["genNu1_pz"] - data["SKIM_TT_semiLep"]["reg_nu1_pz"])/data["SKIM_TT_semiLep"]["genNu1_pz"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_z^{gen}(\nu_1)$ - $p_z^{reg}(\nu_1)$)/$p_z^{gen}(\nu_1)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_px_norm",
-    #      [[(data[f"{s}"]["genNu2_px"] - data[f"{s}"]["reg_nu2_px"])/data[f"{s}"]["genNu2_px"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu2_px"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_px"])/data["SKIM_GluGluHToTauTau"]["genNu2_px"]], [(data["SKIM_DY_amc_incl"]["genNu2_px"] - data["SKIM_DY_amc_incl"]["reg_nu2_px"])/data["SKIM_DY_amc_incl"]["genNu2_px"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu2_px"] - data["SKIM_TT_fullyLep"]["reg_nu2_px"])/data["SKIM_TT_fullyLep"]["genNu2_px"]], [(data["SKIM_TT_semiLep"]["genNu2_px"] - data["SKIM_TT_semiLep"]["reg_nu2_px"])/data["SKIM_TT_semiLep"]["genNu2_px"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_x^{gen}(\nu_2)$ - $p_x^{reg}(\nu_2)$)/$p_x^{gen}(\nu_2)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_py_norm",
-    #      [[(data[f"{s}"]["genNu2_py"] - data[f"{s}"]["reg_nu2_py"])/data[f"{s}"]["genNu2_py"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu2_py"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_py"])/data["SKIM_GluGluHToTauTau"]["genNu2_py"]], [(data["SKIM_DY_amc_incl"]["genNu2_py"] - data["SKIM_DY_amc_incl"]["reg_nu2_py"])/data["SKIM_DY_amc_incl"]["genNu2_py"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu2_py"] - data["SKIM_TT_fullyLep"]["reg_nu2_py"])/data["SKIM_TT_fullyLep"]["genNu2_py"]], [(data["SKIM_TT_semiLep"]["genNu2_py"] - data["SKIM_TT_semiLep"]["reg_nu2_py"])/data["SKIM_TT_semiLep"]["genNu2_py"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_y^{gen}(\nu_2)$ - $p_y^{reg}(\nu_2)$)/$p_y^{gen}(\nu_2)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "diff_to_truth_genNu2_pz_norm",
-    #      [[(data[f"{s}"]["genNu2_pz"] - data[f"{s}"]["reg_nu2_pz"])/data[f"{s}"]["genNu2_pz"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [(data["SKIM_GluGluHToTauTau"]["genNu2_pz"] - data["SKIM_GluGluHToTauTau"]["reg_nu2_pz"])/data["SKIM_GluGluHToTauTau"]["genNu2_pz"]], [(data["SKIM_DY_amc_incl"]["genNu2_pz"] - data["SKIM_DY_amc_incl"]["reg_nu2_pz"])/data["SKIM_DY_amc_incl"]["genNu2_pz"]],
-    #       [(data["SKIM_TT_fullyLep"]["genNu2_pz"] - data["SKIM_TT_fullyLep"]["reg_nu2_pz"])/data["SKIM_TT_fullyLep"]["genNu2_pz"]], [(data["SKIM_TT_semiLep"]["genNu2_pz"] - data["SKIM_TT_semiLep"]["reg_nu2_pz"])/data["SKIM_TT_semiLep"]["genNu2_pz"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-1,
-    #      xmax=1,
-    #      xlabel=r"($p_z^{gen}(\nu_2)$ - $p_z^{reg}(\nu_2)$)/$p_z^{gen}(\nu_2)$",
-    #      normalized=True,
-    #      )
-    #
-    # plot(outputdir,
-    #      "reg_H_m_masses",
-    #      [[data["SKIM_ggF_Radion_m300"]["reg_H_m"]], [data["SKIM_ggF_Radion_m700"]["reg_H_m"]], [data["SKIM_ggF_Radion_m1750"]["reg_H_m"]]],
-    #      weights=[[data["SKIM_ggF_Radion_m300"]["weight"]], [data["SKIM_ggF_Radion_m700"]["weight"]], [data["SKIM_ggF_Radion_m1750"]["weight"]]],
-    #      labels=["300", "700", "1750"],
-    #      nbins=50,
-    #      xmin=0,
-    #      xmax=200,
-    #      xlabel=r"$m_{\tau\tau,reg}$ [GeV]",
-    #      normalized=True,
-    #      legend=True,
-    #      )
 
     # for var in float_inputs + int_inputs + targets:
     #     print(f"Plotting variable {var}")
-    #     plot(outputdir,
+    #     plot_1Dhist(outputdir,
     #          f"{var}",
     #          [[data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_DY_NLO_incl"][f"{var}"]], [data["SKIM_TT_fullyLep"][f"{var}"]]],
     #          weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_DY_NLO_incl"]["weight"]], [data["SKIM_TT_fullyLep"]["weight"]]],
@@ -486,24 +347,8 @@ def main(
     #          normalized=True,
     #          )
 
-    # plot(outputdir,
-    #      "reg_h_mass",
-    #      [data["SKIM_GGHH_SM"]["reg_H_m"], data["SKIM_GluGluHToTauTau"]["reg_H_m"], data["SKIM_DY_NLO_incl"]["reg_H_m"], data["SKIM_TT_semiLep"]["reg_H_m"], data["SKIM_TT_fullyLep"]["reg_H_m"]],
-    #      labels=["hh", "h*", "dy", "tt_sl*", "tt_dl"],
-    #      nbins=50, xmin=0, xmax=200,
-    #      xlabel="regressed ditau mass [GeV]", ylabel="Events",
-    #      log=False, normalized=True)
 
-    # plot(outputdir,
-    #      "reg_h_mass_signals",
-    #      [data["SKIM_GGHH_SM"]["reg_H_m"], data["SKIM_ggF_Radion_m300"]["reg_H_m"], data["SKIM_ggF_Radion_m700"]["reg_H_m"], data["SKIM_ggF_Radion_m1750"]["reg_H_m"]],
-    #      labels=["hh sm", "hh m300", "hh m700", "hh m1750"],
-    #      nbins=50, xmin=0, xmax=200,
-    #      xlabel="regressed ditau mass [GeV]", ylabel="Events",
-    #      log=False, normalized=True)
-
-
-def plot(outputdir, title, hists, weights=None, labels=["reco", "gen", "reg", "svfit"], nbins=10, xmin=None, xmax=None, xlabel="di tau mass [GeV]", ylabel="Events", log=False, normalized=True, legend=True, legend_loc="best"):
+def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "reg", "svfit"], nbins=10, xmin=None, xmax=None, xlabel="di tau mass [GeV]", ylabel="Events", log=False, normalized=True, legend=True, legend_loc="best"):
     hep.cms.text("Simulation, private work")
     nphists = False
     if isinstance(hists, list):
@@ -559,6 +404,19 @@ def plot(outputdir, title, hists, weights=None, labels=["reco", "gen", "reg", "s
     plt.yscale('log')
     plt.ylim([ymin/10, ymax*10])
     plt.savefig(outputdir + "/" + title + "_log.pdf")
+    plt.clf()
+
+
+def plot_ROC(outputdir, title, label, y_true, y_score,  weights=None):
+    fpr, tpr, _ = roc_curve(y_true, y_score, sample_weight=weights)
+    plt.plot(fpr, tpr,  label=f"{label} (AUC={roc_auc_score(y_true, y_score):.3f})")
+    plt.xlim([0, 1])
+    plt.xlabel("False positive rate")
+    plt.ylim([0, 1])
+    plt.ylabel("True positive rate")
+    plt.legend()
+    Path(outputdir).mkdir(parents=True, exist_ok=True)
+    plt.savefig(outputdir + "/" + title + ".pdf")
     plt.clf()
 
 
