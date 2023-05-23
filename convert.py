@@ -435,8 +435,8 @@ filenames = glob.glob(inputpath + "*/*.root")
 
 print(len(filenames))
 
-# pool = Pool(12)
-#
-# pool.map(root2npz, filenames)
+pool = Pool(12)
+
+pool.map(root2npz, filenames)
 
 # root2npz(inputpath + "SKIM_GGHH_SM/output_0.root")
