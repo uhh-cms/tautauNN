@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# coding: utf-8
+
 import os
 import numpy as np
 import awkward as ak
@@ -310,7 +313,7 @@ def root2npz(filename):
     variables2 = []
     dtype2 = []
     outputfilename = filename.replace(".root", ".npz")
-    outputfilename = outputfilename.replace("riegerma", "kramerto")
+    outputfilename = outputfilename.replace("riegerma", "kramerto").replace("02Mar", "22May")
     if os.path.exists(outputfilename):
         print("skipping existing file")
         return
@@ -325,6 +328,8 @@ def root2npz(filename):
         print("Key 'HTauTauTree' not found, skipped file " + filename)
         return
 
+    weightsum = f["h_eff"].values()[0]
+
     # sel_baseline_emutau = "(((pairType == 0) | (pairType == 1)) & (dau1_pt > 20) & (abs(dau1_eta) < 2.1) & (dau2_pt > 20) & (abs(dau1_eta) < 2.3) & (nleps == 0) & (nbjetscand > 1))"
     # sel_baseline_tautau = "((pairType == 2) & (dau1_pt > 40) & (abs(dau1_eta) < 2.1) & (dau2_pt > 40) & (abs(dau1_eta) < 2.1) & (nleps == 0) & (nbjetscand > 1))"
     # sel_baseline = sel_baseline_emutau + " | " + sel_baseline_tautau
@@ -333,6 +338,10 @@ def root2npz(filename):
 
     arrays = tree.arrays(variables, sel_baseline, library="np", aliases=aliasdict)
     ak_arrays = tree.arrays(ak_variables, sel_baseline, library="ak", aliases=ak_aliasdict)
+
+    arrays["weightsum"] = [weightsum]
+    variables2.append("weightsum")
+    dtype2.append(("weightsum", np.float32))
 
     # btag_sorted = {}
     # for discr in ["btag_deepFlavor", "pnet_b", "pnet_bb"]:
@@ -415,20 +424,19 @@ def root2npz(filename):
     np.savez(outputfilename, events=r)
 
 
-inputpath = "/nfs/dust/cms/user/riegerma/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_02Mar23/"
+inputpath = "/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_02Mar23/"
 dirnames = glob.glob(inputpath + "*")
 for dirname in dirnames:
     if ".txt" in dirname or ".sh" in dirname:
         continue
-    Path(dirname.replace("riegerma", "kramerto")).mkdir(parents=True, exist_ok=True)
+    Path(dirname.replace("riegerma", "kramerto").replace("02Mar", "22May")).mkdir(parents=True, exist_ok=True)
 
 filenames = glob.glob(inputpath + "*/*.root")
 
-
 print(len(filenames))
 
-pool = Pool(12)
+# pool = Pool(12)
+#
+# pool.map(root2npz, filenames)
 
-pool.map(root2npz, filenames)
-
-# root2npz(inputpath + "SKIM_ZZZ/output_0.root")
+# root2npz(inputpath + "SKIM_GGHH_SM/output_0.root")
