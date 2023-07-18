@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import mplhep as hep
 from pathlib import Path
 from sklearn.metrics import roc_curve, roc_auc_score
-from util import load_sample, phi_mpi_to_pi, split_train_validation_mask, calc_new_columns
+from util import load_sample, phi_mpi_to_pi, calc_new_columns
 
 
 def main(
@@ -73,7 +73,7 @@ def main(
             "matchedGenLepton2_pt", "matchedGenLepton2_eta", "matchedGenLepton2_phi", "matchedGenLepton2_e",
             "DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py",
             "bH_pt", "bH_eta", "bH_phi", "bH_e", "bH_mass", "HH_pt", "HH_mass", "HHKin_mass",
-            "lumi_weight", "plot_weight"
+            "EventNumber",  # "lumi_weight", "plot_weight",
         ],
         columns_to_add={
             "DeepMET_ResolutionTune_phi": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"), (lambda a, b: np.arctan2(a, b))),
@@ -145,8 +145,7 @@ def main(
                     (("dau2_deepTauVsJet",), (lambda a: a >= 5)),
                     (("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"), (lambda a, b, c, d: (((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
                     ],
-        train_valid_fraction=0.75,
-        train_valid_seed=0,
+        train_valid_eventnumber_modulo=4,
         plot_only="valid",
 ):
     hep.style.use("CMS")
@@ -163,8 +162,9 @@ def main(
         d = rfn.rec_append_fields(d, "weight", weights)
 
         if plot_only in ["train", "valid"]:
-            train_mask = split_train_validation_mask(nevents, fraction=train_valid_fraction, seed=train_valid_seed)
-            d = calc_new_columns(d[train_mask if plot_only == "train" else ~train_mask], columns_to_add)
+            train_mask = (d["EventNumber"] % train_valid_eventnumber_modulo) != 0
+            d = calc_new_columns(
+                d[train_mask if plot_only == "train" else ~train_mask], columns_to_add)
         else:
             d = calc_new_columns(d, columns_to_add)
 

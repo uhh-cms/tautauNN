@@ -8,7 +8,7 @@ import os
 import functools
 from operator import mul
 from collections import defaultdict
-from util import load_sample, phi_mpi_to_pi, split_train_validation_mask, calc_new_columns, create_tensorboard_callbacks, get_device
+from util import load_sample, phi_mpi_to_pi, calc_new_columns, create_tensorboard_callbacks, get_device
 from custom_layers import CustomEmbeddingLayer, CustomOutputScalingLayer
 from multi_dataset import MultiDataset
 
@@ -75,6 +75,7 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
              # "tauH_mass",
              "DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py",
              "recoGenTauH_mass",
+             "EventNumber",
          ],
          columns_to_add={
              "DeepMET_ResolutionTune_phi": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"), (lambda a, b: np.arctan2(a, b))),
@@ -156,8 +157,7 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
          l2_norm=50.0,
          dropout_rate=0,
          batch_size=4096,
-         train_valid_fraction=0.75,
-         train_valid_seed=1,
+         train_valid_eventnumber_modulo=4,
          log_every=100,
          validate_every=1000,
          initial_learning_rate=0.0025,
@@ -231,7 +231,7 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
             target_means.append(np.mean(targets, axis=0))
             target_stds.append(np.std(targets, axis=0))
 
-        train_mask = split_train_validation_mask(nev, fraction=train_valid_fraction, seed=train_valid_seed)
+        train_mask = (d["EventNumber"] % train_valid_eventnumber_modulo) != 0
 
         nevents.append(nev)
 

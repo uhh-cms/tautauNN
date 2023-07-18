@@ -41,12 +41,6 @@ def calc_new_columns(data, rules):
     return data
 
 
-def split_train_validation_mask(nevents, fraction=0.75, seed=0):
-    np.random.seed(seed)
-    mask = np.random.rand(nevents) <= fraction
-    return mask
-
-
 def calc_4vec_sum(pt1, eta1, phi1, e1, pt2, eta2, phi2, e2):
     px1 = pt1 * np.cos(phi1)
     py1 = pt1 * np.sin(phi1)
