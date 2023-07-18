@@ -277,8 +277,8 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
         target_means = None
         target_stds = None
 
-    input_means = np.mean(input_means, axis=0)
-    input_vars = np.mean(input_vars, axis=0)
+    input_means = np.sum(np.concatenate([i * b/len(i) for i, b in zip(inputs_train, batch_weights)]), axis=0)/np.sum([b for b in batch_weights], axis=0)
+    input_vars = np.sum(np.concatenate([i**2 * b/len(i) for i, b in zip(inputs_train, batch_weights)]), axis=0)/np.sum([b for b in batch_weights], axis=0) - input_means**2
 
     if use_batch_composition:
         dataset_train = MultiDataset(zip(zip(inputs_train, cat_inputs_train, target_train, classes_train, event_weights_train,
