@@ -770,14 +770,16 @@ def training_loop(
             losses_avg.clear()
             del loss_avg[:]
 
-        update = [f"Step: {metrics['step']}, Validations: {metrics['step_val']}, Early stopping counter: {metrics['early_stopping_counter']}, Learning rate: {metrics['learning_rate']:.5f}"]
-        for name in losses:
-            if "mse" in name:
-                update.append(f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f} | {metrics[f'mse_valid_best']:.4f}")
-            else:
-                update.append(f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f}")
-        update = " --- ".join(update)
-        print(update, end="\r")
+            update = [f"Step: {metrics['step']}, Validations: {metrics['step_val']}, Early stopping counter: {metrics['early_stopping_counter']}, Learning rate: {metrics['learning_rate']:.5f}"]
+            for name in losses:
+                if "mse" in name:
+                    update.append(
+                        f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f} | {metrics[f'mse_valid_best']:.4f}")
+                else:
+                    update.append(
+                        f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f}")
+            update = " --- ".join(update)
+            print(update, end="\r")
     else:
         message = "dataset exhausted, stopping training"
 
