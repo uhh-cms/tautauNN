@@ -5,14 +5,15 @@ import tensorflow as tf
 import math
 
 
-def load_data(basepath, samples, features, selections, maxevents=1000000):
+def load_sample(basepath, sample, weight, features, selections, maxevents=1000000):
     feature_vecs = []
-    weights = []
-    for sample in samples.keys():
-        nevents = 0
-        filenames = glob.glob(f"{basepath}/{sample}/output*.npz")
-        for filename in filenames:
-            with np.load(filename) as f:
+    nevents = 0
+    # weightsum = 0
+    filenames = glob.glob(f"{basepath}/{sample}/output*.npz")
+    for filename in filenames:
+        with np.load(filename) as f:
+            # weightsum += f["weightsum"]
+            if nevents <= maxevents:
                 e = f["events"]
                 mask = [True] * len(e)
                 for (varnames, func) in selections:
@@ -20,31 +21,6 @@ def load_data(basepath, samples, features, selections, maxevents=1000000):
                     mask = mask & func(*variables)
                 feature_vecs.append(e[features][mask])
                 nevents += len(feature_vecs[-1])
-                if nevents > maxevents:
-                    break
-        print(f"{sample}: {nevents} events")
-        weights.append([samples[sample]/nevents] * nevents)
-    feature_vecs = np.concatenate(feature_vecs, axis=0)
-    weights = np.concatenate(weights, axis=0, dtype="float32")
-    weights /= np.mean(weights)
-    return feature_vecs, weights
-
-
-def load_sample(basepath, sample, weight, features, selections, maxevents=1000000):
-    feature_vecs = []
-    nevents = 0
-    filenames = glob.glob(f"{basepath}/{sample}/output*.npz")
-    for filename in filenames:
-        with np.load(filename) as f:
-            e = f["events"]
-            mask = [True] * len(e)
-            for (varnames, func) in selections:
-                variables = [e[v] for v in varnames]
-                mask = mask & func(*variables)
-            feature_vecs.append(e[features][mask])
-            nevents += len(feature_vecs[-1])
-            if nevents > maxevents:
-                break
     print(f"{sample}: {nevents} events")
     weights = np.array([weight] * nevents, dtype="float32")
     feature_vecs = np.concatenate(feature_vecs, axis=0)
