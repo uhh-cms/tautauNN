@@ -22,46 +22,57 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
          tensorboard_dir="/tmp/tensorboard",
          # tensorboard_dir=None,
          samples={
-             "SKIM_GGHH_SM": (1./35, 1., [1, 0, 0]),  # (batch fraction weight, event weight factor)
-             "SKIM_ggF_Radion_m300": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m350": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m400": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m450": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m500": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m550": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m600": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m650": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m700": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m750": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m800": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m850": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m900": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m1000": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m1250": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m1500": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_Radion_m1750": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m300": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m350": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m400": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m450": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m500": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m550": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m600": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m650": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m700": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m750": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m800": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m850": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m900": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m1000": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m1250": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m1500": (1./35, 1., [1, 0, 0]),
-             "SKIM_ggF_BulkGraviton_m1750": (1./35, 1., [1, 0, 0]),
-             "SKIM_DY_amc_incl": (1., 1., [0, 1, 0]),
-             "SKIM_TT_fullyLep": (1., 1., [0, 0, 1]),
-             # "SKIM_TT_semiLep": (1., 1., [0, 0, 1]),
-             # "SKIM_GluGluHToTauTau": (1., 1.),
-             # "SKIM_ttHToTauTau": (1., 1.),
+             # sample name: (batch fraction weight, event weight factor, [classes], spin, mass)
+             "SKIM_GGHH_SM": (1./35, 1., [1, 0, 0], -1, -1.),
+             # "SKIM_ggF_Radion_m250": (1./45, 1., [1, 0, 0], 0, 250.),
+             # "SKIM_ggF_Radion_m260": (1./45, 1., [1, 0, 0], 0, 260.),
+             # "SKIM_ggF_Radion_m270": (1./45, 1., [1, 0, 0], 0, 270.),
+             # "SKIM_ggF_Radion_m280": (1./45, 1., [1, 0, 0], 0, 280.),
+             "SKIM_ggF_Radion_m300": (1./35, 1., [1, 0, 0], 0, 300.),
+             # "SKIM_ggF_Radion_m320": (1./45, 1., [1, 0, 0], 0, 320.),
+             "SKIM_ggF_Radion_m350": (1./35, 1., [1, 0, 0], 0, 350.),
+             "SKIM_ggF_Radion_m400": (1./35, 1., [1, 0, 0], 0, 400.),
+             "SKIM_ggF_Radion_m450": (1./35, 1., [1, 0, 0], 0, 450.),
+             "SKIM_ggF_Radion_m500": (1./35, 1., [1, 0, 0], 0, 500.),
+             "SKIM_ggF_Radion_m550": (1./35, 1., [1, 0, 0], 0, 550.),
+             "SKIM_ggF_Radion_m600": (1./35, 1., [1, 0, 0], 0, 600.),
+             "SKIM_ggF_Radion_m650": (1./35, 1., [1, 0, 0], 0, 650.),
+             "SKIM_ggF_Radion_m700": (1./35, 1., [1, 0, 0], 0, 700.),
+             "SKIM_ggF_Radion_m750": (1./35, 1., [1, 0, 0], 0, 750.),
+             "SKIM_ggF_Radion_m800": (1./35, 1., [1, 0, 0], 0, 800.),
+             "SKIM_ggF_Radion_m850": (1./35, 1., [1, 0, 0], 0, 850.),
+             "SKIM_ggF_Radion_m900": (1./35, 1., [1, 0, 0], 0, 900.),
+             "SKIM_ggF_Radion_m1000": (1./35, 1., [1, 0, 0], 0, 1000.),
+             "SKIM_ggF_Radion_m1250": (1./35, 1., [1, 0, 0], 0, 1250.),
+             "SKIM_ggF_Radion_m1500": (1./35, 1., [1, 0, 0], 0, 1500.),
+             "SKIM_ggF_Radion_m1750": (1./35, 1., [1, 0, 0], 0, 1750.),
+             # "SKIM_ggF_BulkGraviton_m250": (1./45, 1., [1, 0, 0], 2, 250.),
+             # "SKIM_ggF_BulkGraviton_m260": (1./45, 1., [1, 0, 0], 2, 260.),
+             # "SKIM_ggF_BulkGraviton_m270": (1./45, 1., [1, 0, 0], 2, 270.),
+             # "SKIM_ggF_BulkGraviton_m280": (1./45, 1., [1, 0, 0], 2, 280.),
+             "SKIM_ggF_BulkGraviton_m300": (1./35, 1., [1, 0, 0], 2, 300.),
+             # "SKIM_ggF_BulkGraviton_m320": (1./45, 1., [1, 0, 0], 2, 320.),
+             "SKIM_ggF_BulkGraviton_m350": (1./35, 1., [1, 0, 0], 2, 350.),
+             "SKIM_ggF_BulkGraviton_m400": (1./35, 1., [1, 0, 0], 2, 400.),
+             "SKIM_ggF_BulkGraviton_m450": (1./35, 1., [1, 0, 0], 2, 450.),
+             "SKIM_ggF_BulkGraviton_m500": (1./35, 1., [1, 0, 0], 2, 500.),
+             "SKIM_ggF_BulkGraviton_m550": (1./35, 1., [1, 0, 0], 2, 550.),
+             "SKIM_ggF_BulkGraviton_m600": (1./35, 1., [1, 0, 0], 2, 600.),
+             "SKIM_ggF_BulkGraviton_m650": (1./35, 1., [1, 0, 0], 2, 650.),
+             "SKIM_ggF_BulkGraviton_m700": (1./35, 1., [1, 0, 0], 2, 700.),
+             "SKIM_ggF_BulkGraviton_m750": (1./35, 1., [1, 0, 0], 2, 750.),
+             "SKIM_ggF_BulkGraviton_m800": (1./35, 1., [1, 0, 0], 2, 800.),
+             "SKIM_ggF_BulkGraviton_m850": (1./35, 1., [1, 0, 0], 2, 850.),
+             "SKIM_ggF_BulkGraviton_m900": (1./35, 1., [1, 0, 0], 2, 900.),
+             "SKIM_ggF_BulkGraviton_m1000": (1./35, 1., [1, 0, 0], 2, 1000.),
+             "SKIM_ggF_BulkGraviton_m1250": (1./35, 1., [1, 0, 0], 2, 1250.),
+             "SKIM_ggF_BulkGraviton_m1500": (1./35, 1., [1, 0, 0], 2, 1500.),
+             "SKIM_ggF_BulkGraviton_m1750": (1./35, 1., [1, 0, 0], 2, 1750.),
+             "SKIM_DY_amc_incl": (1., 1., [0, 1, 0], -1, -1.),
+             "SKIM_TT_fullyLep": (1., 1., [0, 0, 1], -1, -1.),
+             # # "SKIM_TT_semiLep": (1., 1., [0, 0, 1], -1, -1.),
+             # # "SKIM_GluGluHToTauTau": (1., 1., [0, 0, 0, 0, 1, 0], -1, -1.),
+             # # "SKIM_ttHToTauTau": (1., 1., [0, 0, 0, 1], -1, -1.),
          },
          columns_to_read=[
              "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau1_charge",
@@ -115,14 +126,8 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              "bjet2_px": (("bjet2_pt", "bjet2_dphi"), (lambda a, b: a * np.cos(b))),
              "bjet2_py": (("bjet2_pt", "bjet2_dphi"), (lambda a, b: a * np.sin(b))),
              "bjet2_pz": (("bjet2_pt", "bjet2_eta"), (lambda a, b: a * np.sinh(b))),
-             # "dau1_mt": (("dau1_pz", "dau1_e"), (lambda z, e: np.sqrt(e**2-z**2))),
-             # "dau2_mt": (("dau2_pz", "dau2_e"), (lambda z, e: np.sqrt(e**2-z**2))),
-             # "mT_tau1": (("dau1_mt", "dau1_px", "dau1_py", "met_et"), (lambda e1, x1, y1, e2: np.sqrt((e1+e2)**2-(x1+e2)**2-(y1+0)**2))),
-             # "mT_tau2": (("dau2_mt", "dau2_px", "dau2_py", "met_et"), (lambda e1, x1, y1, e2: np.sqrt((e1+e2)**2-(x1+e2)**2-(y1+0)**2))),
-             # "mT_tautau": (("dau1_mt", "dau1_px", "dau1_py", "dau2_mt", "dau2_px", "dau2_py", "met_et"), (lambda e1, x1, y1, e2, x2, y2, e3: np.sqrt((e1+e2+e3)**2-(x1+x2+e3)**2-(y1+y2+0)**2))),
          },
          input_names=[
-             # "met_et", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py",
              "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
              "ditau_deltaphi", "ditau_deltaeta",
              "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso",
@@ -142,12 +147,11 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
          selections=[
              (("nbjetscand",), (lambda a: a > 1)),
              (("pairType",), (lambda a: a < 3)),
-             # (("genLeptons_matched",), (lambda a: a == 1)),
-             # (("genBQuarks_matched",),(lambda a: a == 1)),
              (("nleps",), (lambda a: a == 0)),
              (("isOS",), (lambda a: a == 1)),
              (("dau2_deepTauVsJet",), (lambda a: a >= 5)),
-             (("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"), (lambda a, b, c, d: (((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
+             (("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"), (lambda a, b, c, d: (
+                 ((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
 
          ],
          embedding_expected_inputs=[
@@ -195,7 +199,8 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
     recoGenTauH_mass_train = []
     recoGenTauH_mass_valid = []
 
-    mass_loss_input_indices = [input_names.index(x) for x in ["dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau2_px", "dau2_py", "dau2_pz", "dau2_e"]]
+    mass_loss_input_indices = [input_names.index(x) for x in [
+        "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau2_px", "dau2_py", "dau2_pz", "dau2_e"]]
     mass_loss_inputs_train = []
     mass_loss_inputs_valid = []
 
@@ -225,9 +230,14 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
         classes = [target_classes] * nev
         recoGenTauH_mass = d["recoGenTauH_mass"]
 
-        inputs = inputs.astype([(name, np.float32) for name in inputs.dtype.names], copy=False).view(np.float32).reshape((-1, len(inputs.dtype)))
-        cat_inputs = cat_inputs.astype([(name, np.float32) for name in cat_inputs.dtype.names], copy=False).view(np.float32).reshape((-1, len(cat_inputs.dtype)))
-        targets = targets.astype([(name, np.float32) for name in targets.dtype.names], copy=False).view(np.float32).reshape((-1, len(targets.dtype)))
+        inputs = inputs.astype([(name, np.float32) for name in inputs.dtype.names], copy=False).view(
+            np.float32).reshape((-1, len(inputs.dtype)))
+
+        cat_inputs = cat_inputs.astype([(name, np.float32) for name in cat_inputs.dtype.names], copy=False).view(
+            np.float32).reshape((-1, len(cat_inputs.dtype)))
+
+        targets = targets.astype([(name, np.float32) for name in targets.dtype.names], copy=False).view(
+            np.float32).reshape((-1, len(targets.dtype)))
 
         mass_loss_inputs = inputs[:, mass_loss_input_indices]
 
@@ -268,18 +278,22 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
         target_train.append(targets[train_mask][quantile_mask])
         target_valid.append(targets[~train_mask])
 
-        classes_train.append(np.array(classes, dtype="float32")[train_mask][quantile_mask])
+        classes_train.append(np.array(classes, dtype="float32")[
+                             train_mask][quantile_mask])
         classes_valid.append(np.array(classes, dtype="float32")[~train_mask])
 
-        recoGenTauH_mass_train.append(recoGenTauH_mass[train_mask][quantile_mask])
+        recoGenTauH_mass_train.append(
+            recoGenTauH_mass[train_mask][quantile_mask])
         recoGenTauH_mass_valid.append(recoGenTauH_mass[~train_mask])
 
-        mass_loss_inputs_train.append(mass_loss_inputs[train_mask][quantile_mask])
+        mass_loss_inputs_train.append(
+            mass_loss_inputs[train_mask][quantile_mask])
         mass_loss_inputs_valid.append(mass_loss_inputs[~train_mask])
 
         batch_weights.append(batch_weight)
 
-        event_weights_train.append(event_weights[train_mask][quantile_mask][..., None])
+        event_weights_train.append(
+            event_weights[train_mask][quantile_mask][..., None])
         event_weights_valid.append(event_weights[~train_mask][..., None])
 
     spins = list(spins)
@@ -320,9 +334,12 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
         target_valid = np.concatenate(target_valid, axis=0)
         classes_train = np.concatenate(classes_train, axis=0)
         classes_valid = np.concatenate(classes_valid, axis=0)
-        event_weights_train = np.concatenate([event_weights_train[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))], dtype="float32")
-        event_weights_valid = np.concatenate([event_weights_valid[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))], dtype="float32")
-        avg_weight = np.mean(np.concatenate([event_weights_train, event_weights_valid]), dtype="float32")
+        event_weights_train = np.concatenate(
+            [event_weights_train[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))], dtype="float32")
+        event_weights_valid = np.concatenate(
+            [event_weights_valid[i]*batch_weights[i]/nevents[i] for i in range(len(batch_weights))], dtype="float32")
+        avg_weight = np.mean(np.concatenate(
+            [event_weights_train, event_weights_valid]), dtype="float32")
         event_weights_train = event_weights_train/avg_weight
         event_weights_valid = event_weights_valid/avg_weight
         recoGenTauH_mass_train = np.concatenate(recoGenTauH_mass_train, axis=0)
@@ -353,7 +370,8 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
                                                  dropout_rate=dropout_rate)
     model.summary()
 
-    loss_fns = create_losses(regularization_weights, l2_norm, classifier_weight, mass_loss_weight, mass_loss_input_indices)
+    loss_fns = create_losses(regularization_weights, l2_norm,
+                             classifier_weight, mass_loss_weight)
     if target_means is not None and target_stds is not None:
         for name, loss_fn in loss_fns.items():
             if "mse" in name:
@@ -528,7 +546,8 @@ def create_dataset(inputs, cat_inputs, targets, event_weights, recoGenTauH_mass,
     nevents = inputs.shape[0]
 
     # create a tf dataset
-    data = (inputs, cat_inputs, targets, event_weights, recoGenTauH_mass, mass_loss_inputs)
+    data = (inputs, cat_inputs, targets, event_weights,
+            recoGenTauH_mass, mass_loss_inputs)
 
     ds = tf.data.Dataset.from_tensor_slices(data)
 
@@ -687,7 +706,7 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
 
 
 # define the losses
-def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weight=0., mass_loss_input_indices=[]):
+def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weight=0.):
     n_modelweights = sum(functools.reduce(mul, w.shape) for w in modelweights)
 
     loss_dict = {}
@@ -700,7 +719,8 @@ def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weig
         event_weights = kwargs["event_weights"]
         with gpu:
             # compute the mse loss
-            loss_mse = tf.reduce_mean(event_weights * (labels - predictions) ** 2.)
+            loss_mse = tf.reduce_mean(
+                event_weights * (labels - predictions) ** 2.)
             return loss_mse
 
     loss_dict["mse"] = loss_mse_fn
@@ -728,7 +748,8 @@ def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weig
             with gpu:
                 # ensure proper prediction values before applying log's
                 predictions = tf.clip_by_value(predictions, 1e-6, 1 - 1e-6)
-                loss_ce = tf.reduce_mean(event_weights * -labels * tf.math.log(predictions))
+                loss_ce = tf.reduce_mean(
+                    event_weights * -labels * tf.math.log(predictions))
                 return classifier_weight * loss_ce
 
         loss_dict["ce"] = loss_ce_fn
@@ -743,15 +764,19 @@ def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weig
 
             predicted_mass = (mass_loss_inputs[:, 3] + mass_loss_inputs[:, 7] + tf.sqrt(predictions[:, 0]**2+predictions[:, 1] **
                               2+predictions[:, 2]**2) + tf.sqrt(predictions[:, 3]**2+predictions[:, 4]**2+predictions[:, 5]**2))**2  # energy
-            predicted_mass -= (mass_loss_inputs[:, 0] + mass_loss_inputs[:, 4] + predictions[:, 0] + predictions[:, 3])**2  # px
-            predicted_mass -= (mass_loss_inputs[:, 1] + mass_loss_inputs[:, 5] + predictions[:, 1] + predictions[:, 4])**2  # py
-            predicted_mass -= (mass_loss_inputs[:, 2] + mass_loss_inputs[:, 6] + predictions[:, 2] + predictions[:, 5])**2  # pz
+            predicted_mass -= (mass_loss_inputs[:, 0] + mass_loss_inputs[:,
+                               4] + predictions[:, 0] + predictions[:, 3])**2  # px
+            predicted_mass -= (mass_loss_inputs[:, 1] + mass_loss_inputs[:,
+                               5] + predictions[:, 1] + predictions[:, 4])**2  # py
+            predicted_mass -= (mass_loss_inputs[:, 2] + mass_loss_inputs[:,
+                               6] + predictions[:, 2] + predictions[:, 5])**2  # pz
             predicted_mass = tf.sqrt(predicted_mass)
 
             event_weights = kwargs["event_weights"]
             with gpu:
                 # compute the mass loss
-                loss_mass = tf.reduce_mean(event_weights * (recoGenTauH_mass - predicted_mass) ** 2.)
+                loss_mass = tf.reduce_mean(
+                    event_weights * (recoGenTauH_mass - predicted_mass) ** 2.)
                 return mass_loss_weight * loss_mass
 
         loss_dict["mass"] = loss_mass_fn
@@ -762,7 +787,8 @@ def create_losses(modelweights, l2_norm=10, classifier_weight=0., mass_loss_weig
 
 def create_optimizer(initial_learning_rate):
     with gpu:
-        learning_rate = tf.Variable(initial_learning_rate, dtype=tf.float32, trainable=False)
+        learning_rate = tf.Variable(
+            initial_learning_rate, dtype=tf.float32, trainable=False)
         optimizer = tf.keras.optimizers.Adam(learning_rate)
     return optimizer, learning_rate
 
@@ -815,8 +841,10 @@ def training_loop(
             return tensorboard_dir and os.path.join(tensorboard_dir, kind)
 
         # tb_train_batch_add, tb_train_batch_flush = create_tensorboard_callbacks(tb_log_dir("train_batch"))
-        tb_train_add, tb_train_flush = create_tensorboard_callbacks(tb_log_dir("train"))
-        tb_valid_add, tb_valid_flush = create_tensorboard_callbacks(tb_log_dir("valid"))
+        tb_train_add, tb_train_flush = create_tensorboard_callbacks(
+            tb_log_dir("train"))
+        tb_valid_add, tb_valid_flush = create_tensorboard_callbacks(
+            tb_log_dir("valid"))
 
     # helper to update metrics
     def update_metrics(kind, step, losses, total_loss):
@@ -893,7 +921,8 @@ def training_loop(
             losses = {
                 name: loss_fn(
                     labels=(classes if "ce" in name else targets),
-                    predictions=(predictions[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions),
+                    predictions=(predictions[pred_i] if (pred_i := getattr(
+                        loss_fn, "prediction_index", None)) != None else predictions),
                     event_weights=event_weights,
                     recoGenTauH_mass=recoGenTauH_mass,
                     mass_loss_inputs=mass_loss_inputs,
@@ -925,7 +954,8 @@ def training_loop(
                 losses_valid = {
                     name: loss_fn(
                         labels=(classes_valid if "ce" in name else targets_valid),
-                        predictions=(predictions_valid[pred_i] if (pred_i := getattr(loss_fn, "prediction_index", None)) != None else predictions_valid),
+                        predictions=(predictions_valid[pred_i] if (pred_i := getattr(
+                            loss_fn, "prediction_index", None)) != None else predictions_valid),
                         event_weights=event_weights_valid,
                         recoGenTauH_mass=recoGenTauH_mass_valid,
                         mass_loss_inputs=mass_loss_inputs_valid,
@@ -936,7 +966,8 @@ def training_loop(
                 for name, loss_tensor in losses_valid.items():
                     losses_valid_avg[name].append(loss_tensor)
                 loss_valid_avg.append(tf.add_n(list(losses_valid.values())))
-            is_best = update_metrics("valid", step, losses_valid_avg, loss_valid_avg)
+            is_best = update_metrics(
+                "valid", step, losses_valid_avg, loss_valid_avg)
 
             # store the best model
             if is_best:
