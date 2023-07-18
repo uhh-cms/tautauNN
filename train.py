@@ -171,6 +171,8 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
          gradient_clipping=False,
          classifier_weight=1.,
          mass_loss_weight=1./10000.,
+         parameterize_spin=True,
+         parameterize_mass=True,
          ):
 
     inputs_train = []
@@ -199,14 +201,15 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
     event_weights_train = []
     event_weights_valid = []
 
-    input_means = []
-    input_vars = []
-
     target_means = []
     target_stds = []
 
-    for sample, (batch_weight, event_weight, target_classes) in samples.items():
-        d, event_weights = load_sample(basepath, sample, event_weight, columns_to_read, selections)
+    spins = set()
+    masses = set()
+
+    for sample, (batch_weight, event_weight, target_classes, spin, mass) in samples.items():
+        d, event_weights = load_sample(
+            basepath, sample, event_weight, columns_to_read, selections)
         nev = len(event_weights)
 
         d = calc_new_columns(d, columns_to_add)
@@ -223,9 +226,15 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
 
         mass_loss_inputs = inputs[:, mass_loss_input_indices]
 
-        # input feature scaling
-        input_means.append(np.mean(inputs, axis=0))
-        input_vars.append(np.var(inputs, axis=0))
+        if parameterize_spin:
+            if spin > -1:
+                spins.add(np.float32(spin))
+            cat_inputs = np.append(cat_inputs, [[np.float32(spin)]]*nev, axis=1)
+
+        if parameterize_mass:
+            if mass > -1:
+                masses.add(mass)
+            inputs = np.append(inputs, [[np.float32(mass)]]*nev, axis=1)
 
         # output scaling
         if output_scaling:
@@ -268,6 +277,9 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
         event_weights_train.append(event_weights[train_mask][quantile_mask][..., None])
         event_weights_valid.append(event_weights[~train_mask][..., None])
 
+    spins = list(spins)
+    masses = list(masses)
+
     if output_scaling:
         target_means = np.mean(target_means, axis=0)
         target_stds = np.mean(target_stds, axis=0)
@@ -279,6 +291,15 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
 
     input_means = np.sum(np.concatenate([i * b/len(i) for i, b in zip(inputs_train, batch_weights)]), axis=0)/np.sum([b for b in batch_weights], axis=0)
     input_vars = np.sum(np.concatenate([i**2 * b/len(i) for i, b in zip(inputs_train, batch_weights)]), axis=0)/np.sum([b for b in batch_weights], axis=0) - input_means**2
+
+    if parameterize_spin:
+        cat_input_names.append("spin")
+        embedding_expected_inputs += [spins]
+
+    if parameterize_mass:
+        input_names.append("mass")
+        input_means[-1] = np.mean(masses)
+        input_vars[-1] = np.var(masses)
 
     if use_batch_composition:
         dataset_train = MultiDataset(zip(zip(inputs_train, cat_inputs_train, target_train, classes_train, event_weights_train,
@@ -353,6 +374,8 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
                                                     learning_rate_patience=learning_rate_patience,
                                                     max_learning_rate_reductions=max_learning_rate_reductions,
                                                     gradient_clipping=gradient_clipping,
+                                                    spins=spins,
+                                                    masses=masses,
                                                     )
 
     model.set_weights(best_weights)
@@ -753,6 +776,8 @@ def training_loop(
     learning_rate_patience=10,
     max_learning_rate_reductions=5,
     gradient_clipping=False,
+    spins=[],
+    masses=[],
 ):
     early_stopping_counter = 0
     learning_rate_reduction_counter = 0
@@ -801,30 +826,51 @@ def training_loop(
         # validation specific
         if kind == "valid":
             metrics["step_val"] += 1
-            metrics["mse_valid_best"] = min(metrics["mse_valid_best"], metrics[f"loss_mse_valid"])
+            metrics["mse_valid_best"] = min(
+                metrics["mse_valid_best"], metrics[f"loss_mse_valid"])
             metrics["total_validation_loss"] = tf.reduce_mean(total_loss)
             if step == 0:
                 metrics["start_validation_loss"] = metrics["total_validation_loss"]
             if tensorboard_dir is not None:
-                tb_valid_add("scalar", "loss/total", metrics["total_validation_loss"], step=step)
+                tb_valid_add("scalar", "loss/total",
+                             metrics["total_validation_loss"], step=step)
                 for key, l in losses.items():
-                    tb_valid_add("scalar", "loss/" + key, tf.reduce_mean(l), step=step)
+                    tb_valid_add("scalar", "loss/" + key,
+                                 tf.reduce_mean(l), step=step)
                 tb_valid_flush()
             return metrics[f"loss_mse_valid"] == metrics["mse_valid_best"]
         else:
             if tensorboard_dir is not None:
-                tb_train_add("scalar", "optimizer/learning_rate", learning_rate, step=step)
-                tb_train_add("scalar", "loss/total", tf.reduce_mean(total_loss), step=step)
+                tb_train_add("scalar", "optimizer/learning_rate",
+                             learning_rate, step=step)
+                tb_train_add("scalar", "loss/total",
+                             tf.reduce_mean(total_loss), step=step)
                 for key, l in losses.items():
-                    tb_train_add("scalar", "loss/" + key, tf.reduce_mean(l), step=step)
+                    tb_train_add("scalar", "loss/" + key,
+                                 tf.reduce_mean(l), step=step)
                 for v in model.trainable_variables:
-                    tb_train_add("histogram", "weight/{}".format(v.name), v, step=step)
+                    tb_train_add(
+                        "histogram", "weight/{}".format(v.name), v, step=step)
                 for v, g in zip(model.trainable_variables, gradients):
-                    tb_train_add("histogram", "gradient/{}".format(v.name), g, step=step)
+                    tb_train_add(
+                        "histogram", "gradient/{}".format(v.name), g, step=step)
                 tb_train_flush()
 
+    n_masses = len(masses)
+    n_spins = len(spins)
+    batch_size = 0
     # start the loop
     for step, (inputs, cat_inputs, targets, classes, event_weights, recoGenTauH_mass, mass_loss_inputs) in enumerate(dataset_train):
+        if step == 0:
+            batch_size = len(event_weights)
+
+        if masses:
+            para_mass = tf.transpose(tf.where(inputs[:, -1] == -1, tf.gather(masses, tf.random.categorical(tf.math.log([[1.]*n_masses]), batch_size)), inputs[:, -1]))
+            inputs = tf.concat([inputs[:, 0:-1], para_mass], axis=1)
+
+        if spins:
+            para_spin = tf.transpose(tf.where(cat_inputs[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*n_spins]), batch_size)), cat_inputs[:, -1]))
+            cat_inputs = tf.concat([cat_inputs[:, 0:-1], para_spin], axis=1)
 
         # do a train step
         with tf.GradientTape() as tape:
@@ -858,7 +904,18 @@ def training_loop(
             losses_valid_avg = defaultdict(list)
             loss_valid_avg = []
             for (inputs_valid, cat_inputs_valid, targets_valid, classes_valid, event_weights_valid, recoGenTauH_mass_valid, mass_loss_inputs_valid) in dataset_valid:
-                predictions_valid = model([inputs_valid, cat_inputs_valid],  training=False)
+
+                if masses:
+                    para_mass_valid = tf.transpose(tf.where(inputs_valid[:, -1] == -1, tf.gather(masses, tf.random.categorical(tf.math.log([[1.]*n_masses]), batch_size)), inputs_valid[:, -1]))
+                    inputs_valid = tf.concat([inputs_valid[:, 0:-1], para_mass_valid], axis=1)
+
+                if spins:
+
+                    para_spin_valid = tf.transpose(tf.where(cat_inputs_valid[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*n_spins]), batch_size)), cat_inputs_valid[:, -1]))
+                    cat_inputs_valid = tf.concat([cat_inputs_valid[:, 0:-1], para_spin_valid], axis=1)
+
+                predictions_valid = model(
+                    [inputs_valid, cat_inputs_valid],  training=False)
 
                 losses_valid = {
                     name: loss_fn(

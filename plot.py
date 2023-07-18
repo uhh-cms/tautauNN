@@ -147,16 +147,31 @@ def main(
                     ],
         train_valid_eventnumber_modulo=4,
         plot_only="valid",
+        parameterize_spin=[0, 2],
+        parameterize_mass=[300, 700, 1750],
 ):
     hep.style.use("CMS")
 
     model = tf.keras.models.load_model(modelpath, compile=False)
+    if compare_model:
+        model2 = tf.keras.models.load_model(compare_model, compile=False)
 
     data = {}
+    suffixes = set()
 
     for sample, (batch_weight, event_weight) in samples.items():
+        if parameterize_spin:
+            if "Radion" in sample and 0 not in parameterize_spin:
+                continue
+            if "Graviton" in sample and 2 not in parameterize_spin:
+                continue
 
-        d, event_weights = load_sample(basepath, sample, event_weight, columns_to_read, selections)
+        if parameterize_mass:
+            if "ggF" in sample and int(sample.split("m")[-1]) not in parameterize_mass:
+                continue
+
+        d, event_weights = load_sample(
+            basepath, sample, event_weight, columns_to_read, selections)
         nevents = len(event_weights)
         weights = event_weights*batch_weight/nevents
         d = rfn.rec_append_fields(d, "weight", weights)
@@ -171,184 +186,367 @@ def main(
         inputs = d[input_names]
         cat_inputs = d[cat_input_names]
 
-        inputs = inputs.astype([(name, np.float32) for name in inputs.dtype.names], copy=False).view(np.float32).reshape((-1, len(inputs.dtype)))
-        cat_inputs = cat_inputs.astype([(name, np.float32) for name in cat_inputs.dtype.names], copy=False).view(np.float32).reshape((-1, len(cat_inputs.dtype)))
+        inputs = inputs.astype([(name, np.float32) for name in inputs.dtype.names], copy=False).view(
+            np.float32).reshape((-1, len(inputs.dtype)))
+        cat_inputs = cat_inputs.astype([(name, np.float32) for name in cat_inputs.dtype.names], copy=False).view(
+            np.float32).reshape((-1, len(cat_inputs.dtype)))
 
-        predictions = model.predict([inputs, cat_inputs])
+        if compare_model:
+            predictions2 = model2.predict([inputs, cat_inputs])
 
-        d = rfn.rec_append_fields(d, ["reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"], [
-                                  predictions[1][:, i] for i in range(predictions[1].shape[1])], dtypes=["<f4"] * predictions[1].shape[1])
+            d = rfn.rec_append_fields(d, ["reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz",
+                                          "class_HH", "class_DY", "class_TT"],
+                                      [predictions2[1][:, i] for i in range(predictions2[1].shape[1])] + [predictions2[2][:, i] for i in range(predictions2[2].shape[1])],
+                                      dtypes=["<f4"] * predictions2[1].shape[1] + ["<f4"] * predictions2[2].shape[1])
 
-        reg_H = {
-            "reg_H_e": (("dau1_e", "reg_nu1_px", "reg_nu1_py", "reg_nu1_pz", "dau2_e", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"), (lambda a, b, c, d, e, f, g, h: a + np.sqrt(b**2+c**2+d**2) + e + np.sqrt(f**2+g**2+h**2))),
-            "reg_H_px": (("dau1_px", "reg_nu1_px", "dau2_px", "reg_nu2_px"), (lambda a, b, c, d: a + b + c + d)),
-            "reg_H_py": (("dau1_py", "reg_nu1_py", "dau2_py", "reg_nu2_py"), (lambda a, b, c, d: a + b + c + d)),
-            "reg_H_pz": (("dau1_pz", "reg_nu1_pz", "dau2_pz", "reg_nu2_pz"), (lambda a, b, c, d: a + b + c + d)),
-            "reg_H_m": (("reg_H_e", "reg_H_px", "reg_H_py", "reg_H_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
-            "reg_H_pt": (("reg_H_px", "reg_H_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
-            "reg_H_eta": (("reg_H_pt", "reg_H_pz"), (lambda a, b: np.arcsinh(b/a))),
-            "reg_H_phi": (("reg_H_px", "reg_H_py"), (lambda a, b: np.arctan2(a, b))),
-        }
-
-        d = calc_new_columns(d, reg_H)
-
-        reg_HH = {
-            "reg_HH_e": (("reg_H_e", "bH_e"), (lambda a, b: a + b)),
-            "reg_HH_px": (("reg_H_px", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d: a + b * np.cos(phi_mpi_to_pi(c-d)))),
-            "reg_HH_py": (("reg_H_py", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d: a + b * np.sin(phi_mpi_to_pi(c-d)))),
-            "reg_HH_pz": (("reg_H_pz", "bH_pt", "bH_eta"), (lambda a, b, c: a + b * np.sinh(c))),
-            "reg_HH_m": (("reg_HH_e", "reg_HH_px", "reg_HH_py", "reg_HH_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
-            "reg_HH_pt": (("reg_HH_px", "reg_HH_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
-        }
-
-        d = calc_new_columns(d, reg_HH)
-
-        svfit_HH = {
+        new_columns = {
             "svfit_HH_e": (("tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_SVFIT_eta", "bH_e"), (lambda a, b, c, d: np.sqrt(a**2 + (b * np.cosh(c))**2) + d)),
             "svfit_HH_px": (("tauH_SVFIT_pt", "tauH_SVFIT_phi", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d, e: a * np.cos(phi_mpi_to_pi(b-e)) + c * np.cos(phi_mpi_to_pi(d-e)))),
             "svfit_HH_py": (("tauH_SVFIT_pt", "tauH_SVFIT_phi", "bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c, d, e: a * np.sin(phi_mpi_to_pi(b-e)) + c * np.sin(phi_mpi_to_pi(d-e)))),
             "svfit_HH_pz": (("tauH_SVFIT_pt", "tauH_SVFIT_eta", "bH_pt", "bH_eta"), (lambda a, b, c, d: a * np.sinh(b) + c * np.sinh(d))),
             "svfit_HH_m": (("svfit_HH_e", "svfit_HH_px", "svfit_HH_py", "svfit_HH_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
             "svfit_HH_pt": (("svfit_HH_px", "svfit_HH_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
+            "bH_px": (("bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c: a * np.cos(phi_mpi_to_pi(b-c)))),
+            "bH_py": (("bH_pt", "bH_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b, c: a * np.sin(phi_mpi_to_pi(b-c)))),
+            "bH_pz": (("bH_pt", "bH_eta"), (lambda a, b: a * np.sinh(b))),
         }
 
-        d = calc_new_columns(d, svfit_HH)
+        if compare_model:
+            new_columns.update({
+                "reg_tau1_e": (("dau1_e", "reg_nu1_px", "reg_nu1_py", "reg_nu1_pz"), (lambda a, b, c, d: a + np.sqrt(b**2+c**2+d**2))),
+                "reg_tau1_px": (("dau1_px", "reg_nu1_px"), (lambda a, b: a + b)),
+                "reg_tau1_py": (("dau1_py", "reg_nu1_py"), (lambda a, b: a + b)),
+                "reg_tau1_pz": (("dau1_pz", "reg_nu1_pz"), (lambda a, b: a + b)),
+                "reg_tau2_e": (("dau2_e", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"), (lambda a, b, c, d: a + np.sqrt(b**2+c**2+d**2))),
+                "reg_tau2_px": (("dau2_px", "reg_nu2_px"), (lambda a, b: a + b)),
+                "reg_tau2_py": (("dau2_py", "reg_nu2_py"), (lambda a, b: a + b)),
+                "reg_tau2_pz": (("dau2_pz", "reg_nu2_pz"), (lambda a, b: a + b)),
+                "reg_H_e": (("reg_tau1_e", "reg_tau2_e"), (lambda a, b: a + b)),
+                "reg_H_px": (("reg_tau1_px", "reg_tau2_px"), (lambda a, b: a + b)),
+                "reg_H_py": (("reg_tau1_py", "reg_tau2_py"), (lambda a, b: a + b)),
+                "reg_H_pz": (("reg_tau1_pz", "reg_tau2_pz"), (lambda a, b: a + b)),
+                "reg_H_m": (("reg_H_e", "reg_H_px", "reg_H_py", "reg_H_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+                "reg_H_pt": (("reg_H_px", "reg_H_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
+                "reg_H_eta": (("reg_H_pt", "reg_H_pz"), (lambda a, b: np.arcsinh(b/a))),
+                "reg_H_phi": (("reg_H_px", "reg_H_py"), (lambda a, b: np.arctan2(b, a))),
+                "reg_HH_e": (("reg_H_e", "bH_e"), (lambda a, b: a + b)),
+                "reg_HH_px": (("reg_H_px", "bH_px"), (lambda a, b: a + b)),
+                "reg_HH_py": (("reg_H_py", "bH_py"), (lambda a, b: a + b)),
+                "reg_HH_pz": (("reg_H_pz", "bH_pz"), (lambda a, b: a + b)),
+                "reg_HH_m": (("reg_HH_e", "reg_HH_px", "reg_HH_py", "reg_HH_pz"), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+                "reg_HH_pt": (("reg_HH_px", "reg_HH_py"), (lambda a, b: np.sqrt(a**2 + b**2))),
+            })
 
-        d = rfn.rec_append_fields(d, ["class_HH", "class_DY", "class_TT"], [
-                                  predictions[2][:, i] for i in range(predictions[2].shape[1])], dtypes=["<f4"] * predictions[2].shape[1])
+        for spin in (parameterize_spin if parameterize_spin else [""]):
+            for mass in (parameterize_mass if parameterize_mass else [""]):
+
+                suffix = ""
+
+                if spin is not "":
+                    tmp_cat_inputs = np.append(cat_inputs, np.expand_dims([spin]*len(cat_inputs), axis=1), axis=1)
+                    suffix += f"_spin{str(spin)}"
+                else:
+                    tmp_cat_inputs = cat_inputs
+
+                if mass is not "":
+                    tmp_inputs = np.append(inputs, np.expand_dims([mass]*len(inputs), axis=1), axis=1)
+                    suffix += f"_m{str(mass)}"
+                else:
+                    tmp_inputs = inputs
+
+                suffixes.add(suffix)
+                predictions = model.predict([tmp_inputs, tmp_cat_inputs])
+                classification = len(predictions) > 2
+
+                d = rfn.rec_append_fields(d, ["reg_nu1_px" + suffix, "reg_nu1_py" + suffix, "reg_nu1_pz" + suffix, "reg_nu2_px" + suffix, "reg_nu2_py" + suffix, "reg_nu2_pz" + suffix] +
+                                          (["class_HH" + suffix, "class_DY" + suffix, "class_TT" + suffix] if classification else []),
+                                          [predictions[1][:, i] for i in range(predictions[1].shape[1])] + ([predictions[2][:, i] for i in range(predictions[2].shape[1])] if classification else []),
+                                          dtypes=["<f4"] * predictions[1].shape[1] + (["<f4"] * predictions[2].shape[1] if classification else []))
+
+                new_columns.update({
+                    "reg_tau1_e" + suffix: (("dau1_e", "reg_nu1_px" + suffix, "reg_nu1_py" + suffix, "reg_nu1_pz" + suffix), (lambda a, b, c, d: a + np.sqrt(b**2+c**2+d**2))),
+                    "reg_tau1_px" + suffix: (("dau1_px", "reg_nu1_px" + suffix), (lambda a, b: a + b)),
+                    "reg_tau1_py" + suffix: (("dau1_py", "reg_nu1_py" + suffix), (lambda a, b: a + b)),
+                    "reg_tau1_pz" + suffix: (("dau1_pz", "reg_nu1_pz" + suffix), (lambda a, b: a + b)),
+                    "reg_tau2_e" + suffix: (("dau2_e", "reg_nu2_px" + suffix, "reg_nu2_py" + suffix, "reg_nu2_pz" + suffix), (lambda a, b, c, d: a + np.sqrt(b**2+c**2+d**2))),
+                    "reg_tau2_px" + suffix: (("dau2_px", "reg_nu2_px" + suffix), (lambda a, b: a + b)),
+                    "reg_tau2_py" + suffix: (("dau2_py", "reg_nu2_py" + suffix), (lambda a, b: a + b)),
+                    "reg_tau2_pz" + suffix: (("dau2_pz", "reg_nu2_pz" + suffix), (lambda a, b: a + b)),
+                    "reg_H_e" + suffix: (("reg_tau1_e" + suffix, "reg_tau2_e" + suffix), (lambda a, b: a + b)),
+                    "reg_H_px" + suffix: (("reg_tau1_px" + suffix, "reg_tau2_px" + suffix), (lambda a, b: a + b)),
+                    "reg_H_py" + suffix: (("reg_tau1_py" + suffix, "reg_tau2_py" + suffix), (lambda a, b: a + b)),
+                    "reg_H_pz" + suffix: (("reg_tau1_pz" + suffix, "reg_tau2_pz" + suffix), (lambda a, b: a + b)),
+                    "reg_H_m" + suffix: (("reg_H_e" + suffix, "reg_H_px" + suffix, "reg_H_py" + suffix, "reg_H_pz" + suffix), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+                    "reg_H_pt" + suffix: (("reg_H_px" + suffix, "reg_H_py" + suffix), (lambda a, b: np.sqrt(a**2 + b**2))),
+                    "reg_H_eta" + suffix: (("reg_H_pt" + suffix, "reg_H_pz" + suffix), (lambda a, b: np.arcsinh(b/a))),
+                    "reg_H_phi" + suffix: (("reg_H_px" + suffix, "reg_H_py" + suffix), (lambda a, b: np.arctan2(b, a))),
+                    "reg_HH_e" + suffix: (("reg_H_e" + suffix, "bH_e"), (lambda a, b: a + b)),
+                    "reg_HH_px" + suffix: (("reg_H_px" + suffix, "bH_px"), (lambda a, b: a + b)),
+                    "reg_HH_py" + suffix: (("reg_H_py" + suffix, "bH_py"), (lambda a, b: a + b)),
+                    "reg_HH_pz" + suffix: (("reg_H_pz" + suffix, "bH_pz"), (lambda a, b: a + b)),
+                    "reg_HH_m" + suffix: (("reg_HH_e" + suffix, "reg_HH_px" + suffix, "reg_HH_py" + suffix, "reg_HH_pz" + suffix), (lambda a, b, c, d: np.sqrt(a**2-b**2-c**2-d**2))),
+                    "reg_HH_pt" + suffix: (("reg_HH_px" + suffix, "reg_HH_py" + suffix), (lambda a, b: np.sqrt(a**2 + b**2))),
+                })
+        d = calc_new_columns(d, new_columns)
+
         data[sample] = d
 
-    # plot_ROC(outputdir,
-    #          "ROC_classHH_HHvsDY",
-    #          "HH class (HH vs DY)",
-    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_DY_amc_incl"])]),
-    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_DY_amc_incl"]["class_HH"]]),
-    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #                                 [data["SKIM_DY_amc_incl"]["weight"]])
-    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
-    #          )
-    #
-    # plot_ROC(outputdir,
-    #          "ROC_classHH_HHvsTTdl",
-    #          r"HH class (HH vs $t\overline{t}$ dl)",
-    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_TT_fullyLep"])]),
-    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_TT_fullyLep"]["class_HH"]]),
-    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #                                 [data["SKIM_TT_fullyLep"]["weight"]])
-    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
-    #          )
-    #
-    # plot_ROC(outputdir,
-    #          "ROC_classHH_HHvsTTsl",
-    #          r"HH class (HH vs $t\overline{t}$ sl)",
-    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_TT_semiLep"])]),
-    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_TT_semiLep"]["class_HH"]]),
-    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #                                 [data["SKIM_TT_semiLep"]["weight"]])
-    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
-    #          )
-    #
-    # plot_ROC(outputdir,
-    #          "ROC_classHH_HHvsTTH",
-    #          r"HH class (HH vs $t\overline{t}$H*)",
-    #          np.concatenate([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] + [[0]*len(data["SKIM_ttHToTauTau"])]),
-    #          np.concatenate([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] + [data["SKIM_ttHToTauTau"]["class_HH"]]),
-    #          weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #                                 [data["SKIM_ttHToTauTau"]["weight"]])
-    #          # weights=np.concatenate([data[f"{s}"]["lumi_weight"] * data[f"{s}"]["plot_weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
-    #          #                        [data["SKIM_DY_amc_incl"]["lumi_weight"] * data["SKIM_DY_amc_incl"]["plot_weight"]])
-    #          )
-    #
-    # exit()
+        # total_events = len(d)
+        # print(f"Total events: {total_events}")
+        #
+        # svfit_ellipse_mask = ((d["tauH_SVFIT_mass"]-116)/35)**2 + ((d["bH_mass"]-111)/45)**2 < 1
+        # svfit_ellipse_events = len(d[svfit_ellipse_mask])
+        # print(f"Selected (svfit ellipse) events: {svfit_ellipse_events}, eff: {svfit_ellipse_events*100/total_events}%")
+        #
+        # reg_ellipse_mask = ((d["reg_H_m"]-122)/25)**2 + ((d["bH_mass"]-111)/45)**2 < 1
+        # reg_ellipse_events = len(d[reg_ellipse_mask])
+        # print(f"Selected (ellipse) events: {reg_ellipse_events}, eff: {reg_ellipse_events*100/total_events}%")
+        #
+        # hh_class_mask = np.argmax([d["class_HH"], d["class_DY"], d["class_TT"]], axis=0) == 0
+        # hh_class_events = len(d[hh_class_mask])
+        # print(f"Selected (classifier) events: {hh_class_events}, eff: {hh_class_events*100/total_events}%")
+        #
+        # reg_ellipse_hh_class_mask = reg_ellipse_mask & hh_class_mask
+        # reg_ellipse_hh_class_events = len(d[reg_ellipse_hh_class_mask])
+        # print(f"Selected (ellipse + classifier) events: {reg_ellipse_hh_class_events}, eff: {reg_ellipse_hh_class_events*100/total_events}%")
 
-    for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m", "reg_HH_pt", "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m", "class_HH", "class_DY", "class_TT", "class_H"],
-                                       [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]",
-                                        "Classifier HH output", "Classifier DY output", "Classifier TT output"],
-                                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                                       [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000, 1, 1, 1]):
+    for suffix in suffixes:
+        tmp_outputdir = outputdir
+        signal_sample_name = ""
+        if suffix is not "":
+            mass = suffix.split("_")[-1]
+            spin = "Radion" if "spin0" in suffix else "BulkGraviton"
+            signal_sample_name = f"SKIM_ggF_{spin}_{mass}"
+            tmp_outputdir += f"/para{suffix}"
 
-        # for var, xlabel in zip(["reg_H_m",],
-        #                        [r"$m_{\tau\tau,reg}$ [GeV]"]):
-        plot_1Dhist(outputdir,
-                    f"{var}",
-                    [
-                        [data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
-                        # [data["SKIM_GluGluHToTauTau"][f"{var}"]],
-                        [data["SKIM_DY_amc_incl"][f"{var}"]],
-                        [data["SKIM_TT_fullyLep"][f"{var}"]],
-                        [data["SKIM_TT_semiLep"][f"{var}"]],
-                        [data["SKIM_ttHToTauTau"][f"{var}"]]
-                    ],
-                    weights=[
-                        [data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s],
-                        # [data["SKIM_GluGluHToTauTau"]["weight"]],
-                        [data["SKIM_DY_amc_incl"]["weight"]],
-                        [data["SKIM_TT_fullyLep"]["weight"]],
-                        [data["SKIM_TT_semiLep"]["weight"]],
-                        [data["SKIM_ttHToTauTau"]["weight"]]
-                    ],
-                    labels=[
-                        "HH",
-                        # "H*",
-                        "DY",
-                        r"$t\overline{t}$ dl",
-                        r"$t\overline{t}$ sl*",
-                        r"$t\overline{t}$H*"
-                    ],
-                    nbins=50,
-                    xmin=xmin,
-                    xmax=xmax,
-                    xlabel=xlabel,
-                    normalized=True,
-                    )
+        if classification:
 
-    for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m", "reg_HH_pt", "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m", "class_HH", "class_DY", "class_TT", "class_H"],
-                                       [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]",
-                                        "Classifier HH output", "Classifier DY output", "Classifier TT output"],
-                                       [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                                       [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000, 1, 1, 1]):
-        plot_1Dhist(outputdir + "/signals",
-                    f"{var}",
-                    [[data["SKIM_GGHH_SM"][f"{var}"]], [data["SKIM_ggF_Radion_m300"][f"{var}"]], [data["SKIM_ggF_Radion_m700"][f"{var}"]], [data["SKIM_ggF_Radion_m1750"][f"{var}"]]],
-                    weights=[[data["SKIM_GGHH_SM"]["weight"]], [data["SKIM_ggF_Radion_m300"]["weight"]], [data["SKIM_ggF_Radion_m700"]["weight"]], [data["SKIM_ggF_Radion_m1750"]["weight"]]],
-                    labels=["HH SM", "HH m=300", "HH m=700", "HH m=1750"],
-                    nbins=50, xmin=xmin, xmax=xmax,
-                    xlabel=xlabel,
-                    normalized=True)
+            plot_ROC(tmp_outputdir,
+                     "ROC_classHH_HHvsDY"+suffix,
+                     f"HH{suffix} class (HH vs DY)",
+                     np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_DY_amc_incl"])]),
+                     np.concatenate(([data[f"{s}"]["class_HH"+suffix] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"+suffix]]) + [data["SKIM_DY_amc_incl"]["class_HH"+suffix]]),
+                     # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                     #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
+                     legend=True,
+                     linestyle="solid",
+                     clear_figure=not bool(compare_model),
+                     )
+            if compare_model:
+                plot_ROC(tmp_outputdir,
+                         "ROC_classHH_HHvsDY",
+                         f"HH class (HH vs DY)",
+                         np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_DY_amc_incl"])]),
+                         np.concatenate(([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"]]) + [data["SKIM_DY_amc_incl"]["class_HH"]]),
+                         # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                         #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
+                         legend=False,
+                         linestyle="dotted",
+                         clear_figure=True,
+                         )
 
-    # plot_1Dhist(outputdir,
-    #      "diff_to_truth_mass",
-    #      [[data[f"{s}"]["recoGenTauH_mass"] - data[f"{s}"]["reg_H_m"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["recoGenTauH_mass"] - data["SKIM_GluGluHToTauTau"]["reg_H_m"]], [data["SKIM_DY_amc_incl"]["recoGenTauH_mass"] - data["SKIM_DY_amc_incl"]["reg_H_m"]],
-    #       [data["SKIM_TT_fullyLep"]["recoGenTauH_mass"] - data["SKIM_TT_fullyLep"]["reg_H_m"]], [data["SKIM_TT_semiLep"]["recoGenTauH_mass"] - data["SKIM_TT_semiLep"]["reg_H_m"]]],
-    #      weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_GluGluHToTauTau"]["weight"]], [data["SKIM_DY_amc_incl"]["weight"]],
-    #               [data["SKIM_TT_fullyLep"]["weight"]], [data["SKIM_TT_semiLep"]["weight"]]],
-    #      labels=["HH", "H", "DY", "tt_dl", "tt_sl*"],
-    #      nbins=51,
-    #      xmin=-100,
-    #      xmax=100,
-    #      xlabel=r"$m_{\tau\tau,gen}$ - $m_{\tau\tau,reg}$ [GeV]",
-    #      normalized=True,
-    #      )
+            plot_ROC(tmp_outputdir,
+                     "ROC_classHH_HHvsTTdl"+suffix,
+                     f"HH{suffix} " + r"class (HH vs $t\overline{t}$ dl)",
+                     np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_TT_fullyLep"])]),
+                     np.concatenate(([data[f"{s}"]["class_HH"+suffix] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"+suffix]]) + [data["SKIM_TT_fullyLep"]["class_HH"+suffix]]),
+                     # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                     #                        [data["SKIM_TT_fullyLep"]["lumi_weight"]/data["SKIM_TT_fullyLep"]["weightsum"]])
+                     legend=True,
+                     linestyle="solid",
+                     clear_figure=not bool(compare_model),
+                     )
+            if compare_model:
+                plot_ROC(tmp_outputdir,
+                         "ROC_classHH_HHvsTTdl",
+                         f"HH " + r"class (HH vs $t\overline{t}$ dl)",
+                         np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_TT_fullyLep"])]),
+                         np.concatenate(([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"]]) + [data["SKIM_TT_fullyLep"]["class_HH"]]),
+                         # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                         #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
+                         legend=False,
+                         linestyle="dotted",
+                         clear_figure=True,
+                         )
 
-    # for var in float_inputs + int_inputs + targets:
-    #     print(f"Plotting variable {var}")
-    #     plot_1Dhist(outputdir,
-    #          f"{var}",
-    #          [[data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_DY_NLO_incl"][f"{var}"]], [data["SKIM_TT_fullyLep"][f"{var}"]]],
-    #          weights=[[data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s], [data["SKIM_DY_NLO_incl"]["weight"]], [data["SKIM_TT_fullyLep"]["weight"]]],
-    #          labels=["Signal", "DY", "tt_dl"],
-    #          nbins=50,
-    #          xmin=min([min(d[f"{var}"])for d in data.values()]),
-    #          xmax=max([max(d[f"{var}"])for d in data.values()]),
-    #          xlabel=f"{var}",
-    #          normalized=True,
-    #          )
+            plot_ROC(tmp_outputdir,
+                     "ROC_classHH_HHvsTTsl"+suffix,
+                     f"HH{suffix} " + r"class (HH vs $t\overline{t}$ sl)",
+                     np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_TT_semiLep"])]),
+                     np.concatenate(([data[f"{s}"]["class_HH"+suffix] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"+suffix]]) + [data["SKIM_TT_semiLep"]["class_HH"+suffix]]),
+                     # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                     #                        [data["SKIM_TT_semiLep"]["lumi_weight"]/data["SKIM_TT_semiLep"]["weightsum"]])
+                     legend=True,
+                     linestyle="solid",
+                     clear_figure=not bool(compare_model),
+                     )
+            if compare_model:
+                plot_ROC(tmp_outputdir,
+                         "ROC_classHH_HHvsTTsl",
+                         f"HH " + r"class (HH vs $t\overline{t}$ sl)",
+                         np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_TT_semiLep"])]),
+                         np.concatenate(([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"]]) + [data["SKIM_TT_semiLep"]["class_HH"]]),
+                         # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                         #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
+                         legend=False,
+                         linestyle="dotted",
+                         clear_figure=True,
+                         )
+
+            plot_ROC(tmp_outputdir,
+                     "ROC_classHH_HHvsTTH"+suffix,
+                     f"HH{suffix} " + r"class (HH vs $t\overline{t}$H)",
+                     np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_ttHToTauTau"])]),
+                     np.concatenate(([data[f"{s}"]["class_HH"+suffix] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"+suffix]]) + [data["SKIM_ttHToTauTau"]["class_HH"+suffix]]),
+                     # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                     #                        [data["SKIM_ttHToTauTau"]["lumi_weight"]/data["SKIM_ttHToTauTau"]["weightsum"]])
+                     legend=True,
+                     linestyle="solid",
+                     clear_figure=not bool(compare_model),
+                     )
+            if compare_model:
+                plot_ROC(tmp_outputdir,
+                         "ROC_classHH_HHvsTTH",
+                         f"HH " + r"class (HH vs $t\overline{t}$H)",
+                         np.concatenate(([[1]*len(data[f"{s}"]) for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [[1]*len(data[signal_sample_name])]) + [[0]*len(data["SKIM_ttHToTauTau"])]),
+                         np.concatenate(([data[f"{s}"]["class_HH"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["class_HH"]]) + [data["SKIM_ttHToTauTau"]["class_HH"]]),
+                         # weights=np.concatenate([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] +
+                         #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
+                         legend=False,
+                         linestyle="dotted",
+                         clear_figure=True,
+                         )
+
+        for var, xlabel, xmin, xmax in zip(["reg_H_m"+suffix, "reg_H_pt"+suffix, "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m"+suffix, "reg_HH_pt"+suffix, "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m"] +
+                                           (["class_HH"+suffix, "class_DY"+suffix, "class_TT"+suffix  # dl", "class_TTsl", "class_TTH", "class_GGH",
+                                             ] if classification else []),
+                                           [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]"] +
+                                           (["Classifier HH output", "Classifier DY output", "Classifier TT output",  # "Classifier TTsl output", "Classifier TTH output", "Classifier GGH output"
+                                             ] if classification else []),
+                                           [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] +
+                                           ([0, 0, 0,  # 0, 0, 0
+                                             ]if classification else []),
+                                           [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000] +
+                                           ([1, 1, 1,  # 1, 1, 1
+                                             ] if classification else [])
+                                           ):
+
+            # for var, xlabel in zip(["reg_H_m",],
+            #                        [r"$m_{\tau\tau,reg}$ [GeV]"]):
+            plot_1Dhist(tmp_outputdir,
+                        f"{var}",
+                        [
+                            ([data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name][f"{var}"]]),
+                            [data["SKIM_DY_amc_incl"][f"{var}"]],
+                            [data["SKIM_TT_fullyLep"][f"{var}"]],
+                            [data["SKIM_TT_semiLep"][f"{var}"]],
+                            [data["SKIM_ttHToTauTau"][f"{var}"]],
+                            # [data["SKIM_GluGluHToTauTau"][f"{var}"]],
+                        ],
+                        weights=[
+                            ([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["weight"]]),
+                            [data["SKIM_DY_amc_incl"]["weight"]],
+                            [data["SKIM_TT_fullyLep"]["weight"]],
+                            [data["SKIM_TT_semiLep"]["weight"]],
+                            [data["SKIM_ttHToTauTau"]["weight"]],
+                            # [data["SKIM_GluGluHToTauTau"]["weight"]],
+                        ],
+                        labels=[
+                            "HH"+suffix,
+                            "DY",
+                            r"$t\overline{t}$ dl",
+                            r"$t\overline{t}$ sl*",
+                            r"$t\overline{t}$H*",
+                            # r"ggH$\rightarrow\tau\tau$",
+                        ],
+                        nbins=50,
+                        xmin=xmin,
+                        xmax=xmax,
+                        xlabel=xlabel,
+                        normalized=True,
+                        legend=True,
+                        legend_loc="upper right",
+                        linestyle="solid",
+                        clear_figure=(not bool(compare_model)) and (suffix not in var)
+                        )
+            if suffix in var and compare_model:
+                var = var.removesuffix(suffix)
+                plot_1Dhist(tmp_outputdir,
+                            f"{var}",
+                            [
+                                ([data[f"{s}"][f"{var}"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name][f"{var}"]]),
+                                [data["SKIM_DY_amc_incl"][f"{var}"]],
+                                [data["SKIM_TT_fullyLep"][f"{var}"]],
+                                [data["SKIM_TT_semiLep"][f"{var}"]],
+                                [data["SKIM_ttHToTauTau"][f"{var}"]],
+                                # [data["SKIM_GluGluHToTauTau"][f"{var}"]],
+                            ],
+                            weights=[
+                                ([data[f"{s}"]["weight"] for s in samples.keys() if "ggF" in s or "GGHH" in s] if not signal_sample_name else [data[signal_sample_name]["weight"]]),
+                                [data["SKIM_DY_amc_incl"]["weight"]],
+                                [data["SKIM_TT_fullyLep"]["weight"]],
+                                [data["SKIM_TT_semiLep"]["weight"]],
+                                [data["SKIM_ttHToTauTau"]["weight"]],
+                                # [data["SKIM_GluGluHToTauTau"]["weight"]],
+                            ],
+                            labels=[
+                                "HH"+suffix,
+                                "DY",
+                                r"$t\overline{t}$ dl",
+                                r"$t\overline{t}$ sl*",
+                                r"$t\overline{t}$H*",
+                                # r"ggH$\rightarrow\tau\tau$",
+                            ],
+                            nbins=50,
+                            xmin=xmin,
+                            xmax=xmax,
+                            xlabel=xlabel,
+                            normalized=True,
+                            legend=False,
+                            legend_loc="upper right",
+                            linestyle="dotted",
+                            clear_figure=True
+                            )
+
+    if not parameterize_spin and not parameterize_mass:
+        for var, xlabel, xmin, xmax in zip(["reg_H_m", "reg_H_pt", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_mass", "tauH_pt", "recoGenTauH_mass", "recoGenTauH_pt", "bH_mass", "bH_pt", "reg_HH_m", "reg_HH_pt", "HH_mass", "HH_pt", "HHKin_mass", "svfit_HH_m"] +
+                                           (["class_HH", "class_DY", "class_TT"  # dl", "class_TTsl", "class_TTH", "class_GGH",
+                                             ]if classification else []),
+                                           [r"$m_{\tau\tau,reg}$ [GeV]", r"$p_T^{\tau\tau,reg}$ [GeV]", r"$m_{\tau\tau,SVfit}$ [GeV]", r"$p_T^{\tau\tau,SVfit}$ [GeV]", r"$m_{\tau\tau,vis}$ [GeV]", r"$p_T^{\tau\tau,vis}$ [GeV]", r"$m_{\tau\tau,gen\ \nu}$ [GeV]", r"$p_T^{\tau\tau,gen\ \nu}$ [GeV]", r"$m_{bb,reco}$ [GeV]", r"$p_T^{bb,reco}$ [GeV]", r"$m_{HH,reg}$ [GeV]", r"$p_T^{HH,reg}$ [GeV]", r"$m_{HH,reco}$ [GeV]", r"$p_T^{HH,reco}$ [GeV]", r"$m_{HH,kinfit}$ [GeV]", r"$m_{HH,SVfit}$ [GeV]"] +
+                                           (["Classifier HH output", "Classifier DY output", "Classifier TT output",  # "Classifier TTsl output", "Classifier TTH output", "Classifier GGH output"
+                                             ]if classification else []),
+                                           [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] +
+                                           ([0, 0, 0,  # 0, 0, 0
+                                             ] if classification else []),
+                                           [200, 800, 200, 800, 200, 800, 200, 800, 200, 800, 2000, 800, 2000, 800, 2000, 2000] +
+                                           ([1, 1, 1,  # 1, 1, 1
+                                             ]if classification else [])
+                                           ):
+            plot_1Dhist(outputdir + "/signals",
+                        f"{var}",
+                        [
+                            # [data["SKIM_ggF_Radion_m250"][f"{var}"], data["SKIM_ggF_BulkGraviton_m250"][f"{var}"]],
+                            # [data["SKIM_ggF_Radion_m280"][f"{var}"], data["SKIM_ggF_BulkGraviton_m280"][f"{var}"]],
+                            [data["SKIM_ggF_Radion_m300"][f"{var}"], data["SKIM_ggF_BulkGraviton_m300"][f"{var}"]],
+                            [data["SKIM_ggF_Radion_m700"][f"{var}"], data["SKIM_ggF_BulkGraviton_m700"][f"{var}"]],
+                            [data["SKIM_ggF_Radion_m1750"][f"{var}"], data["SKIM_ggF_BulkGraviton_m1750"][f"{var}"]]
+                        ],
+                        weights=[
+                            # [data["SKIM_ggF_Radion_m250"]["weight"], data["SKIM_ggF_BulkGraviton_m250"]["weight"]],
+                            # [data["SKIM_ggF_Radion_m280"]["weight"], data["SKIM_ggF_BulkGraviton_m280"]["weight"]],
+                            [data["SKIM_ggF_Radion_m300"]["weight"], data["SKIM_ggF_BulkGraviton_m300"]["weight"]],
+                            [data["SKIM_ggF_Radion_m700"]["weight"], data["SKIM_ggF_BulkGraviton_m700"]["weight"]],
+                            [data["SKIM_ggF_Radion_m1750"]["weight"], data["SKIM_ggF_BulkGraviton_m1750"]["weight"]]
+                        ],
+                        labels=[
+                            # "HH m=250", "HH m=280",
+                            "HH m=300", "HH m=700", "HH m=1750"],
+                        nbins=50, xmin=xmin, xmax=xmax,
+                        xlabel=xlabel,
+                        normalized=True)
 
 
-def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "reg", "svfit"], nbins=10, xmin=None, xmax=None, xlabel="di tau mass [GeV]", ylabel="Events", log=False, normalized=True, legend=True, legend_loc="best"):
+def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "reg", "svfit"], nbins=10, xmin=None, xmax=None, xlabel="di tau mass [GeV]", ylabel="Events", log=False, normalized=True, legend=True, legend_loc="upper right", linestyle="solid", clear_figure=True):
     hep.cms.text("Simulation, private work")
     nphists = False
     if isinstance(hists, list):
@@ -372,7 +570,7 @@ def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "r
         ymin = min([min(h[np.nonzero(h)]) for h in hists])
         ymax = max([max(h) for h in hists]) * 1.1
         for hist, label in zip(hists, labels):
-            plt.stairs(hist, bins, label=label, linewidth=3)
+            plt.stairs(hist, bins, label=label, linewidth=3, linestyle=linestyle)
     else:
         opts = {"weights": weights, "histtype": "step", "density": normalized}
         means = [np.mean(hist) for hist in hists]
@@ -401,15 +599,15 @@ def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "r
     plt.subplots_adjust(left=0.15, right=0.9, top=0.9, bottom=0.1)
     Path(outputdir).mkdir(parents=True, exist_ok=True)
     plt.savefig(outputdir + "/" + title + ".pdf")
-    plt.yscale('log')
-    plt.ylim([ymin/10, ymax*10])
-    plt.savefig(outputdir + "/" + title + "_log.pdf")
-    plt.clf()
+    plt.gca().set_prop_cycle(None)
+    if clear_figure:
+        plt.clf()
 
 
-def plot_ROC(outputdir, title, label, y_true, y_score,  weights=None):
+def plot_ROC(outputdir, title, label, y_true, y_score,  weights=None, legend=True, linestyle="solid", clear_figure=True):
     fpr, tpr, _ = roc_curve(y_true, y_score, sample_weight=weights)
-    plt.plot(fpr, tpr,  label=f"{label} (AUC={roc_auc_score(y_true, y_score):.3f})")
+    plt.plot(
+        fpr, tpr,  label=f"{label} (AUC={roc_auc_score(y_true, y_score):.3f})", linestyle=linestyle)
     plt.xlim([0, 1])
     plt.xlabel("False positive rate")
     plt.ylim([0, 1])
@@ -417,7 +615,9 @@ def plot_ROC(outputdir, title, label, y_true, y_score,  weights=None):
     plt.legend()
     Path(outputdir).mkdir(parents=True, exist_ok=True)
     plt.savefig(outputdir + "/" + title + ".pdf")
-    plt.clf()
+    plt.gca().set_prop_cycle(None)
+    if clear_figure:
+        plt.clf()
 
 
 if __name__ == "__main__":
