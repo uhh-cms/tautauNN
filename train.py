@@ -339,23 +339,25 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
 
     optimizer, learning_rate = create_optimizer(initial_learning_rate)
 
-    best_weights, _ = training_loop(dataset_train,
-                                    dataset_valid,
-                                    model,
-                                    loss_fns,
-                                    optimizer,
-                                    learning_rate,
-                                    log_every=log_every,
-                                    validate_every=validate_every,
-                                    tensorboard_dir=os.path.join(tensorboard_dir, model_name) if tensorboard_dir else None,
-                                    early_stopping_patience=early_stopping_patience,
-                                    learning_rate_patience=learning_rate_patience,
-                                    max_learning_rate_reductions=max_learning_rate_reductions,
-                                    gradient_clipping=gradient_clipping,
-                                    )
+    best_weights, training_steps, _ = training_loop(dataset_train,
+                                                    dataset_valid,
+                                                    model,
+                                                    loss_fns,
+                                                    optimizer,
+                                                    learning_rate,
+                                                    log_every=log_every,
+                                                    validate_every=validate_every,
+                                                    tensorboard_dir=os.path.join(
+                                                        tensorboard_dir, model_name) if tensorboard_dir else None,
+                                                    early_stopping_patience=early_stopping_patience,
+                                                    learning_rate_patience=learning_rate_patience,
+                                                    max_learning_rate_reductions=max_learning_rate_reductions,
+                                                    gradient_clipping=gradient_clipping,
+                                                    )
 
     model.set_weights(best_weights)
     modelweights = {}
+    modelweights["training_steps"] = training_steps
     modelweights["rotate_phi"] = ["dmet_reso", (["met"] if "met_px" in input_names else []) + (["dmet_resp"] if "dmet_resp_px" in input_names else []) + (["dmet_reso"] if "dmet_reso_px" in input_names else []) + ["dau1", "dau2", "bjet1", "bjet2"]]
     modelweights["cont_features"] = input_names.copy()
     modelweights["cont_features"].insert(input_names.index(modelweights["rotate_phi"][0] + "_px") + 1, modelweights["rotate_phi"][0] + "_py")
@@ -758,8 +760,9 @@ def training_loop(
     losses_avg = defaultdict(list)
     loss_avg = []
 
-    # store the best model, identified by the best validation accuracy
+    # store the best model weights, identified by the best validation mse loss
     best_weights = None
+    best_weights_steps = 0
 
     # metrics to update during training
     metrics = dict(
@@ -876,6 +879,7 @@ def training_loop(
             # store the best model
             if is_best:
                 best_weights = model.get_weights()
+                best_weights_steps = step + 1
                 early_stopping_counter = 0
             else:
                 early_stopping_counter += 1
@@ -919,7 +923,7 @@ def training_loop(
     print(message)
     print("validation metrics of the best model:")
     print(f"MSE: {metrics['mse_valid_best']:.4f}")
-    return best_weights, metrics
+    return best_weights, best_weights_steps, metrics
 
 
 if __name__ == "__main__":
