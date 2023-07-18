@@ -410,28 +410,33 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
 
     with gpu:
         # input layers
-        x1 = tf.keras.Input(input_shape)
-        x2 = tf.keras.Input(cat_input_shape)
+        x1 = tf.keras.Input(input_shape, name="cont_input")
+        x2 = tf.keras.Input(cat_input_shape, name="cat_input")
 
-        norm_layer = tf.keras.layers.Normalization(mean=input_means, variance=input_vars)
+        norm_layer = tf.keras.layers.Normalization(
+            mean=input_means, variance=input_vars, name="norm")
         n = norm_layer(x1)
 
         # only add embedding layer if number of integer vars > 0
         if cat_input_shape > 0:
-            custom_embedding_layer = CustomEmbeddingLayer(output_dim=embedding_output_dim, expected_inputs=embedding_expected_inputs)
+            custom_embedding_layer = CustomEmbeddingLayer(
+                output_dim=embedding_output_dim, expected_inputs=embedding_expected_inputs, name="embedding")
             a = custom_embedding_layer(x2)
-            a = tf.keras.layers.Concatenate()([n, a])
+            a = tf.keras.layers.Concatenate(name="concat")([n, a])
         else:
             a = n
 
         # add layers programatically
-        for u in units:
+        for idx, u in enumerate(units):
             # build the layer
-            dense_layer = tf.keras.layers.Dense(u, use_bias=True, kernel_initializer=activation_settings[activation][1])
+            dense_layer = tf.keras.layers.Dense(
+                u, use_bias=True, kernel_initializer=activation_settings[activation][1], name=f"common_{idx+1}")
             a = dense_layer(a)
 
-            activation_layer = tf.keras.layers.Activation(activation_settings[activation][0])
-            batchnorm_layer = tf.keras.layers.BatchNormalization(dtype="float32")
+            activation_layer = tf.keras.layers.Activation(
+                activation_settings[activation][0], name=f"common_{idx+1}_act")
+            batchnorm_layer = tf.keras.layers.BatchNormalization(
+                dtype="float32", name=f"common_{idx+1}_bn")
 
             if activation not in ["selu", "relu"]:
                 a = batchnorm_layer(a)
@@ -447,25 +452,31 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
             # add random unit dropout
             if dropout_rate:
                 if activation == "selu":
-                    a = tf.keras.layers.AlphaDropout(dropout_rate)(a)
+                    a = tf.keras.layers.AlphaDropout(dropout_rate, name=f"common_{idx+1}_do")(a)
                 else:
-                    a = tf.keras.layers.Dropout(dropout_rate)(a)
+                    a = tf.keras.layers.Dropout(dropout_rate, name=f"common_{idx+1}_do")(a)
 
         b = a
         c = a
 
-        for u2 in units2:
-            dense_layer1 = tf.keras.layers.Dense(u2, use_bias=True, kernel_initializer=activation_settings[activation][1])
-            dense_layer2 = tf.keras.layers.Dense(u2, use_bias=True, kernel_initializer=activation_settings[activation][1])
+        for idx2, u2 in enumerate(units2):
+            dense_layer1 = tf.keras.layers.Dense(
+                u2, use_bias=True, kernel_initializer=activation_settings[activation][1], name=f"regression_{idx2+1}")
+            dense_layer2 = tf.keras.layers.Dense(
+                u2, use_bias=True, kernel_initializer=activation_settings[activation][1], name=f"classification_{idx2+1}")
 
             b = dense_layer1(b)
             c = dense_layer2(c)
 
-            activation_layer1 = tf.keras.layers.Activation(activation_settings[activation][0])
-            activation_layer2 = tf.keras.layers.Activation(activation_settings[activation][0])
+            activation_layer1 = tf.keras.layers.Activation(
+                activation_settings[activation][0], name=f"regression_{idx2+1}_act")
+            activation_layer2 = tf.keras.layers.Activation(
+                activation_settings[activation][0], name=f"classification_{idx2+1}_act")
 
-            batchnorm_layer1 = tf.keras.layers.BatchNormalization(dtype="float32")
-            batchnorm_layer2 = tf.keras.layers.BatchNormalization(dtype="float32")
+            batchnorm_layer1 = tf.keras.layers.BatchNormalization(
+                dtype="float32", name=f"regression_{idx2+1}_bn")
+            batchnorm_layer2 = tf.keras.layers.BatchNormalization(
+                dtype="float32", name=f"classification_{idx2+1}_bn")
 
             if activation not in ["selu", "relu"]:
                 b = batchnorm_layer1(b)
@@ -485,27 +496,30 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
             # add random unit dropout
             if dropout_rate:
                 if activation == "selu":
-                    b = tf.keras.layers.AlphaDropout(dropout_rate)(b)
-                    c = tf.keras.layers.AlphaDropout(dropout_rate)(c)
+                    b = tf.keras.layers.AlphaDropout(dropout_rate, name=f"regression_{idx2+1}_do")(b)
+                    c = tf.keras.layers.AlphaDropout(dropout_rate, name=f"classification_{idx2+1}_do")(c)
                 else:
-                    b = tf.keras.layers.Dropout(dropout_rate)(b)
-                    c = tf.keras.layers.Dropout(dropout_rate)(c)
+                    b = tf.keras.layers.Dropout(dropout_rate, name=f"regression_{idx2+1}_do")(b)
+                    c = tf.keras.layers.Dropout(dropout_rate, name=f"classification_{idx2+1}_do")(c)
 
         a = b
 
         # add the output layer
-        y1 = tf.keras.layers.Dense(output_shape, use_bias=True, kernel_initializer="he_uniform")(a)
+        y1 = tf.keras.layers.Dense(
+            output_shape, use_bias=True, kernel_initializer="he_uniform", name="regression_output")(a)
         outputs = [y1]
         if target_means is not None and target_stds is not None:
-            y2 = CustomOutputScalingLayer(target_means, target_stds)(y1)
+            y2 = CustomOutputScalingLayer(target_means, target_stds, name="regression_output_hep")(y1)
             outputs.append(y2)
 
         if nclasses > 0:
-            y3 = tf.keras.layers.Dense(nclasses, activation="softmax", use_bias=True, kernel_initializer="glorot_normal")(c)
+            y3 = tf.keras.layers.Dense(
+                nclasses, activation="softmax", use_bias=True, kernel_initializer="glorot_normal", name="classification_output")(c)
             outputs.append(y3)
 
         # build the model
-        model = tf.keras.Model(inputs=[x1, x2], outputs=outputs, name="htautau_regression")
+        model = tf.keras.Model(
+            inputs=[x1, x2], outputs=outputs, name="htautau_regression")
     return model, weights
 
 
