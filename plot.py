@@ -550,6 +550,9 @@ def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "r
     hep.cms.text("Simulation, private work")
     nphists = False
     if isinstance(hists, list):
+        means = []
+        stds = []
+        quantiles = []
         for idx, hist in enumerate(hists):
             if isinstance(hist, list):
                 if xmin is None or xmax is None:
@@ -558,41 +561,60 @@ def plot_1Dhist(outputdir, title, hists, weights=None, labels=["reco", "gen", "r
                 nphists = True
                 for i, h in enumerate(hist):
                     if i == 0:
-                        histsum, bins = np.histogram(h, bins=nbins, range=(xmin, xmax), weights=weights[idx][i])
+                        histsum, bins = np.histogram(h, bins=nbins, range=(
+                            xmin, xmax), weights=weights[idx][i])
+                        if normalized:
+                            histsum /= sum(histsum) * np.diff(bins)
+                        means.append(np.mean(h))
+                        stds.append(np.std(h))
+                        quantiles.append((np.quantile(h, 0.84) - np.quantile(h, 0.16)) / 2)
                     else:
-                        histsum += np.histogram(h, bins=nbins, range=(xmin, xmax), weights=weights[idx][i])[0]
+                        toadd = np.histogram(h, bins=nbins, range=(xmin, xmax), weights=weights[idx][i])[0]
+                        if normalized:
+                            toadd /= sum(toadd) * np.diff(bins)
+                        histsum += toadd
+                        means[idx] += np.mean(h)
+                        stds[idx] += np.std(h)
+                        quantiles[idx] += (np.quantile(h, 0.84) - np.quantile(h, 0.16)) / 2
                 if normalized:
-                    histsum /= sum(histsum) * np.diff(bins)
-                    # histsum *= 100
+                    histsum /= len(hist)
+                    # histsum /= sum(histsum) * np.diff(bins)
                 hists[idx] = histsum
+                means[idx] /= len(hist)
+                stds[idx] /= len(hist)
+                quantiles[idx] /= len(hist)
 
     if nphists:
         ymin = min([min(h[np.nonzero(h)]) for h in hists])
-        ymax = max([max(h) for h in hists]) * 1.1
+        ymax = max([max(h) for h in hists]) * 1.3
+        labels = [l + r", $\mu$=" + f"{m:.1f}" + r", $\sigma_{68\%}$=" + f"{q:.1f}" for l, m, q in zip(labels, means, quantiles)]
         for hist, label in zip(hists, labels):
             plt.stairs(hist, bins, label=label, linewidth=3, linestyle=linestyle)
     else:
         opts = {"weights": weights, "histtype": "step", "density": normalized}
         means = [np.mean(hist) for hist in hists]
         stds = [np.std(hist) for hist in hists]
-        quantiles = [(np.quantile(hist, 0.84) - np.quantile(hist, 0.16)) / 2 for hist in hists]
-        labels = [l + r", $\mu$=" + f"{m:.1f}" + r", $\sigma_{std}$=" + f"{s:.1f}" + r", $\sigma_{68\%}$=" + f"{q:.1f}" for l, m, s, q in zip(labels, means, stds, quantiles)]
+        quantiles = [(np.quantile(hist, 0.84) -
+                      np.quantile(hist, 0.16)) / 2 for hist in hists]
+        labels = [l + r", $\mu$=" + f"{m:.1f}" + r", $\sigma_{std}$=" + f"{s:.1f}" +
+                  r", $\sigma_{68\%}$=" + f"{q:.1f}" for l, m, s, q in zip(labels, means, stds, quantiles)]
         # labels = [l + r", $\mu$=" + f"{m:.1f}" + r", $\sigma_{68\%}$=" + f"{q:.1f}" for l, m, q in zip(labels, means, quantiles)]
         plt.hist(hists, bins=nbins, label=labels, **opts)
         ymin = plt.ylim[0]
         ymax = plt.ylim[1]
 
     plt.ylim([0, ymax])
-    # plt.title(title)
     plt.xlabel(xlabel)
-    # if log:
-    #     plt.yscale('log')
+    if log:
+        plt.yscale('log')
+        plt.ylim([ymin/10, ymax*15])
+        title += "_log"
     if normalized:
         plt.ylabel(ylabel + " (normalized) [a.u.]")
     else:
         plt.ylabel(ylabel)
     if legend:
-        plt.legend(loc=legend_loc)
+        plt.legend(loc=legend_loc, fontsize="13")
     if xmin is not None and xmax is not None:
         plt.xlim([xmin, xmax])
 
@@ -612,7 +634,8 @@ def plot_ROC(outputdir, title, label, y_true, y_score,  weights=None, legend=Tru
     plt.xlabel("False positive rate")
     plt.ylim([0, 1])
     plt.ylabel("True positive rate")
-    plt.legend()
+    if legend:
+        plt.legend()
     Path(outputdir).mkdir(parents=True, exist_ok=True)
     plt.savefig(outputdir + "/" + title + ".pdf")
     plt.gca().set_prop_cycle(None)
