@@ -17,8 +17,8 @@ gpu = get_device(device="gpu", num_device=0)
 tf.debugging.set_log_device_placement(True)
 
 
-def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSelection",
-         basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_02Mar23",
+def main(model_name="reg_mass_class_para_l2n50_addCharge",
+         basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23",
          tensorboard_dir="/tmp/tensorboard",
          # tensorboard_dir=None,
          samples={
@@ -64,8 +64,8 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
              # "SKIM_ttHToTauTau": (1., 1.),
          },
          columns_to_read=[
-             "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso",
-             "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso",
+             "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau1_charge",
+             "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso", "dau2_charge",
              "met_et", "met_phi", "met_cov00", "met_cov01", "met_cov11",
              "bjet1_pt", "bjet1_eta", "bjet1_phi", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_pnet_bb", "bjet1_pnet_cc", "bjet1_pnet_b", "bjet1_pnet_c", "bjet1_pnet_g", "bjet1_pnet_uds", "bjet1_pnet_pu", "bjet1_pnet_undef", "bjet1_HHbtag",
              "bjet2_pt", "bjet2_eta", "bjet2_phi", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag",
@@ -130,11 +130,10 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
              "met_cov00", "met_cov01", "met_cov11",
              "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_pnet_bb", "bjet1_pnet_cc", "bjet1_pnet_b", "bjet1_pnet_c", "bjet1_pnet_g", "bjet1_pnet_uds", "bjet1_pnet_pu", "bjet1_pnet_undef", "bjet1_HHbtag",
              "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag",
-             # "tauH_mass", "mT_tau1", "mT_tau2", "mT_tautau", "npu", "npv",
-             # "met_px", "met_py",
          ],
+
          cat_input_names=[
-             "pairType", "dau1_decayMode", "dau2_decayMode"
+             "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge"
          ],
          target_names=[
              "genNu1_px", "genNu1_py", "genNu1_pz",  # "genNu1_e",
@@ -151,7 +150,13 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
              (("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"), (lambda a, b, c, d: (((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
 
          ],
-         embedding_expected_inputs=[[0, 1, 2], [-1, 0, 1, 10, 11], [0, 1, 10, 11]],
+         embedding_expected_inputs=[
+             [0, 1, 2],  # pairType
+             [-1, 0, 1, 10, 11],  # dau1_decayMode, -1 vor e/mu
+             [0, 1, 10, 11],  # dau2_decayMode
+             [-1, 1],  # dau1_charge
+             [-1, 1],  # dau2_charge
+         ],
          embedding_output_dim=5,
          units=((128,)*5, (128,) * 4),
          activation="elu",
