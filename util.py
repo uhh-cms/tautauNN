@@ -28,14 +28,16 @@ def load_sample(basepath, sample, weight, features, selections, maxevents=100000
 
 
 def calc_new_columns(data, rules):
-    # columns = []
+    columns = []
+    column_names = []
     for name, (input_columns, func) in rules.items():
-        input_values = [data[c] for c in input_columns]
+        if name in data.dtype.names:
+            continue
+        input_values = [columns[column_names.index(c)] if c in column_names else data[c] for c in input_columns]
         column = func(*input_values)
-        column[np.isnan(column)] = 0
-        # columns.append(column)
-        data = rfn.rec_append_fields(data, name, column, dtypes=["<f4"])
-    # data = rfn.rec_append_fields(data, list(rules.keys()), columns, dtypes=["<f4"]*len(columns))
+        columns.append(column)
+        column_names.append(name)
+    data = rfn.rec_append_fields(data, list(rules.keys()), columns, dtypes=["<f4"]*len(columns))
     return data
 
 
