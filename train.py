@@ -6,6 +6,7 @@ import numpy as np
 import sys
 import os
 import functools
+import pickle
 from operator import mul
 from collections import defaultdict
 from util import load_sample, phi_mpi_to_pi, calc_new_columns, create_tensorboard_callbacks, get_device
@@ -354,11 +355,143 @@ def main(model_name="no_singleH_add_bjetvars_3classification_massloss_simonesSel
                                     )
 
     model.set_weights(best_weights)
+    modelweights = {}
+    modelweights["rotate_phi"] = ["dmet_reso", (["met"] if "met_px" in input_names else []) + (["dmet_resp"] if "dmet_resp_px" in input_names else []) + (["dmet_reso"] if "dmet_reso_px" in input_names else []) + ["dau1", "dau2", "bjet1", "bjet2"]]
+    modelweights["cont_features"] = input_names.copy()
+    modelweights["cont_features"].insert(input_names.index(modelweights["rotate_phi"][0] + "_px") + 1, modelweights["rotate_phi"][0] + "_py")
+    modelweights["cat_features"] = cat_input_names.copy()
+    modelweights["embedding_choices"] = embedding_expected_inputs
+
+    for layer in model.layers:
+        layer_name = layer.name
+        if layer_name is "norm":
+            modelweights["input_mean"] = np.array(layer.mean)
+            modelweights["input_variance"] = np.array(layer.variance)
+        if layer_name is "embedding":
+            modelweights["embedding_weight"] = np.array(layer.weights)
+        head = layer_name.split("_")[0]
+        if head in ["common", "regression", "classification"]:
+            layer_type = str(type(layer))
+            if "Dense" in layer_type:
+                modelweights[f"{layer_name}_weight"] = np.array(layer.kernel)
+                modelweights[f"{layer_name}_bias"] = np.array(layer.bias)
+            if "BatchNormalization" in layer_type:
+                modelweights[f"{layer_name}_mean"] = np.array(layer.moving_mean)
+                modelweights[f"{layer_name}_variance"] = np.array(layer.moving_variance)
+                modelweights[f"{layer_name}_beta"] = np.array(layer.beta)
+                modelweights[f"{layer_name}_gamma"] = np.array(layer.gamma)
+                modelweights[f"{layer_name}_epsilon"] = np.array(layer.epsilon)
+        if layer_name is "regression_output_hep":
+            modelweights["regression_output_mean"] = np.array(layer.get_config()["target_means"])
+            modelweights["regression_output_std"] = np.array(layer.get_config()["target_stds"])
+
+    htt_mass_sum = []
+    htt_mass_sum2 = []
+    htt_pt_sum = []
+    htt_pt_sum2 = []
+    htt_eta_sum = []
+    htt_eta_sum2 = []
+    htt_gamma_sum = []
+    htt_gamma_sum2 = []
+    hh_mass_sum = []
+    hh_mass_sum2 = []
+    final_mse_train = []
+    final_mse_valid = []
+
+    if use_batch_composition:
+        for idx, cont_input in enumerate(inputs_train):
+            cat_input = cat_inputs_train[idx]
+            batch_weight = batch_weights[idx]
+            if masses:
+                para_mass = tf.transpose(tf.where(cont_input[:, -1] == -1, tf.gather(masses, tf.random.categorical(tf.math.log([[1.]*len(masses)]), len(cont_input))), cont_input[:, -1]))
+                cont_input = tf.concat([cont_input[:, 0:-1], para_mass], axis=1)
+            if spins:
+                para_spin = tf.transpose(tf.where(cat_input[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*len(spins)]), len(cat_input))), cat_input[:, -1]))
+                cat_input = tf.concat([cat_input[:, 0:-1], para_spin], axis=1)
+            prediction = model.predict([cont_input, cat_input])
+            final_mse_train.append(np.mean((prediction[0]-target_train[idx])**2) * batch_weight)
+            nus = prediction[1]
+            nu1 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [0, 1, 2]]**2, axis=1)), axis=1), nus[:, [0, 1, 2]]], axis=1)
+            nu2 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [3, 4, 5]]**2, axis=1)), axis=1), nus[:, [3, 4, 5]]], axis=1)
+            cont_input = np.array(cont_input)
+            dau1 = cont_input[:, [input_names.index("dau1_e"), input_names.index("dau1_px"), input_names.index("dau1_py"), input_names.index("dau1_pz")]]
+            dau2 = cont_input[:, [input_names.index("dau2_e"), input_names.index("dau2_px"), input_names.index("dau2_py"), input_names.index("dau2_pz")]]
+            tau1 = dau1 + nu1
+            tau2 = dau2 + nu2
+            htt = tau1 + tau2
+            htt_mass2 = htt[:, 0]**2 - htt[:, 1]**2 - htt[:, 2]**2 - htt[:, 3]**2
+            htt_mass_sum.append(np.mean(np.sqrt(htt_mass2))*batch_weight)
+            htt_mass_sum2.append(np.mean(htt_mass2, axis=0)*batch_weight)
+            htt_pt2 = htt[:, 1]**2 + htt[:, 2]**2
+            htt_pt_sum.append(np.mean(np.sqrt(htt_pt2))*batch_weight)
+            htt_pt_sum2.append(np.mean(htt_pt2, axis=0)*batch_weight)
+            htt_eta = np.arcsinh(htt[:, 3]/np.sqrt(htt_pt2))
+            htt_eta_sum.append(np.mean(htt_eta)*batch_weight)
+            htt_eta_sum2.append(np.mean(htt_eta**2)*batch_weight)
+            htt_gamma = htt[:, 0]/np.sqrt(htt_mass2)
+            htt_gamma_sum.append(np.mean(htt_gamma)*batch_weight)
+            htt_gamma_sum2.append(np.mean(htt_gamma**2)*batch_weight)
+            bjet1 = cont_input[:, [input_names.index("bjet1_e"), input_names.index("bjet1_px"), input_names.index("bjet1_py"), input_names.index("bjet1_pz")]]
+            bjet2 = cont_input[:, [input_names.index("bjet2_e"), input_names.index("bjet2_px"), input_names.index("bjet2_py"), input_names.index("bjet2_pz")]]
+            hbb = bjet1+bjet2
+            hh = htt + hbb
+            hh_mass2 = hh[:, 0]**2 - hh[:, 1]**2 - hh[:, 2]**2 - hh[:, 3]**2
+            hh_mass_sum.append(np.mean(np.sqrt(hh_mass2))*batch_weight)
+            hh_mass_sum2.append(np.mean(hh_mass2, axis=0)*batch_weight)
+
+        for idx, cont_input in enumerate(inputs_valid):
+            cat_input = cat_inputs_valid[idx]
+            batch_weight = batch_weights[idx]
+            if masses:
+                para_mass = tf.transpose(tf.where(cont_input[:, -1] == -1, tf.gather(masses, tf.random.categorical(tf.math.log([[1.]*len(masses)]), len(cont_input))), cont_input[:, -1]))
+                cont_input = tf.concat([cont_input[:, 0:-1], para_mass], axis=1)
+            if spins:
+                para_spin = tf.transpose(tf.where(cat_input[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*len(spins)]), len(cat_input))), cat_input[:, -1]))
+                cat_input = tf.concat([cat_input[:, 0:-1], para_spin], axis=1)
+            prediction = model.predict([cont_input, cat_input])
+            final_mse_valid.append(np.mean((prediction[0]-target_valid[idx])**2) * batch_weight)
+    # else:
+        # TO BE IMPLEMENTED
+
+    final_mse_train = np.sum(final_mse_train)/np.sum(batch_weights)
+    print(f"Complete training dataset MSE loss evaulated with best model: {final_mse_train}")
+
+    final_mse_valid = np.sum(final_mse_valid)/np.sum(batch_weights)
+    print(f"Complete validation dataset MSE loss evaulated with best model: {final_mse_valid}")
+
+    htt_mass_mean = np.sum(htt_mass_sum)/np.sum(batch_weights)
+    htt_mass_std = np.sqrt(np.sum(htt_mass_sum2, axis=0)/np.sum(batch_weights) - htt_mass_mean**2)
+
+    htt_pt_mean = np.sum(htt_pt_sum)/np.sum(batch_weights)
+    htt_pt_std = np.sqrt(np.sum(htt_pt_sum2, axis=0)/np.sum(batch_weights) - htt_pt_mean**2)
+
+    htt_eta_mean = np.sum(htt_eta_sum)/np.sum(batch_weights)
+    htt_eta_std = np.sqrt(np.sum(htt_eta_sum2, axis=0)/np.sum(batch_weights) - htt_eta_mean**2)
+
+    htt_gamma_mean = np.sum(htt_gamma_sum)/np.sum(batch_weights)
+    htt_gamma_std = np.sqrt(np.sum(htt_gamma_sum2, axis=0)/np.sum(batch_weights) - htt_gamma_mean**2)
+    hh_mass_mean = np.sum(hh_mass_sum)/np.sum(batch_weights)
+    hh_mass_std = np.sqrt(np.sum(hh_mass_sum2, axis=0)/np.sum(batch_weights) - hh_mass_mean**2)
+
+    modelweights["custom_outputs"] = {
+        "htt_mass": [htt_mass_mean, htt_mass_std],
+        "htt_pt": [htt_pt_mean, htt_pt_std],
+        "htt_eta": [htt_eta_mean, htt_eta_std],
+        "htt_gamma": [htt_gamma_mean, htt_gamma_std],
+        "htt_cos_phi": [0.0, 1.0],
+        "hh_mass": [hh_mass_mean, hh_mass_std],
+        "hh_cos_phi": [0.0, 1.0],
+    }
+
     try:
         model.save(f"models/{model_name}")
+        with open(f"models/{model_name}/modelfile.pkl", 'wb') as handle:
+            pickle.dump(modelweights, handle, protocol=4)
     except:
         print("Couldn't save on afs. Trying /tmp")
         model.save(f"/tmp/{model_name}")
+        with open(f"/tmp/{model_name}/modelfile.pkl", 'wb') as handle:
+            pickle.dump(modelweights, handle, protocol=4)
 
 
 def create_dataset(inputs, cat_inputs, targets, event_weights, recoGenTauH_mass, mass_loss_inputs, shuffle=False, repeat=1, batch_size=1024, seed=None, **kwargs):
