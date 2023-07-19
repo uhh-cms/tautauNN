@@ -74,7 +74,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              # # "SKIM_GluGluHToTauTau": (1., 1., [0, 0, 0, 0, 1, 0], -1, -1.),
              # # "SKIM_ttHToTauTau": (1., 1., [0, 0, 0, 1], -1, -1.),
          },
-         columns_to_read=[
+         columns_to_read=[  # variables to read from the input files
              "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau1_charge",
              "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso", "dau2_charge",
              "met_et", "met_phi", "met_cov00", "met_cov01", "met_cov11",
@@ -89,7 +89,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              "recoGenTauH_mass",
              "EventNumber",
          ],
-         columns_to_add={
+         columns_to_add={  # new variables to calculate from the existing ones
              "DeepMET_ResolutionTune_phi": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"), (lambda x, y: np.arctan2(y, x))),
              "met_dphi": (("met_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
              "dmet_resp_px": (("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_phi"), (lambda x, y, p: np.cos(-p)*x - np.sin(-p)*y)),
@@ -127,7 +127,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              "bjet2_py": (("bjet2_pt", "bjet2_dphi"), (lambda a, b: a * np.sin(b))),
              "bjet2_pz": (("bjet2_pt", "bjet2_eta"), (lambda a, b: a * np.sinh(b))),
          },
-         input_names=[
+         input_names=[  # continuous input features to the network
              "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
              "ditau_deltaphi", "ditau_deltaeta",
              "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso",
@@ -137,14 +137,14 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag",
          ],
 
-         cat_input_names=[
+         cat_input_names=[  # categorical input features for the network
              "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge"
          ],
-         target_names=[
+         target_names=[  # targets for the regression, mse loss will be calculated for these
              "genNu1_px", "genNu1_py", "genNu1_pz",  # "genNu1_e",
              "genNu2_px", "genNu2_py", "genNu2_pz",  # "genNu2_e",
          ],
-         selections=[
+         selections=[  # selections to apply before training
              (("nbjetscand",), (lambda a: a > 1)),
              (("pairType",), (lambda a: a < 3)),
              (("nleps",), (lambda a: a == 0)),
@@ -154,34 +154,35 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
                  ((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5))))),
 
          ],
-         embedding_expected_inputs=[
+         embedding_expected_inputs=[  # possible values for the categorical features
              [0, 1, 2],  # pairType
-             [-1, 0, 1, 10, 11],  # dau1_decayMode, -1 vor e/mu
+             [-1, 0, 1, 10, 11],  # dau1_decayMode, -1 for e/mu
              [0, 1, 10, 11],  # dau2_decayMode
              [-1, 1],  # dau1_charge
              [-1, 1],  # dau2_charge
          ],
-         embedding_output_dim=5,
-         units=((128,)*5, (128,) * 4),
-         activation="elu",
-         l2_norm=50.0,
+         embedding_output_dim=5,  # dimension of the embedding layer output will be embedding_output_dim x N_categorical_features
+         units=((128,)*5, (128,) * 4),  # number of layers and units, second entry determines the extra heads (if applicable, otherwise "concatenate")
+         activation="elu",  # activation function after each hidden layer
+         l2_norm=50.0,  # scale fot the l2 loss term (which is already normalized to the number of weights)
          dropout_rate=0,
          batch_size=4096,
-         train_valid_eventnumber_modulo=4,
-         log_every=100,
-         validate_every=1000,
+         train_valid_eventnumber_modulo=4,  # divide events by this based on EventNumber
+         train_valid_eventnumber_rest=0,  # assign event to validation dataset if the rest is this
+         log_every=100,  # how frequently the terminal and tensorboard are updated
+         validate_every=1000,  # how frequently to calulcate the validation loss
          initial_learning_rate=0.0025,
-         learning_rate_patience=2,
+         learning_rate_patience=2,  # half the learning rate if the validation MSE loss hasn't improved in this many validation steps
          max_learning_rate_reductions=5,
-         early_stopping_patience=4,
-         output_scaling=True,
-         use_batch_composition=True,
-         drop_quantile=0,
-         gradient_clipping=False,
-         classifier_weight=1.,
-         mass_loss_weight=1./10000.,
-         parameterize_spin=True,
-         parameterize_mass=True,
+         early_stopping_patience=4,  # stop training if the validation MSE loss hasn't improved since this many validation steps
+         output_scaling=True,  # scale regression targets (and therefore also output) to have mean=0 and width=1
+         use_batch_composition=True,  # control  sample importance via the composition of the batch instead of by weights
+         drop_quantile=0,  # drop this percantage of outliers per input variable
+         gradient_clipping=False,  # prevent gradients from becoming very large
+         classifier_weight=1.,  # add classification head if non-zero; scale for the cross-entropy loss-term
+         mass_loss_weight=1./10000.,  # scale for the loss-term based on the mass calculated from the reco taus and the predicted/generated neutrinos
+         parameterize_spin=True,  # add the generator spin for the signal samples as categorical input -> network parameterized in spin
+         parameterize_mass=True,  # add the generator mass for the signal samples as continuous input -> network parameterized in mass
          ):
 
     inputs_train = []
