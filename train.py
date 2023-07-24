@@ -17,7 +17,7 @@ gpu = get_device(device="gpu", num_device=0)
 tf.debugging.set_log_device_placement(True)
 
 
-def main(model_name="reg_mass_class_para_l2n50_addCharge",
+def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
          basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23",
          tensorboard_dir="/tmp/tensorboard",
          # tensorboard_dir=None,
@@ -70,9 +70,9 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
              "SKIM_ggF_BulkGraviton_m1750": (1./35, 1., [1, 0, 0], 2, 1750.),
              "SKIM_DY_amc_incl": (1., 1., [0, 1, 0], -1, -1.),
              "SKIM_TT_fullyLep": (1., 1., [0, 0, 1], -1, -1.),
-             # # "SKIM_TT_semiLep": (1., 1., [0, 0, 1], -1, -1.),
-             # # "SKIM_GluGluHToTauTau": (1., 1., [0, 0, 0, 0, 1, 0], -1, -1.),
-             # # "SKIM_ttHToTauTau": (1., 1., [0, 0, 0, 1], -1, -1.),
+             # "SKIM_TT_semiLep": (1., 1., [0, 0, 1], -1, -1.),
+             # "SKIM_GluGluHToTauTau": (1., 1., [0, 0, 0, 0, 1, 0], -1, -1.),
+             # "SKIM_ttHToTauTau": (1., 1., [0, 0, 0, 1], -1, -1.),
          },
          columns_to_read=[  # variables to read from the input files
              "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau1_charge",
@@ -257,7 +257,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge",
             target_means.append(np.mean(targets, axis=0))
             target_stds.append(np.std(targets, axis=0))
 
-        train_mask = (d["EventNumber"] % train_valid_eventnumber_modulo) != 0
+        train_mask = (d["EventNumber"] % train_valid_eventnumber_modulo) != train_valid_eventnumber_rest
 
         nevents.append(nev)
 
