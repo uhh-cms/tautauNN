@@ -444,8 +444,6 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
     htt_gamma_sum2 = []
     hh_mass_sum = []
     hh_mass_sum2 = []
-    final_mse_train = []
-    final_mse_valid = []
 
     if use_batch_composition:
         for idx, cont_input in enumerate(inputs_train):
@@ -458,7 +456,6 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
                 para_spin = tf.transpose(tf.where(cat_input[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*len(spins)]), len(cat_input))), cat_input[:, -1]))
                 cat_input = tf.concat([cat_input[:, 0:-1], para_spin], axis=1)
             prediction = model.predict([cont_input, cat_input])
-            final_mse_train.append(np.mean((prediction[0]-target_train[idx])**2) * batch_weight)
             nus = prediction[1]
             nu1 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [0, 1, 2]]**2, axis=1)), axis=1), nus[:, [0, 1, 2]]], axis=1)
             nu2 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [3, 4, 5]]**2, axis=1)), axis=1), nus[:, [3, 4, 5]]], axis=1)
@@ -498,15 +495,8 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
                 para_spin = tf.transpose(tf.where(cat_input[:, -1] == -1, tf.gather(spins, tf.random.categorical(tf.math.log([[1.]*len(spins)]), len(cat_input))), cat_input[:, -1]))
                 cat_input = tf.concat([cat_input[:, 0:-1], para_spin], axis=1)
             prediction = model.predict([cont_input, cat_input])
-            final_mse_valid.append(np.mean((prediction[0]-target_valid[idx])**2) * batch_weight)
     # else:
         # TO BE IMPLEMENTED
-
-    final_mse_train = np.sum(final_mse_train)/np.sum(batch_weights)
-    print(f"Complete training dataset MSE loss evaulated with best model: {final_mse_train}")
-
-    final_mse_valid = np.sum(final_mse_valid)/np.sum(batch_weights)
-    print(f"Complete validation dataset MSE loss evaulated with best model: {final_mse_valid}")
 
     htt_mass_mean = np.sum(htt_mass_sum)/np.sum(batch_weights)
     htt_mass_std = np.sqrt(np.sum(htt_mass_sum2, axis=0)/np.sum(batch_weights) - htt_mass_mean**2)
