@@ -814,11 +814,12 @@ def training_loop(
     # metrics to update during training
     metrics = dict(
         step=0, step_val=0,
-        mse_valid_best=sys.maxsize,
+        loss_sum_train=sys.maxsize,
+        loss_sum_valid=sys.maxsize,
+        loss_sum_valid_best=sys.maxsize,
         early_stopping_counter=0,
         learning_rate=learning_rate.numpy(),
         # initial_learning_rate=learning_rate.numpy(),
-        start_validation_loss=None,
         total_validation_loss=None,
     )
     for name in loss_fns:
@@ -841,8 +842,11 @@ def training_loop(
     def update_metrics(kind, step, losses, total_loss):
 
         metrics["step"] = step
+        metrics[f"loss_sum_{kind}"] = 0
         for name, loss in losses.items():
-            metrics[f"loss_{name}_{kind}"] = tf.reduce_mean(loss)
+            tmp_loss = tf.reduce_mean(loss)
+            metrics[f"loss_{name}_{kind}"] = tmp_loss
+            metrics[f"loss_sum_{kind}"] += tmp_loss
 
         metrics["early_stopping_counter"] = early_stopping_counter
         metrics["learning_rate"] = learning_rate.numpy()
@@ -850,11 +854,9 @@ def training_loop(
         # validation specific
         if kind == "valid":
             metrics["step_val"] += 1
-            metrics["mse_valid_best"] = min(
-                metrics["mse_valid_best"], metrics[f"loss_mse_valid"])
+            metrics["loss_sum_valid_best"] = min(
+                metrics["loss_sum_valid_best"], metrics["loss_sum_valid"])
             metrics["total_validation_loss"] = tf.reduce_mean(total_loss)
-            if step == 0:
-                metrics["start_validation_loss"] = metrics["total_validation_loss"]
             if tensorboard_dir is not None:
                 tb_valid_add("scalar", "loss/total",
                              metrics["total_validation_loss"], step=step)
@@ -862,7 +864,7 @@ def training_loop(
                     tb_valid_add("scalar", "loss/" + key,
                                  tf.reduce_mean(l), step=step)
                 tb_valid_flush()
-            return metrics[f"loss_mse_valid"] == metrics["mse_valid_best"]
+            return metrics[f"loss_sum_valid"] == metrics["loss_sum_valid_best"]
         else:
             if tensorboard_dir is not None:
                 tb_train_add("scalar", "optimizer/learning_rate",
@@ -971,7 +973,7 @@ def training_loop(
                     learning_rate.assign(learning_rate / 2)
                     learning_rate_reduction_counter += 1
                 if early_stopping_counter >= early_stopping_patience:
-                    message = f"early stopping: validation loss did not improve within the last {early_stopping_patience} validation steps"
+                    message = f"\nearly stopping: validation loss did not improve within the last {early_stopping_patience} validation steps"
                     break
 
         # get and propagate gradients
@@ -990,23 +992,21 @@ def training_loop(
             update_metrics("train", step, losses_avg, loss_avg)
             losses_avg.clear()
             del loss_avg[:]
-
-            update = [f"Step: {metrics['step']}, Validations: {metrics['step_val']}, Early stopping counter: {metrics['early_stopping_counter']}, Learning rate: {metrics['learning_rate']:.5f}"]
+            update = [f"step: {metrics['step']}, n_val: {metrics['step_val']}, es: {metrics['early_stopping_counter']}, lr: {metrics['learning_rate']:.5f}"]
             for name in losses:
-                if "mse" in name:
-                    update.append(
-                        f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f} | {metrics[f'mse_valid_best']:.4f}")
-                else:
-                    update.append(
-                        f"Loss '{name}': {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f}")
-            update = " --- ".join(update)
+                update.append(
+                    f"{name}: {metrics[f'loss_{name}_train']:.4f} | {metrics[f'loss_{name}_valid']:.4f}")
+            update.append(f"sum-l2: {metrics[f'loss_sum_train']:.4f} | {metrics[f'loss_sum_valid']:.4f} | {metrics[f'loss_sum_valid_best']:.4f}")
+
+            update = ", ".join(update)
+            sys.stdout.write("\033[K")
             print(update, end="\r")
     else:
         message = "dataset exhausted, stopping training"
 
     print(message)
     print("validation metrics of the best model:")
-    print(f"MSE: {metrics['mse_valid_best']:.4f}")
+    print(f"Loss sum - L2: {metrics['loss_sum_valid_best']:.4f}")
     return best_weights, best_weights_steps, metrics
 
 
