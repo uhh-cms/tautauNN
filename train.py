@@ -12,14 +12,15 @@ from collections import defaultdict
 from util import load_sample, phi_mpi_to_pi, calc_new_columns, create_tensorboard_callbacks, get_device
 from custom_layers import CustomEmbeddingLayer, CustomOutputScalingLayer
 from multi_dataset import MultiDataset
+from lbn import LBN, LBNLayer
 
 gpu = get_device(device="gpu", num_device=0)
 tf.debugging.set_log_device_placement(True)
 
 
-def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
+def main(model_name="LBN_v4_test",
          basepath="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23",
-         tensorboard_dir="/tmp/tensorboard",
+         tensorboard_dir="/tmp/tensorboard_hannah",
          # tensorboard_dir=None,
          samples={
              # sample name: (batch fraction weight, event weight factor, [classes], spin, mass)
@@ -28,8 +29,9 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
              # "SKIM_ggF_Radion_m260": (1./45, 1., [1, 0, 0], 0, 260.),
              # "SKIM_ggF_Radion_m270": (1./45, 1., [1, 0, 0], 0, 270.),
              # "SKIM_ggF_Radion_m280": (1./45, 1., [1, 0, 0], 0, 280.),
-             "SKIM_ggF_Radion_m300": (1./35, 1., [1, 0, 0], 0, 300.),
-             # "SKIM_ggF_Radion_m320": (1./45, 1., [1, 0, 0], 0, 320.),
+             
+             "SKIM_ggF_Radion_m300": (1./35, 1., [1, 0, 0], 0, 300.),          
+             "SKIM_ggF_Radion_m320": (1./45, 1., [1, 0, 0], 0, 320.),
              "SKIM_ggF_Radion_m350": (1./35, 1., [1, 0, 0], 0, 350.),
              "SKIM_ggF_Radion_m400": (1./35, 1., [1, 0, 0], 0, 400.),
              "SKIM_ggF_Radion_m450": (1./35, 1., [1, 0, 0], 0, 450.),
@@ -46,12 +48,14 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
              "SKIM_ggF_Radion_m1250": (1./35, 1., [1, 0, 0], 0, 1250.),
              "SKIM_ggF_Radion_m1500": (1./35, 1., [1, 0, 0], 0, 1500.),
              "SKIM_ggF_Radion_m1750": (1./35, 1., [1, 0, 0], 0, 1750.),
-             # "SKIM_ggF_BulkGraviton_m250": (1./45, 1., [1, 0, 0], 2, 250.),
-             # "SKIM_ggF_BulkGraviton_m260": (1./45, 1., [1, 0, 0], 2, 260.),
-             # "SKIM_ggF_BulkGraviton_m270": (1./45, 1., [1, 0, 0], 2, 270.),
-             # "SKIM_ggF_BulkGraviton_m280": (1./45, 1., [1, 0, 0], 2, 280.),
+             
+             #"SKIM_ggF_BulkGraviton_m250": (1./45, 1., [1, 0, 0], 2, 250.),
+             #"SKIM_ggF_BulkGraviton_m260": (1./45, 1., [1, 0, 0], 2, 260.),
+             #"SKIM_ggF_BulkGraviton_m270": (1./45, 1., [1, 0, 0], 2, 270.),
+             #"SKIM_ggF_BulkGraviton_m280": (1./45, 1., [1, 0, 0], 2, 280.),
+             
              "SKIM_ggF_BulkGraviton_m300": (1./35, 1., [1, 0, 0], 2, 300.),
-             # "SKIM_ggF_BulkGraviton_m320": (1./45, 1., [1, 0, 0], 2, 320.),
+             "SKIM_ggF_BulkGraviton_m320": (1./45, 1., [1, 0, 0], 2, 320.),
              "SKIM_ggF_BulkGraviton_m350": (1./35, 1., [1, 0, 0], 2, 350.),
              "SKIM_ggF_BulkGraviton_m400": (1./35, 1., [1, 0, 0], 2, 400.),
              "SKIM_ggF_BulkGraviton_m450": (1./35, 1., [1, 0, 0], 2, 450.),
@@ -70,7 +74,8 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
              "SKIM_ggF_BulkGraviton_m1750": (1./35, 1., [1, 0, 0], 2, 1750.),
              "SKIM_DY_amc_incl": (1., 1., [0, 1, 0], -1, -1.),
              "SKIM_TT_fullyLep": (1., 1., [0, 0, 1], -1, -1.),
-             # "SKIM_TT_semiLep": (1., 1., [0, 0, 1], -1, -1.),
+             
+             #"SKIM_TT_semiLep": (1., 1., [0, 0, 1], -1, -1.),
              # "SKIM_GluGluHToTauTau": (1., 1., [0, 0, 0, 0, 1, 0], -1, -1.),
              # "SKIM_ttHToTauTau": (1., 1., [0, 0, 0, 1], -1, -1.),
          },
@@ -128,7 +133,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
              "bjet2_pz": (("bjet2_pt", "bjet2_eta"), (lambda a, b: a * np.sinh(b))),
          },
          input_names=[  # continuous input features to the network
-             "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
+             "met_px", "met_py", "dmet_resp_px", "dmet_resp_py",  "dmet_reso_px", 
              "ditau_deltaphi", "ditau_deltaeta",
              "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso",
              "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso",
@@ -140,6 +145,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
          cat_input_names=[  # categorical input features for the network
              "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge"
          ],
+         
          target_names=[  # targets for the regression, mse loss will be calculated for these
              "genNu1_px", "genNu1_py", "genNu1_pz",  # "genNu1_e",
              "genNu2_px", "genNu2_py", "genNu2_pz",  # "genNu2_e",
@@ -162,7 +168,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
              [-1, 1],  # dau2_charge
          ],
          embedding_output_dim=5,  # dimension of the embedding layer output will be embedding_output_dim x N_categorical_features
-         units=((128,)*5, (128,) * 4),  # number of layers and units, second entry determines the extra heads (if applicable, otherwise "concatenate")
+         units=((256, 128, 128, 128, 128,),(128, 128, 128, 128)),  # number of layers and units, second entry determines the extra heads (if applicable, otherwise "concatenate")
          activation="elu",  # activation function after each hidden layer
          l2_norm=50.0,  # scale fot the l2 loss term (which is already normalized to the number of weights)
          dropout_rate=0,
@@ -180,9 +186,11 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
          drop_quantile=0,  # drop this percantage of outliers per input variable
          gradient_clipping=False,  # prevent gradients from becoming very large
          classifier_weight=1.,  # add classification head if non-zero; scale for the cross-entropy loss-term
-         mass_loss_weight=1./10000.,  # scale for the loss-term based on the mass calculated from the reco taus and the predicted/generated neutrinos
-         parameterize_spin=True,  # add the generator spin for the signal samples as categorical input -> network parameterized in spin
-         parameterize_mass=True,  # add the generator mass for the signal samples as continuous input -> network parameterized in mass
+         mass_loss_weight=0.,  # scale for the loss-term based on the mass calculated from the reco taus and the predicted/generated neutrinos
+         parameterize_spin=False,  # add the generator spin for the signal samples as categorical input -> network parameterized in spin
+         parameterize_mass=False,  # add the generator mass for the signal samples as continuous input -> network parameterized in mass
+         add_lbn_layer=False, #add LBN input
+         lbn_particle_number=10, #number of particles in LBN
          ):
 
     inputs_train = []
@@ -204,6 +212,20 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
         "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau2_px", "dau2_py", "dau2_pz", "dau2_e"]]
     mass_loss_inputs_train = []
     mass_loss_inputs_valid = []
+    
+    #LBN
+    lbn_input_indices = [
+        [input_names.index(x) for x in idxs]
+        for idxs in [
+            ["dau1_e", "dau1_px", "dau1_py", "dau1_pz"],
+            ["dau2_e", "dau2_px", "dau2_py", "dau2_pz"],
+            ["bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz"],
+            ["bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz"],
+            ["met_px", "met_py"],
+            ["dmet_resp_px", "dmet_resp_py"],
+            ["dmet_reso_px"],
+        ]
+    ]
 
     batch_weights = []
 
@@ -220,13 +242,14 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
 
     for sample, (batch_weight, event_weight, target_classes, spin, mass) in samples.items():
         d, event_weights = load_sample(
-            basepath, sample, event_weight, columns_to_read, selections)
+            basepath, sample, event_weight, columns_to_read, selections) #, maxevents=10000
         nev = len(event_weights)
 
         d = calc_new_columns(d, columns_to_add)
 
         inputs = d[input_names]
         cat_inputs = d[cat_input_names]
+        
         targets = d[target_names]
         classes = [target_classes] * nev
         recoGenTauH_mass = d["recoGenTauH_mass"]
@@ -241,7 +264,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
             np.float32).reshape((-1, len(targets.dtype)))
 
         mass_loss_inputs = inputs[:, mass_loss_input_indices]
-
+        
         if parameterize_spin:
             if spin > -1:
                 spins.add(np.float32(spin))
@@ -290,7 +313,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
         mass_loss_inputs_train.append(
             mass_loss_inputs[train_mask][quantile_mask])
         mass_loss_inputs_valid.append(mass_loss_inputs[~train_mask])
-
+        
         batch_weights.append(batch_weight)
 
         event_weights_train.append(
@@ -358,7 +381,10 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
 
     model, regularization_weights = create_model(len(input_names),
                                                  len(cat_input_names),
-                                                 len(target_names),
+                                                 lbn_input_indices,
+                                                 add_lbn_layer,
+                                                 lbn_particle_number,
+                                                 len(target_names), 
                                                  nclasses,
                                                  embedding_expected_inputs,
                                                  embedding_output_dim,
@@ -369,8 +395,11 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
                                                  units=units,
                                                  activation=activation,
                                                  dropout_rate=dropout_rate)
+    
     model.summary()
 
+    exit()
+    
     loss_fns = create_losses(regularization_weights, l2_norm,
                              classifier_weight, mass_loss_weight)
     if target_means is not None and target_stds is not None:
@@ -401,6 +430,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
                                                     spins=spins,
                                                     masses=masses,
                                                     )
+    
 
     model.set_weights(best_weights)
     modelweights = {}
@@ -460,6 +490,7 @@ def main(model_name="reg_mass_class_para_l2n50_addCharge_incrMassLoss",
             nu1 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [0, 1, 2]]**2, axis=1)), axis=1), nus[:, [0, 1, 2]]], axis=1)
             nu2 = np.concatenate([np.expand_dims(np.sqrt(np.sum(nus[:, [3, 4, 5]]**2, axis=1)), axis=1), nus[:, [3, 4, 5]]], axis=1)
             cont_input = np.array(cont_input)
+            
             dau1 = cont_input[:, [input_names.index("dau1_e"), input_names.index("dau1_px"), input_names.index("dau1_py"), input_names.index("dau1_pz")]]
             dau2 = cont_input[:, [input_names.index("dau2_e"), input_names.index("dau2_px"), input_names.index("dau2_py"), input_names.index("dau2_pz")]]
             tau1 = dau1 + nu1
@@ -561,7 +592,7 @@ def create_dataset(inputs, cat_inputs, targets, event_weights, recoGenTauH_mass,
     return ds
 
 
-def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding_expected_inputs, embedding_output_dim, input_means, input_vars, target_means=None, target_stds=None, units=((128, 128, 128), (128, 128, 128)), activation="selu", dropout_rate=0.):
+def create_model(input_shape, cat_input_shape, lbn_input_indices, add_lbn_layer, lbn_particle_number, output_shape, nclasses, embedding_expected_inputs, embedding_output_dim, input_means, input_vars, target_means=None, target_stds=None, units=((128, 128, 128), (128, 128, 128)), activation="selu", dropout_rate=0.):
     activation_settings = {
         "elu": ("ELU", "he_uniform"),
         "relu": ("ReLU", "he_uniform"),
@@ -585,20 +616,45 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
         # input layers
         x1 = tf.keras.Input(input_shape, name="cont_input")
         x2 = tf.keras.Input(cat_input_shape, name="cat_input")
+        #x3 = tf.keras.Input(lbn_input_shape, name="lbn_input")
+        
+        if add_lbn_layer == True:
+            particles = []
+            for idxs in lbn_input_indices:
+                assert len(idxs) in (1, 2, 4)
+                components = [x1[:, x] for x in idxs]
+                if len(components) == 1:
+                    # expect px
+                    components.append(components[0] * 0.0)
+                if len(components) == 2:
+                    # expect px and py
+                    e = (components[0]**2 + components[1]**2)**0.5 + 0.00001
+                    components = [e, *components, components[0] * 0.0]
+                particles.append(tf.concat([c[:, None] for c in components], axis=1))
+            lbn_inputs = tf.concat([p[:, None, :] for p in particles], axis=1)
+            
+            lbn_layer=LBNLayer((7,4), lbn_particle_number, boost_mode=LBN.PAIRS, features=["E", "pt", "eta", "phi", "m", "pair_cos"])
+            lbn = lbn_layer(lbn_inputs)
 
         norm_layer = tf.keras.layers.Normalization(
             mean=input_means, variance=input_vars, name="norm")
         n = norm_layer(x1)
-
+        
         # only add embedding layer if number of integer vars > 0
         if cat_input_shape > 0:
             custom_embedding_layer = CustomEmbeddingLayer(
                 output_dim=embedding_output_dim, expected_inputs=embedding_expected_inputs, name="embedding")
             a = custom_embedding_layer(x2)
-            a = tf.keras.layers.Concatenate(name="concat")([n, a])
+            if add_lbn_layer == True:
+                a = tf.keras.layers.Concatenate(name="concat")([n, a, lbn])
+            else:
+                a = tf.keras.layers.Concatenate(name="concat")([n, a])
         else:
-            a = n
-
+            if add_lbn_layer == True:
+                a = tf.keras.layers.Concatenate(name="concat")([n,lbn])
+            else:
+                a=[n]
+        
         # add layers programatically
         for idx, u in enumerate(units):
             # build the layer
@@ -689,7 +745,7 @@ def create_model(input_shape, cat_input_shape, output_shape, nclasses, embedding
             y3 = tf.keras.layers.Dense(
                 nclasses, activation="softmax", use_bias=True, kernel_initializer="glorot_normal", name="classification_output")(c)
             outputs.append(y3)
-
+        
         # build the model
         model = tf.keras.Model(
             inputs=[x1, x2], outputs=outputs, name="htautau_regression")
@@ -1001,6 +1057,7 @@ def training_loop(
             update = ", ".join(update)
             sys.stdout.write("\033[K")
             print(update, end="\r")
+    
     else:
         message = "dataset exhausted, stopping training"
 
