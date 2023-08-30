@@ -321,7 +321,7 @@ def main(
                      #                        [data["SKIM_DY_amc_incl"]["lumi_weight"]/data["SKIM_DY_amc_incl"]["weightsum"]])
                      legend=True,
                      linestyle="solid",
-                     clear_figure=not bool(compare_model),
+                     clear_figure=not compare_model,
                      )
             if compare_model:
                 plot_ROC(tmp_outputdir,
@@ -345,7 +345,7 @@ def main(
                      #                        [data["SKIM_TT_fullyLep"]["lumi_weight"]/data["SKIM_TT_fullyLep"]["weightsum"]])
                      legend=True,
                      linestyle="solid",
-                     clear_figure=not bool(compare_model),
+                     clear_figure=not compare_model,
                      )
             if compare_model:
                 plot_ROC(tmp_outputdir,
@@ -369,7 +369,7 @@ def main(
                      #                        [data["SKIM_TT_semiLep"]["lumi_weight"]/data["SKIM_TT_semiLep"]["weightsum"]])
                      legend=True,
                      linestyle="solid",
-                     clear_figure=not bool(compare_model),
+                     clear_figure=not compare_model,
                      )
             if compare_model:
                 plot_ROC(tmp_outputdir,
@@ -393,7 +393,7 @@ def main(
                      #                        [data["SKIM_ttHToTauTau"]["lumi_weight"]/data["SKIM_ttHToTauTau"]["weightsum"]])
                      legend=True,
                      linestyle="solid",
-                     clear_figure=not bool(compare_model),
+                     clear_figure=not compare_model,
                      )
             if compare_model:
                 plot_ROC(tmp_outputdir,
@@ -458,7 +458,7 @@ def main(
                         legend=True,
                         legend_loc="upper right",
                         linestyle="solid",
-                        clear_figure=(not bool(compare_model)) and (suffix not in var)
+                        clear_figure=not (suffix in var and compare_model)
                         )
             if suffix in var and compare_model:
                 var = var.removesuffix(suffix)
