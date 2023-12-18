@@ -106,7 +106,7 @@ activation_settings = {
 
 def main(
     model_name="test_asd",
-    data_dir=os.path.join(os.getenv("TN_SKIMS_BASE"), "SKIMS_uhh_2017_v4_17Jul23"),
+    data_dir=os.environ["TN_SKIMS_2017"],
     tensorboard_dir=f"/tmp/tensorboard_{getuser()}",
     # sample name: (relative class weight, one-hot class, spin, mass)
     samples={
