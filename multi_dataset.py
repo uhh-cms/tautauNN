@@ -50,7 +50,7 @@ class MultiDataset(object):
         if batch_size != sum(self.batch_sizes):
             print(f"batch size is {sum(self.batch_sizes)} but should be {batch_size}")
 
-        self.max_iter_valid = int(math.ceil(max([c/bs for c, bs in zip(self.counts, self.batch_sizes)])))
+        self.max_iter_valid = int(math.ceil(max([c / bs for c, bs in zip(self.counts, self.batch_sizes)])))
 
     @property
     def n_datasets(self):
@@ -101,7 +101,7 @@ class MultiDataset(object):
             if do_break:
                 break
 
-            yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0)for i in range(self.tuple_length))
+            yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0) for i in range(self.tuple_length))
 
             self.batches_seen += 1
             if self.kind == "valid" and self.batches_seen >= self.max_iter_valid:

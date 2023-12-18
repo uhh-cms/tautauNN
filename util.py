@@ -5,23 +5,25 @@ import tensorflow as tf
 import math
 
 
-def load_sample(basepath, sample, weight, features, selections, maxevents=1000000):
+def load_sample(data_dir, sample, weight, features, selections, maxevents=1000000):
+    print(f"loading sample {sample} ...")
     feature_vecs = []
     nevents = 0
     # weightsum = 0
-    filenames = glob.glob(f"{basepath}/{sample}/output*.npz")
+    filenames = glob.glob(f"{data_dir}/{sample}/output*.npz")
     for filename in filenames:
         with np.load(filename) as f:
             # weightsum += f["weightsum"]
-            if nevents <= maxevents:
-                e = f["events"]
-                mask = [True] * len(e)
-                for (varnames, func) in selections:
-                    variables = [e[v] for v in varnames]
-                    mask = mask & func(*variables)
-                feature_vecs.append(e[features][mask])
-                nevents += len(feature_vecs[-1])
-    print(f"{sample}: {nevents} events")
+            e = f["events"]
+            mask = [True] * len(e)
+            for (varnames, func) in selections:
+                variables = [e[v] for v in varnames]
+                mask = mask & func(*variables)
+            feature_vecs.append(e[features][mask])
+            nevents += len(feature_vecs[-1])
+            if nevents > maxevents:
+                break
+    print(f"done, found {nevents} events")
     weights = np.array([weight] * nevents, dtype="float32")
     feature_vecs = np.concatenate(feature_vecs, axis=0)
     return feature_vecs, weights
@@ -37,7 +39,7 @@ def calc_new_columns(data, rules):
         column = func(*input_values)
         columns.append(column)
         column_names.append(name)
-    data = rfn.rec_append_fields(data, list(rules.keys()), columns, dtypes=["<f4"]*len(columns))
+    data = rfn.rec_append_fields(data, list(rules.keys()), columns, dtypes=["<f4"] * len(columns))
     return data
 
 
@@ -57,11 +59,11 @@ def calc_4vec_sum(pt1, eta1, phi1, e1, pt2, eta2, phi2, e2):
 
     pt = np.sqrt(px**2 + py**2)
     p = np.sqrt(pt**2 + pz**2)
-    theta = np.arccos(pz/p)
-    eta = -np.log(np.tan(theta/2))
-    phi = np.arccos(px/pt)
+    theta = np.arccos(pz / p)
+    eta = -np.log(np.tan(theta / 2))
+    phi = np.arccos(px / pt)
     phi[py == 0] = 0
-    phi[py < 0] = -np.arccos(px/pt)[py < 0]
+    phi[py < 0] = -np.arccos(px / pt)[py < 0]
 
     return pt, eta, phi, e
 
@@ -104,7 +106,7 @@ def create_tensorboard_callbacks(log_dir):
         writer = tf.summary.create_file_writer(log_dir)
         flush = writer.flush
 
-        def add(attr, *args, **kwargs):
+        def add(attr, *args, **kwargs):  # noqa
             with writer.as_default():
                 getattr(tf.summary, attr)(*args, **kwargs)
     return add, flush
