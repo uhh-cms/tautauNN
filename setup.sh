@@ -26,9 +26,24 @@ action() {
     local shell_is_zsh="$( [ -z "${ZSH_VERSION}" ] && echo "false" || echo "true" )"
     local this_file="$( ${shell_is_zsh} && echo "${(%):-%x}" || echo "${BASH_SOURCE[0]}" )"
     local this_dir="$( cd "$( dirname "${this_file}" )" && pwd )"
+    local micromamba_url="https://micro.mamba.pm/api/micromamba/linux-64/latest"
+    local pyv="3.11"
+    local user_name="$( whoami )"
 
-    local miniconda_source="https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh"
-    local pyv="3.9"
+
+    #
+    # host and user depdenent variables
+    #
+
+    if [[ "$( hostname )" = max-*.desy.de ]]; then
+        # maxwell
+        export TN_DATA_BASE="/gpfs/dust/cms/user/${user_name}/taunn_data"
+        export TN_SOFTWARE_BASE="${TN_DATA_BASE}/software_maxwell"
+    elif [[ "$( hostname )" = naf-*.desy.de ]]; then
+        # naf
+        export TN_DATA_BASE="/nfs/dust/cms/user/${user_name}/taunn_data"
+        export TN_SOFTWARE_BASE="${TN_DATA_BASE}/software_naf"
+    fi
 
 
     #
@@ -49,6 +64,8 @@ action() {
     export PYTHONWARNINGS="${PYTHONWARNINGS:-ignore}"
     export VIRTUAL_ENV_DISABLE_PROMPT="${VIRTUAL_ENV_DISABLE_PROMPT:-1}"
     export TF_CPP_MIN_LOG_LEVEL="3"
+    export MAMBA_ROOT_PREFIX="${TN_CONDA_BASE}"
+    export MAMBA_EXE="${MAMBA_ROOT_PREFIX}/bin/micromamba"
 
 
     #
@@ -61,55 +78,65 @@ action() {
     # conda base environment
     local conda_missing="$( [ -d "${TN_CONDA_BASE}" ] && echo "false" || echo "true" )"
     if ${conda_missing}; then
-        echo "installing conda at ${TN_CONDA_BASE}"
+        echo "installing conda/micromamba at ${TN_CONDA_BASE}"
         (
-            wget "${miniconda_source}" -O setup_miniconda.sh &&
-            bash setup_miniconda.sh -b -u -p "${TN_CONDA_BASE}" &&
-            rm setup_miniconda.sh &&
-            cat << EOF >> "${TN_CONDA_BASE}/.condarc"
+            mkdir -p "${TN_CONDA_BASE}"
+            cd "${TN_CONDA_BASE}"
+            curl -Ls "${micromamba_url}" | tar -xvj -C . "bin/micromamba"
+            ./bin/micromamba shell hook -y --prefix="${TN_CONDA_BASE}" &> "micromamba.sh"
+            mkdir -p "etc/profile.d"
+            mv "micromamba.sh" "etc/profile.d"
+            cat << EOF > ".mambarc"
 changeps1: false
+always_yes: true
 channels:
-- conda-forge
-- defaults
+  - conda-forge
 EOF
         )
     fi
 
     # initialize conda
-    local __conda_setup="$( "${TN_CONDA_BASE}/bin/conda" "shell.$( ${shell_is_zsh} && echo "zsh" || echo "bash" )" "hook" 2> /dev/null )"
-    if [ "$?" = "0" ]; then
-        eval "${__conda_setup}"
-    else
-        if [ -f "${TN_CONDA_BASE}/etc/profile.d/conda.sh" ]; then
-            . "${TN_CONDA_BASE}/etc/profile.d/conda.sh"
-        else
-            export PATH="${TN_CONDA_BASE}/bin:${PATH}"
-        fi
-    fi
-    echo "initialized conda with python ${pyv}"
+    source "${TN_CONDA_BASE}/etc/profile.d/micromamba.sh" "" || return "$?"
+    micromamba activate || return "$?"
+    echo "initialized conda/micromamba"
 
     # install packages
     if ${conda_missing}; then
         echo
-        echo "setting up conda environment"
+        echo "setting up conda/micromamba environment"
 
         # conda packages (nothing so far)
-        # conda install --yes ...  || return "$?"
+        micromamba install \
+            libgcc \
+            bash \
+            "python=${pyv}" \
+            git \
+            git-lfs \
+            || return "$?"
+        micromamba clean --yes --all
 
         # pip packages
-        pip install -U pip
-        pip install \
-            'tensorflow==2.10.*' \
-            'awkward==1.10.*' \
-            'ipython' \
-            'uproot4' \
-            matplotlib \
-            numpy \
-            livelossplot \
-            tqdm \
-            mplhep \
-            scikit-learn \
-        || return "$?"
+        pip install -U pip setuptools wheel
+        pip install -U \
+            "ipython" \
+            "notebook" \
+            "tensorflow[and-cuda]" \
+            "tensorboard_plugin_profile" \
+            "numpy" \
+            "scipy" \
+            "scikit-learn" \
+            "nvidia-pyindex" \
+            "nvidia-tensorrt" \
+            "uproot" \
+            "awkward" \
+            "livelossplot" \
+            "tqdm" \
+            "matplotlib" \
+            "mplhep" \
+            "flake8" \
+            "flake8-commas" \
+            "flake8-quotes" \
+            || return "$?"
     fi
 }
 
