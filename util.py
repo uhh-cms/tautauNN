@@ -193,8 +193,7 @@ class L2Metric(tf.keras.metrics.Metric):
                 self.norms.append(layer.kernel_regularizer.l2)
 
         # book the l2 metric
-        self.l2 = self.add_weight(name="l2", initializer="zeros")
-        from IPython import embed; embed()
+        self.l2: tf.Variable = self.add_weight(name="l2", initializer="zeros")
 
     def update_state(self, y_true, y_pred, sample_weight=None):
         self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
