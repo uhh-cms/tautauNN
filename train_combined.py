@@ -164,8 +164,8 @@ def main(
         Sample("SKIM_ggF_BulkGraviton_m1500", 1.0, [1, 0, 0], 2, 1500.0),
         Sample("SKIM_ggF_BulkGraviton_m1750", 1.0, [1, 0, 0], 2, 1750.0),
         Sample("SKIM_DY_amc_incl", 1.0, [0, 1, 0], -1, -1.0),
-        Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
-        Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
+        # Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
+        # Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
         # Sample("SKIM_GluGluHToTauTau", 1.0, [0, 0, 0, 0, 1, 0], -1, -1.0),
         # Sample("SKIM_ttHToTauTau", 1.0, [0, 0, 0, 1], -1, -1.0),
     ],
@@ -355,8 +355,6 @@ def main(
         cat_input_names.append("spin")
         # add to possible embedding values
         possible_cont_input_values.append(embedding_expected_inputs["spin"])
-        # TODO: added -1 here for now for embedding to find all values
-        possible_cont_input_values[-1].append(-1)
 
     # handle masses
     masses = sorted(masses)
@@ -366,16 +364,30 @@ def main(
         cont_input_means[-1] = np.mean(masses)
         cont_input_vars[-1] = np.var(masses)
 
+    # live transformation of inputs to inject spin and mass for backgrounds
+    def transform(cont_inputs, cat_inputs, labels, weights):
+        if parameterize_mass:
+            random_masses = tf.gather(masses, tf.random.categorical([[1.0] * len(masses)], cont_inputs.shape[0]))[0]
+            filled_masses = tf.where(cont_inputs[:, -1] < 0, random_masses, cont_inputs[:, -1])
+            cont_inputs = tf.concat([cont_inputs[:, :-1], filled_masses[..., None]], axis=1)
+        if parameterize_mass:
+            random_spins = tf.gather(spins, tf.random.categorical([[1.0] * len(spins)], cat_inputs.shape[0]))[0]
+            filled_spins = tf.where(cat_inputs[:, -1] < 0, random_spins, cat_inputs[:, -1])
+            cat_inputs = tf.concat([cat_inputs[:, :-1], filled_spins[..., None]], axis=1)
+        return cont_inputs, cat_inputs, labels, weights
+
     # build datasets
     dataset_train = MultiDataset(
         data=zip(zip(cont_inputs_train, cat_inputs_train, labels_train, event_weights_train), batch_weights),
         batch_size=batch_size,
         kind="train",
+        transform_data=transform,
     )
     dataset_valid = MultiDataset(
         data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
         batch_size=batch_size,
         kind="valid",
+        transform_data=transform,
     )
 
     with device:
@@ -435,7 +447,6 @@ def main(
     # - early stopping
     # - learning rate decay or cycle
     # - checkpointing (always save best weights after n-th step)
-    # - spin and mass randomization for backgrounds
     # - other samples
     # - binary or multi-class?
     # - tauNN

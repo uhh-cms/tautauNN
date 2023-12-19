@@ -1,8 +1,12 @@
 # coding: utf-8
 
 from __future__ import annotations
+
+from typing import Callable
+
 import math
 import numpy as np
+
 import tensorflow as tf
 
 
@@ -14,6 +18,7 @@ class MultiDataset(object):
         batch_size: int = 128,
         kind: str = "train",
         seed: int | None = None,
+        transform_data: Callable[[tuple[tf.Tensor, ...]], tuple[tf.Tensor, ...]] | None = None,
     ):
         super().__init__()
 
@@ -52,6 +57,8 @@ class MultiDataset(object):
 
         self.max_iter_valid = int(math.ceil(max([c / bs for c, bs in zip(self.counts, self.batch_sizes)])))
 
+        self.transform_data = transform_data
+
     @property
     def n_datasets(self):
         return len(self.datasets)
@@ -80,6 +87,9 @@ class MultiDataset(object):
             for dataset, bs_size in zip(datasets, self.batch_sizes)
         ]
 
+        # prepare the optional data transformation
+        transform_data = self.transform_data if callable(self.transform_data) else lambda x: x
+
         its = [iter(dataset) for dataset in datasets]
         while True:
             dataset_batches = []
@@ -101,7 +111,10 @@ class MultiDataset(object):
             if do_break:
                 break
 
-            yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0) for i in range(self.tuple_length))
+            yield transform_data(*tuple(
+                tf.concat([batch[i] for batch in dataset_batches], axis=0)
+                for i in range(self.tuple_length)
+            ))
 
             self.batches_seen += 1
 
