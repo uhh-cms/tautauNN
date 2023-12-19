@@ -12,7 +12,7 @@ from typing import Callable
 import numpy as np
 import tensorflow as tf
 
-from util import load_sample, phi_mpi_to_pi, calc_new_columns, get_device
+from util import load_sample, phi_mpi_to_pi, calc_new_columns, get_device, L2Metric
 from custom_layers import CustomEmbeddingLayer
 from multi_dataset import MultiDataset
 
@@ -164,8 +164,8 @@ def main(
         Sample("SKIM_ggF_BulkGraviton_m1500", 1.0, [1, 0, 0], 2, 1500.0),
         Sample("SKIM_ggF_BulkGraviton_m1750", 1.0, [1, 0, 0], 2, 1750.0),
         Sample("SKIM_DY_amc_incl", 1.0, [0, 1, 0], -1, -1.0),
-        # Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
-        # Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
+        Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
+        Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
         # Sample("SKIM_GluGluHToTauTau", 1.0, [0, 0, 0, 0, 1, 0], -1, -1.0),
         # Sample("SKIM_ttHToTauTau", 1.0, [0, 0, 0, 1], -1, -1.0),
     ],
@@ -414,6 +414,7 @@ def main(
             optimizer=tf.keras.optimizers.Adam(learning_rate=initial_learning_rate),
             metrics=[
                 tf.keras.metrics.CategoricalCrossentropy(name="ce"),
+                L2Metric(model, name="l2"),
                 tf.keras.metrics.CategoricalAccuracy(name="acc"),
                 tf.keras.metrics.AUC(name="auc"),
             ],
@@ -426,9 +427,9 @@ def main(
         if tensorboard_dir:
             fit_callbacks.append(tf.keras.callbacks.TensorBoard(
                 log_dir=os.path.join(tensorboard_dir, model_name),
-                write_graph=True,
                 histogram_freq=1,
-                profile_batch="500,520",
+                # write_graph=True,
+                # profile_batch="500,520",
             ))
 
         model.fit(
@@ -443,7 +444,6 @@ def main(
         )
 
     # TODOs (in order):
-    # - l2 in metrics and tensorboard
     # - early stopping
     # - learning rate decay or cycle
     # - checkpointing (always save best weights after n-th step)
