@@ -1,32 +1,76 @@
+# coding: utf-8
+
+from __future__ import annotations
+
+import os
+import math
 import glob
+import hashlib
+import pickle
+import inspect
+
 import numpy as np
 import numpy.lib.recfunctions as rfn
 import tensorflow as tf
-import math
 
 
-def load_sample(data_dir, sample, weight, features, selections, maxevents=1000000):
+debug_layer = tf.autograph.experimental.do_not_convert
+
+
+def load_sample(data_dir, sample, weight, features, selections, maxevents=1000000, cache_dir=None):
     print(f"loading sample {sample} ...")
-    feature_vecs = []
-    nevents = 0
-    # weightsum = 0
-    filenames = glob.glob(f"{data_dir}/{sample}/output*.npz")
-    for filename in filenames:
-        with np.load(filename) as f:
-            # weightsum += f["weightsum"]
-            e = f["events"]
-            mask = [True] * len(e)
-            for (varnames, func) in selections:
-                variables = [e[v] for v in varnames]
-                mask = mask & func(*variables)
-            feature_vecs.append(e[features][mask])
-            nevents += len(feature_vecs[-1])
-            if nevents > maxevents:
-                break
-    print(f"done, found {nevents} events")
-    weights = np.array([weight] * nevents, dtype="float32")
-    feature_vecs = np.concatenate(feature_vecs, axis=0)
+
+    # potentially read from cache
+    cache_path = get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents)
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            feature_vecs = pickle.load(f)
+        print(f"loaded {len(feature_vecs)} events from cache")
+
+    else:
+        feature_vecs = []
+        nevents = 0
+        # weightsum = 0
+        filenames = glob.glob(f"{data_dir}/{sample}/output*.npz")
+        for i, filename in enumerate(filenames, 1):
+            with np.load(filename) as f:
+                # weightsum += f["weightsum"]
+                e = f["events"]
+                mask = [True] * len(e)
+                for (varnames, func) in selections:
+                    variables = [e[v] for v in varnames]
+                    mask = mask & func(*variables)
+                feature_vecs.append(e[features][mask])
+                nevents += len(feature_vecs[-1])
+                if nevents > maxevents:
+                    break
+        feature_vecs = np.concatenate(feature_vecs, axis=0)
+        print(f"done, found {len(feature_vecs)} events in {i} file(s)")
+
+        # save to cache
+        if cache_path:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "wb") as f:
+                pickle.dump(feature_vecs, f)
+
+    # weight vector
+    weights = np.array([weight] * len(feature_vecs), dtype="float32")
+
     return feature_vecs, weights
+
+
+def get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents) -> str | None:
+    if not cache_dir:
+        return None
+
+    cache_key = [
+        os.path.expandvars(data_dir),
+        sample,
+        sorted(features),
+        [(feats, inspect.getsource(func)) for feats, func in selections],
+        maxevents,
+    ]
+    return os.path.join(cache_dir, hashlib.sha256(str(cache_key).encode("utf-8")).hexdigest()[:10] + ".pkl")
 
 
 def calc_new_columns(data, rules):

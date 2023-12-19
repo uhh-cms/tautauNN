@@ -56,7 +56,7 @@ class MultiDataset(object):
     def n_datasets(self):
         return len(self.datasets)
 
-    def __iter__(self):
+    def __iter__(self, repeat_valid: bool = False):
         self.batches_seen = 0
 
         datasets = self.datasets
@@ -104,9 +104,28 @@ class MultiDataset(object):
             yield tuple(tf.concat([batch[i] for batch in dataset_batches], axis=0) for i in range(self.tuple_length))
 
             self.batches_seen += 1
-            if self.kind == "valid" and self.batches_seen >= self.max_iter_valid:
+
+            # stop validation after max_iter_valid batches
+            if self.kind == "valid" and not repeat_valid and self.batches_seen >= self.max_iter_valid:
                 break
 
     def map(self, *args, **kwargs):
         for key, dataset in list(self._datasets.items()):
             self._datasets[key] = dataset.map(*args, **kwargs)
+
+    def create_keras_generator(self, input_names: list[str] | None = None):
+        # this assumes that at least three arrays are yielded by the __iter__ method: inputs, targets, weights
+        # when input_names are given, the inputs array is split into a dictionary with the given names
+        # when there is more than one input array, input_names are mandatory
+        if self.tuple_length > 3:
+            if not input_names:
+                raise ValueError("input_names must be given when there is more than one output to be yielded")
+            if len(input_names) != self.tuple_length - 2:
+                raise ValueError(
+                    f"input_names ({len(input_names)}) must have the same length as the number of input arrays "
+                    f"(({self.tuple_length - 2}))",
+                )
+
+        # start generating
+        for arrays in self.__iter__(repeat_valid=True):
+            yield dict(zip(input_names, arrays[:2])) if input_names else arrays[:2], *arrays[2:]

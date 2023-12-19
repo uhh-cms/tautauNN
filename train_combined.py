@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import os
-import functools
-from operator import mul
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import Callable
 
 import numpy as np
 import tensorflow as tf
@@ -77,6 +76,7 @@ embedding_expected_inputs = {
     "dau2_decayMode": [0, 1, 10, 11],
     "dau1_charge": [-1, 1],
     "dau2_charge": [-1, 1],
+    "spin": [0, 2],
 }
 
 
@@ -104,69 +104,77 @@ activation_settings = {
 }
 
 
+@dataclass
+class Sample:
+    name: str
+    class_weight: float
+    labels: list[int]
+    spin: int = -1
+    mass: float = -1.0
+
+
 def main(
-    model_name="test_asd",
-    data_dir=os.environ["TN_SKIMS_2017"],
-    tensorboard_dir=f"/tmp/tensorboard_{getuser()}",
-    # sample name: (relative class weight, one-hot class, spin, mass)
-    samples={
-        # "SKIM_GGHH_SM": (1.0, [1, 0, 0], -1, -1.0),
-        # "SKIM_ggF_Radion_m250": (1.0, [1, 0, 0], 0, 250.0),
-        # "SKIM_ggF_Radion_m260": (1.0, [1, 0, 0], 0, 260.0),
-        # "SKIM_ggF_Radion_m270": (1.0, [1, 0, 0], 0, 270.0),
-        # "SKIM_ggF_Radion_m280": (1.0, [1, 0, 0], 0, 280.0),
-        # "SKIM_ggF_Radion_m300": (1.0, [1, 0, 0], 0, 300.0),
-        "SKIM_ggF_Radion_m320": (1.0, [1, 0, 0], 0, 320.0),
-        # "SKIM_ggF_Radion_m350": (1.0, [1, 0, 0], 0, 350.0),
-        # "SKIM_ggF_Radion_m400": (1.0, [1, 0, 0], 0, 400.0),
-        # "SKIM_ggF_Radion_m450": (1.0, [1, 0, 0], 0, 450.0),
-        # "SKIM_ggF_Radion_m500": (1.0, [1, 0, 0], 0, 500.0),
-        # "SKIM_ggF_Radion_m550": (1.0, [1, 0, 0], 0, 550.0),
-        # "SKIM_ggF_Radion_m600": (1.0, [1, 0, 0], 0, 600.0),
-        # "SKIM_ggF_Radion_m650": (1.0, [1, 0, 0], 0, 650.0),
-        # "SKIM_ggF_Radion_m700": (1.0, [1, 0, 0], 0, 700.0),
-        # "SKIM_ggF_Radion_m750": (1.0, [1, 0, 0], 0, 750.0),
-        # "SKIM_ggF_Radion_m800": (1.0, [1, 0, 0], 0, 800.0),
-        # "SKIM_ggF_Radion_m850": (1.0, [1, 0, 0], 0, 850.0),
-        # "SKIM_ggF_Radion_m900": (1.0, [1, 0, 0], 0, 900.0),
-        # "SKIM_ggF_Radion_m1000": (1.0, [1, 0, 0], 0, 1000.0),
-        # "SKIM_ggF_Radion_m1250": (1.0, [1, 0, 0], 0, 1250.0),
-        # "SKIM_ggF_Radion_m1500": (1.0, [1, 0, 0], 0, 1500.0),
-        # "SKIM_ggF_Radion_m1750": (1.0, [1, 0, 0], 0, 1750.0),
-        # # "SKIM_ggF_BulkGraviton_m250": (1.0, [1, 0, 0], 2, 250.0),
-        # # "SKIM_ggF_BulkGraviton_m260": (1.0, [1, 0, 0], 2, 260.0),
-        # # "SKIM_ggF_BulkGraviton_m270": (1.0, [1, 0, 0], 2, 270.0),
-        # # "SKIM_ggF_BulkGraviton_m280": (1.0, [1, 0, 0], 2, 280.0),
-        # # "SKIM_ggF_BulkGraviton_m300": (1.0, [1, 0, 0], 2, 300.0),
-        # "SKIM_ggF_BulkGraviton_m320": (1.0, [1, 0, 0], 2, 320.0),
-        # "SKIM_ggF_BulkGraviton_m350": (1.0, [1, 0, 0], 2, 350.0),
-        # "SKIM_ggF_BulkGraviton_m400": (1.0, [1, 0, 0], 2, 400.0),
-        # "SKIM_ggF_BulkGraviton_m450": (1.0, [1, 0, 0], 2, 450.0),
-        # "SKIM_ggF_BulkGraviton_m500": (1.0, [1, 0, 0], 2, 500.0),
-        # "SKIM_ggF_BulkGraviton_m550": (1.0, [1, 0, 0], 2, 550.0),
-        # "SKIM_ggF_BulkGraviton_m600": (1.0, [1, 0, 0], 2, 600.0),
-        # "SKIM_ggF_BulkGraviton_m650": (1.0, [1, 0, 0], 2, 650.0),
-        # "SKIM_ggF_BulkGraviton_m700": (1.0, [1, 0, 0], 2, 700.0),
-        # "SKIM_ggF_BulkGraviton_m750": (1.0, [1, 0, 0], 2, 750.0),
-        # "SKIM_ggF_BulkGraviton_m800": (1.0, [1, 0, 0], 2, 800.0),
-        # "SKIM_ggF_BulkGraviton_m850": (1.0, [1, 0, 0], 2, 850.0),
-        # "SKIM_ggF_BulkGraviton_m900": (1.0, [1, 0, 0], 2, 900.0),
-        # "SKIM_ggF_BulkGraviton_m1000": (1.0, [1, 0, 0], 2, 1000.0),
-        # "SKIM_ggF_BulkGraviton_m1250": (1.0, [1, 0, 0], 2, 1250.0),
-        # "SKIM_ggF_BulkGraviton_m1500": (1.0, [1, 0, 0], 2, 1500.0),
-        # "SKIM_ggF_BulkGraviton_m1750": (1.0, [1, 0, 0], 2, 1750.0),
-        "SKIM_DY_amc_incl": (1.0, [0, 1, 0], -1, -1.0),
-        "SKIM_TT_fullyLep": (1.0, [0, 0, 1], -1, -1.0),
-        # "SKIM_TT_semiLep": (1.0, [0, 0, 1], -1, -1.0),
-        # "SKIM_GluGluHToTauTau": (1.0, [0, 0, 0, 0, 1, 0], -1, -1.0),
-        # "SKIM_ttHToTauTau": (1.0, [0, 0, 0, 1], -1, -1.0),
-    },
+    model_name: str = "test_lreg50_elu_bn",
+    data_dir: str = os.environ["TN_SKIMS_2017"],
+    cache_dir: str = os.path.join(os.environ["TN_DATA_BASE"], "cache"),
+    tensorboard_dir: str = f"/tmp/tensorboard_{getuser()}",
+    samples: list[Sample] = [
+        # Sample("SKIM_ggF_Radion_m250", 1.0, [1, 0, 0], 0, 250.0),
+        # Sample("SKIM_ggF_Radion_m260", 1.0, [1, 0, 0], 0, 260.0),
+        # Sample("SKIM_ggF_Radion_m270", 1.0, [1, 0, 0], 0, 270.0),
+        # Sample("SKIM_ggF_Radion_m280", 1.0, [1, 0, 0], 0, 280.0),
+        # Sample("SKIM_ggF_Radion_m300", 1.0, [1, 0, 0], 0, 300.0),
+        Sample("SKIM_ggF_Radion_m320", 1.0, [1, 0, 0], 0, 320.0),
+        Sample("SKIM_ggF_Radion_m350", 1.0, [1, 0, 0], 0, 350.0),
+        Sample("SKIM_ggF_Radion_m400", 1.0, [1, 0, 0], 0, 400.0),
+        Sample("SKIM_ggF_Radion_m450", 1.0, [1, 0, 0], 0, 450.0),
+        Sample("SKIM_ggF_Radion_m500", 1.0, [1, 0, 0], 0, 500.0),
+        Sample("SKIM_ggF_Radion_m550", 1.0, [1, 0, 0], 0, 550.0),
+        Sample("SKIM_ggF_Radion_m600", 1.0, [1, 0, 0], 0, 600.0),
+        Sample("SKIM_ggF_Radion_m650", 1.0, [1, 0, 0], 0, 650.0),
+        Sample("SKIM_ggF_Radion_m700", 1.0, [1, 0, 0], 0, 700.0),
+        Sample("SKIM_ggF_Radion_m750", 1.0, [1, 0, 0], 0, 750.0),
+        Sample("SKIM_ggF_Radion_m800", 1.0, [1, 0, 0], 0, 800.0),
+        Sample("SKIM_ggF_Radion_m850", 1.0, [1, 0, 0], 0, 850.0),
+        Sample("SKIM_ggF_Radion_m900", 1.0, [1, 0, 0], 0, 900.0),
+        Sample("SKIM_ggF_Radion_m1000", 1.0, [1, 0, 0], 0, 1000.0),
+        Sample("SKIM_ggF_Radion_m1250", 1.0, [1, 0, 0], 0, 1250.0),
+        Sample("SKIM_ggF_Radion_m1500", 1.0, [1, 0, 0], 0, 1500.0),
+        Sample("SKIM_ggF_Radion_m1750", 1.0, [1, 0, 0], 0, 1750.0),
+        # Sample("SKIM_ggF_BulkGraviton_m250", 1.0, [1, 0, 0], 2, 250.0),
+        # Sample("SKIM_ggF_BulkGraviton_m260", 1.0, [1, 0, 0], 2, 260.0),
+        # Sample("SKIM_ggF_BulkGraviton_m270", 1.0, [1, 0, 0], 2, 270.0),
+        # Sample("SKIM_ggF_BulkGraviton_m280", 1.0, [1, 0, 0], 2, 280.0),
+        # Sample("SKIM_ggF_BulkGraviton_m300", 1.0, [1, 0, 0], 2, 300.0),
+        Sample("SKIM_ggF_BulkGraviton_m320", 1.0, [1, 0, 0], 2, 320.0),
+        Sample("SKIM_ggF_BulkGraviton_m350", 1.0, [1, 0, 0], 2, 350.0),
+        Sample("SKIM_ggF_BulkGraviton_m400", 1.0, [1, 0, 0], 2, 400.0),
+        Sample("SKIM_ggF_BulkGraviton_m450", 1.0, [1, 0, 0], 2, 450.0),
+        Sample("SKIM_ggF_BulkGraviton_m500", 1.0, [1, 0, 0], 2, 500.0),
+        Sample("SKIM_ggF_BulkGraviton_m550", 1.0, [1, 0, 0], 2, 550.0),
+        Sample("SKIM_ggF_BulkGraviton_m600", 1.0, [1, 0, 0], 2, 600.0),
+        Sample("SKIM_ggF_BulkGraviton_m650", 1.0, [1, 0, 0], 2, 650.0),
+        Sample("SKIM_ggF_BulkGraviton_m700", 1.0, [1, 0, 0], 2, 700.0),
+        Sample("SKIM_ggF_BulkGraviton_m750", 1.0, [1, 0, 0], 2, 750.0),
+        Sample("SKIM_ggF_BulkGraviton_m800", 1.0, [1, 0, 0], 2, 800.0),
+        Sample("SKIM_ggF_BulkGraviton_m850", 1.0, [1, 0, 0], 2, 850.0),
+        Sample("SKIM_ggF_BulkGraviton_m900", 1.0, [1, 0, 0], 2, 900.0),
+        Sample("SKIM_ggF_BulkGraviton_m1000", 1.0, [1, 0, 0], 2, 1000.0),
+        Sample("SKIM_ggF_BulkGraviton_m1250", 1.0, [1, 0, 0], 2, 1250.0),
+        Sample("SKIM_ggF_BulkGraviton_m1500", 1.0, [1, 0, 0], 2, 1500.0),
+        Sample("SKIM_ggF_BulkGraviton_m1750", 1.0, [1, 0, 0], 2, 1750.0),
+        Sample("SKIM_DY_amc_incl", 1.0, [0, 1, 0], -1, -1.0),
+        Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
+        Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
+        # Sample("SKIM_GluGluHToTauTau", 1.0, [0, 0, 0, 0, 1, 0], -1, -1.0),
+        # Sample("SKIM_ttHToTauTau", 1.0, [0, 0, 0, 1], -1, -1.0),
+    ],
     # additional columns to load
-    extra_columns=[
+    extra_columns: list[str] = [
         "EventNumber",
     ],
     # selections to apply before training
-    selections=[
+    selections: list[tuple[tuple[str, ...], Callable]] = [
         (("nbjetscand",), (lambda a: a > 1)),
         (("pairType",), (lambda a: a < 3)),
         (("nleps",), (lambda a: a == 0)),
@@ -178,11 +186,11 @@ def main(
         ),
     ],
     # categorical input features for the network
-    cat_input_names=[
+    cat_input_names: list[str] = [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge",
     ],
     # continuous input features to the network
-    cont_input_names=[
+    cont_input_names: list[str] = [
         "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
         "met_cov00", "met_cov01", "met_cov11",
         "ditau_deltaphi", "ditau_deltaeta",
@@ -201,40 +209,42 @@ def main(
         ],
     ],
     # number of layers and units, second entry determines the extra heads (if applicable, otherwise "concatenate")
-    units=[125] * 5,
+    units: list[int] = [125] * 5,
     # dimension of the embedding layer output will be embedding_output_dim x N_categorical_features
-    embedding_output_dim=5,
+    embedding_output_dim: int = 5,
     # activation function after each hidden layer
-    activation="elu",
+    activation: str = "elu",
     # scale fot the l2 loss term (which is already normalized to the number of weights)
-    l2_norm=50.0,
+    l2_norm: float = 50.0,
     # dropout percentage
-    dropout_rate=0.0,
+    dropout_rate: float = 0.0,
+    # batch norm between layers
+    batch_norm: bool = True,
     # batch size
-    batch_size=4096,
+    batch_size: int = 4096,
     # learning rate to start with
-    initial_learning_rate=3e-3,
+    initial_learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
-    learning_rate_patience=4,
+    learning_rate_patience: int = 4,
     # how even the learning rate is halfed before training is stopped
-    max_learning_rate_reductions=5,
+    max_learning_rate_reductions: int = 5,
     # stop training if the validation loss hasn't improved since this many validation steps
-    early_stopping_patience=10,
+    early_stopping_patience: int = 10,
     # divide events by this based on EventNumber
-    train_valid_eventnumber_modulo=4,
+    train_valid_eventnumber_modulo: int = 4,
     # assign event to validation dataset if the rest is this
-    train_valid_eventnumber_rest=0,
-    # how frequently the terminal and tensorboard are updated
-    log_every=100,
+    train_valid_eventnumber_rest: int = 0,
     # how frequently to calulcate the validation loss
-    validate_every=500,
-    # prevent gradients from becoming very large
-    gradient_clipping=False,
+    validate_every: int = 500,
     # add the generator spin for the signal samples as categorical input -> network parameterized in spin
-    parameterize_spin=True,
+    parameterize_spin: bool = True,
     # add the generator mass for the signal samples as continuous input -> network parameterized in mass
-    parameterize_mass=True,
+    parameterize_mass: bool = True,
 ):
+    # some checks
+    assert "spin" not in cat_input_names
+    assert "mass" not in cont_input_names
+
     # determine which columns to read
     columns_to_read = set()
     for name in cont_input_names + cat_input_names:
@@ -258,10 +268,10 @@ def main(
     # get lists of embedded feature values
     possible_cont_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
 
-    # scan samples and classes to construct relative weights such that each class starts with equal importance
-    classes_to_samples = defaultdict(list)
-    for sample_name, (_, classes, _, _) in samples.items():
-        classes_to_samples[tuple(classes)].append(sample_name)
+    # scan samples and their labels to construct relative weights such that each class starts with equal importance
+    labels_to_samples = defaultdict(list)
+    for sample in samples:
+        labels_to_samples[tuple(sample.labels)].append(sample.name)
 
     # keep track of spins, masses, number of events per sample, and relative batch weights per sample
     spins: set[f32] = set()
@@ -272,19 +282,27 @@ def main(
     # lists for collection data to be forwarded into the MultiDataset
     cont_inputs_train, cont_inputs_valid = [], []
     cat_inputs_train, cat_inputs_valid = [], []
-    classes_train, classes_valid = [], []
+    labels_train, labels_valid = [], []
     event_weights_train, event_weights_valid = [], []
 
     # helper to flatten rec arrays
     flatten_rec = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
 
     # loop through samples
-    for sample_name, (event_weight, target_classes, spin, mass) in samples.items():
-        rec, event_weights = load_sample(data_dir, sample_name, event_weight, list(columns_to_read), selections, maxevents=10000)
+    for sample in samples:
+        rec, event_weights = load_sample(
+            data_dir,
+            sample.name,
+            sample.class_weight,
+            list(columns_to_read),
+            selections,
+            # maxevents=10000,
+            cache_dir=cache_dir,
+        )
         all_n_events.append(n_events := len(event_weights))
 
         # compute the batch weight, i.e. the weight that ensure that each class is equally represented in each batch
-        batch_weights.append(1 / len(classes_to_samples[tuple(target_classes)]))
+        batch_weights.append(1 / len(labels_to_samples[tuple(sample.labels)]))
 
         # add dynamic columns
         rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
@@ -292,17 +310,17 @@ def main(
         # prepare arrays
         cont_inputs = flatten_rec(rec[cont_input_names], f32)
         cat_inputs = flatten_rec(rec[cat_input_names], i32)
-        classes = np.array([target_classes] * n_events, dtype=f32)
+        labels = np.array([sample.labels] * n_events, dtype=f32)
 
         # add spin and mass if given
         if parameterize_mass:
-            if mass > -1:
-                masses.add(float(mass))
-            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=f32) * mass)[:, None], axis=1)
+            if sample.mass > -1:
+                masses.add(float(sample.mass))
+            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=f32) * sample.mass)[:, None], axis=1)
         if parameterize_spin:
-            if spin > -1:
-                spins.add(int(spin))
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=i32) * spin)[:, None], axis=1)
+            if sample.spin > -1:
+                spins.add(int(sample.spin))
+            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=i32) * sample.spin)[:, None], axis=1)
 
         # training and validation mask
         train_mask = (rec["EventNumber"] % train_valid_eventnumber_modulo) != train_valid_eventnumber_rest
@@ -315,8 +333,8 @@ def main(
         cat_inputs_train.append(cat_inputs[train_mask])
         cat_inputs_valid.append(cat_inputs[valid_mask])
 
-        classes_train.append(classes[train_mask])
-        classes_valid.append(classes[valid_mask])
+        labels_train.append(labels[train_mask])
+        labels_valid.append(labels[valid_mask])
 
         event_weights_train.append(event_weights[train_mask][..., None])
         event_weights_valid.append(event_weights[valid_mask][..., None])
@@ -336,7 +354,9 @@ def main(
     if parameterize_spin:
         cat_input_names.append("spin")
         # add to possible embedding values
-        possible_cont_input_values.append(spins)
+        possible_cont_input_values.append(embedding_expected_inputs["spin"])
+        # TODO: added -1 here for now for embedding to find all values
+        possible_cont_input_values[-1].append(-1)
 
     # handle masses
     masses = sorted(masses)
@@ -347,58 +367,111 @@ def main(
         cont_input_vars[-1] = np.var(masses)
 
     # build datasets
-    # TODO: to use this with keras, we might need to convert this or change the yielded objects to something that keras
-    # understands properly as "two inputs + weights + targets"
-    # (note: this might be as easy as changing the zipping ...)
     dataset_train = MultiDataset(
-        data=zip(zip(cont_inputs_train, cat_inputs_train, classes_train, event_weights_train), batch_weights),
+        data=zip(zip(cont_inputs_train, cat_inputs_train, labels_train, event_weights_train), batch_weights),
         batch_size=batch_size,
         kind="train",
     )
     dataset_valid = MultiDataset(
-        data=zip(zip(cont_inputs_valid, cat_inputs_valid, classes_valid, event_weights_valid), batch_weights),
+        data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
         batch_size=batch_size,
         kind="valid",
     )
 
-    # create the model
     with device:
-        model, regularization_weights = create_model(
+        # create the model
+        model = create_model(
             n_cont_inputs=len(cont_input_names),
             n_cat_inputs=len(cat_input_names),
-            n_classes=len(target_classes),
+            n_classes=labels_train[0].shape[1],
             embedding_expected_inputs=possible_cont_input_values,
             embedding_output_dim=embedding_output_dim,
             cont_input_means=cont_input_means,
             cont_input_vars=cont_input_vars,
             units=units,
             activation=activation,
+            batch_norm=batch_norm,
+            l2_norm=l2_norm,
             dropout_rate=dropout_rate,
         )
-    model.summary()
+        model.summary()
 
-    # everything else should be placed here!
-    # ⏳
+        # compile
+        model.compile(
+            loss="categorical_crossentropy",
+            optimizer=tf.keras.optimizers.Adam(learning_rate=initial_learning_rate),
+            metrics=[
+                tf.keras.metrics.CategoricalCrossentropy(name="ce"),
+                tf.keras.metrics.CategoricalAccuracy(name="acc"),
+                tf.keras.metrics.AUC(name="auc"),
+            ],
+            jit_compile=False,
+            run_eagerly=False,
+        )
+
+        # callbacks
+        fit_callbacks = []
+        if tensorboard_dir:
+            fit_callbacks.append(tf.keras.callbacks.TensorBoard(
+                log_dir=os.path.join(tensorboard_dir, model_name),
+                write_graph=True,
+                histogram_freq=1,
+                profile_batch="500,520",
+            ))
+
+        model.fit(
+            x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            shuffle=False,
+            epochs=30,
+            steps_per_epoch=validate_every,
+            validation_freq=1,
+            validation_steps=dataset_valid.max_iter_valid,
+            callbacks=fit_callbacks,
+        )
+
+    # TODOs (in order):
+    # - l2 in metrics and tensorboard
+    # - early stopping
+    # - learning rate decay or cycle
+    # - checkpointing (always save best weights after n-th step)
+    # - spin and mass randomization for backgrounds
+    # - other samples
+    # - binary or multi-class?
+    # - tauNN
+    # - proper model names
+    # - k-fold xvalidation style data usage (with the modulos above)
+    # - seed change and ensembling encapuslation after trainings (but likely not in this script)
+    # - skip connections, hyper-opt, symmetric CCE and group weight
 
 
+# functional model builder for later use with hyperparameter optimization tools
+# via https://www.tensorflow.org/tutorials/keras/keras_tuner
 def create_model(
     *,
-    n_cont_inputs,
-    n_cat_inputs,
-    n_classes,
-    embedding_expected_inputs,
-    embedding_output_dim,
-    cont_input_means,
-    cont_input_vars,
-    units,
-    activation,
-    dropout_rate,
+    n_cont_inputs: int,
+    n_cat_inputs: int,
+    n_classes: int,
+    embedding_expected_inputs: list[list[int]],
+    embedding_output_dim: int,
+    cont_input_means: np.ndarray,
+    cont_input_vars: np.ndarray,
+    units: list[int],
+    activation: str,
+    batch_norm: bool,
+    l2_norm: float,
+    dropout_rate: float,
 ):
-    # track weights for later use
-    weights = []
+    # checks
+    assert len(embedding_expected_inputs) == n_cat_inputs
+    assert len(cont_input_means) == len(cont_input_vars) == n_cont_inputs
+    assert len(units) > 0
 
     # get activation settings
     act_settings: ActivationSetting = activation_settings[activation]
+
+    # prepare l2 regularization, use a dummy value as it is replaced after the model is built
+    l2_reg = tf.keras.regularizers.l2(1.0) if l2_norm > 0 else None
 
     # input layers
     x_cont = tf.keras.Input(n_cont_inputs, name="cont_input")
@@ -427,24 +500,21 @@ def create_model(
             n_units,
             use_bias=True,
             kernel_initializer=act_settings.weight_init,
+            kernel_regularizer=l2_reg,
             name=f"dense_{i}")
         a = dense_layer(a)
 
-        # prepare activation and batchnorm, their order depends on the activation
-        activation_layer = tf.keras.layers.Activation(act_settings.name, name=f"act_{i}")
+        # batch norm before activation if requested
         batchnorm_layer = tf.keras.layers.BatchNormalization(dtype="float32", name=f"norm_{i}")
-
-        # apply batch norm and actvation
-        bn_before_act, bn_after_act = act_settings.batch_norm
-        assert not (bn_before_act and bn_after_act)
-        if act_settings.batch_norm[0]:
-            a = batchnorm_layer(a)
-        a = activation_layer(a)
-        if act_settings.batch_norm[1]:
+        if batch_norm and act_settings.batch_norm[0]:
             a = batchnorm_layer(a)
 
-        # store the weights for later use
-        weights.append(dense_layer.kernel)
+        # activation
+        a = tf.keras.layers.Activation(act_settings.name, name=f"act_{i}")(a)
+
+        # batch norm after activation if requested
+        if batch_norm and act_settings.batch_norm[1]:
+            a = batchnorm_layer(a)
 
         # add random unit dropout
         if dropout_rate:
@@ -457,6 +527,7 @@ def create_model(
         activation="softmax",
         use_bias=True,
         kernel_initializer=activation_settings["softmax"].weight_init,
+        kernel_regularizer=l2_reg,
         name="output",
     )
     y = output_layer(a)
@@ -464,54 +535,64 @@ def create_model(
     # build the model
     model = tf.keras.Model(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
 
-    return model, weights
-
-
-# custom losses
-# TODO: still needed?
-def create_losses(regularization_weights, l2_norm=10.0):
-    # dictionary of losses to be returned
-    loss_dict = {}
-
-    # cross entropy
-    @tf.function(reduce_retracing=True)
-    def loss_ce_fn(**kwargs):
-        labels = kwargs["labels"]
-        predictions = kwargs["predictions"]
-        event_weights = kwargs["event_weights"]
-        with device:
-            # ensure proper prediction values before applying log's
-            predictions = tf.clip_by_value(predictions, 1e-6, 1 - 1e-6)
-            loss_ce = tf.reduce_mean(
-                event_weights * -labels * tf.math.log(predictions))
-            return loss_ce
-
-    loss_dict["ce"] = loss_ce_fn
-
-    # l2 loss
+    # normalize the l2 regularization to the number of weights in dense layers
     if l2_norm > 0:
-        # total number of weights to be regularized
-        n_reg_weights = sum(functools.reduce(mul, w.shape) for w in regularization_weights)
+        n_weights = sum(map(
+            tf.keras.backend.count_params,
+            [layer.kernel for layer in model.layers if isinstance(layer, tf.keras.layers.Dense)],
+        ))
+        for layer in model.layers:
+            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None:
+                layer.kernel_regularizer.l2[...] = l2_norm / n_weights
 
-        @tf.function(reduce_retracing=True)
-        def loss_l2_fn(**kwargs):
-            with device:
-                # accept labels and predictions although we don't need them
-                # but this makes it easier to call all loss functions the same way
-                loss_l2 = sum(tf.reduce_sum(w ** 2) for w in regularization_weights)
-                return l2_norm / n_reg_weights * loss_l2
-
-        loss_dict["l2"] = loss_l2_fn
-
-    return loss_dict
+    return model
 
 
-# TODO: still needed?
-def create_optimizer(initial_learning_rate):
-    with device:
-        learning_rate = tf.Variable(initial_learning_rate, dtype=tf.float32, trainable=False)
-        optimizer = tf.keras.optimizers.Adam(learning_rate)
-    return optimizer, learning_rate
+# # custom losses
+# # TODO: still needed?
+# def create_losses(regularization_weights, l2_norm=10.0):
+#     # dictionary of losses to be returned
+#     loss_dict = {}
+
+#     # cross entropy
+#     @tf.function(reduce_retracing=True)
+#     def loss_ce_fn(**kwargs):
+#         labels = kwargs["labels"]
+#         predictions = kwargs["predictions"]
+#         event_weights = kwargs["event_weights"]
+#         with device:
+#             # ensure proper prediction values before applying log's
+#             predictions = tf.clip_by_value(predictions, 1e-6, 1 - 1e-6)
+#             loss_ce = tf.reduce_mean(
+#                 event_weights * -labels * tf.math.log(predictions))
+#             return loss_ce
+
+#     loss_dict["ce"] = loss_ce_fn
+
+#     # l2 loss
+#     if l2_norm > 0:
+#         # total number of weights to be regularized
+#         n_reg_weights = sum(functools.reduce(mul, w.shape) for w in regularization_weights)
+
+#         @tf.function(reduce_retracing=True)
+#         def loss_l2_fn(**kwargs):
+#             with device:
+#                 # accept labels and predictions although we don't need them
+#                 # but this makes it easier to call all loss functions the same way
+#                 loss_l2 = sum(tf.reduce_sum(w ** 2) for w in regularization_weights)
+#                 return l2_norm / n_reg_weights * loss_l2
+
+#         loss_dict["l2"] = loss_l2_fn
+
+#     return loss_dict
+
+
+# # TODO: still needed?
+# def create_optimizer(initial_learning_rate):
+#     with device:
+#         learning_rate = tf.Variable(initial_learning_rate, dtype=tf.float32, trainable=False)
+#         optimizer = tf.keras.optimizers.Adam(learning_rate)
+#     return optimizer, learning_rate
 
 
 if __name__ == "__main__":
