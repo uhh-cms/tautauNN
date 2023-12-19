@@ -45,9 +45,8 @@ action() {
         export TN_DATA_BASE="/nfs/dust/cms/user/${user_name}/taunn_data"
         export TN_SOFTWARE_BASE="${TN_DATA_BASE}/software_naf"
         export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23"
-    elif [[ "$( hostname )" = lxplus*.cern.ch ]]; then
-        # lxplus (use EOS!)
-        # TODO: does this also match htcondor worker nodes?
+    elif [[ "$( hostname )" = *.cern.ch ]]; then
+        # lxplus
         export TN_DATA_BASE="/eos/user/${user_name:0:1}/${user_name}/taunn_data"
         export TN_SOFTWARE_BASE="${TN_DATA_BASE}/software_lxplus"
         export TN_SKIMS_2017="/eos/user/t/tokramer/hhbbtautau/skims/2017"
