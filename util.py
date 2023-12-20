@@ -14,6 +14,8 @@ import numpy.lib.recfunctions as rfn
 import tensorflow as tf
 
 
+epsilon = 1e-6
+
 debug_layer = tf.autograph.experimental.do_not_convert
 
 
