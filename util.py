@@ -8,6 +8,7 @@ import glob
 import hashlib
 import pickle
 import inspect
+from typing import Callable
 
 import numpy as np
 import numpy.lib.recfunctions as rfn
@@ -183,7 +184,7 @@ def get_device(device="cpu", num_device=0):
 
 class L2Metric(tf.keras.metrics.Metric):
 
-    def __init__(self, model: tf.keras.Model, name: str = "l2", **kwargs) -> L2Metric:
+    def __init__(self, model: tf.keras.Model, name: str = "l2", **kwargs) -> None:
         super().__init__(name=name, **kwargs)
 
         # store kernels and l2 norms of dense layers
@@ -197,11 +198,65 @@ class L2Metric(tf.keras.metrics.Metric):
         # book the l2 metric
         self.l2: tf.Variable = self.add_weight(name="l2", initializer="zeros")
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: tf.Tensor | None = None) -> None:
         self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
 
-    def result(self):
+    def result(self) -> tf.Tensor:
         return self.l2
 
-    def reset_states(self):
+    def reset_states(self) -> None:
         self.l2.assign(0.0)
+
+
+class ReduceLROnPlateau(tf.keras.callbacks.ReduceLROnPlateau):
+    """
+    Extension of keras' ReduceLROnPlateau, adding a setter hook to :py:attr:`best` to save the best model weights.
+    """
+
+    def __init__(self, model: tf.keras.Model, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.model = model
+        self._best: float = 0.0
+        self.best_weights = None
+
+    @property
+    def best(self) -> float:
+        return self._best
+
+    @best.setter
+    def best(self, best: float) -> None:
+        self._best = float(best)
+        if self._best not in (0, np.inf, -np.inf) and self.model is not None:
+            self.best_weights = self.model.get_weights()
+
+
+class EarlyStopping(tf.keras.callbacks.EarlyStopping):
+    """
+    Extension of keras' EarlyStopping, adding the option to control when to skip monitoring using a functional
+    condition. When set, *skip_monitoring_fn* receives the callback instance and the current epoch and should return
+    a boolean deciding whether to skip the monitoring for this epoch.
+    """
+
+    def __init__(
+        self,
+        *args,
+        skip_monitoring_fn: Callable[[EarlyStopping, int], bool] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.skip_monitoring_fn = skip_monitoring_fn
+        self.monitoring_active = not callable(skip_monitoring_fn)
+
+    def on_epoch_end(self, epoch: int, logs: dict | None = None) -> None:
+        # note: epoch is 0-indexed
+        if callable(self.skip_monitoring_fn):
+            skip = self.skip_monitoring_fn(self, epoch + 1)
+            if self.verbose > 0 and skip == self.monitoring_active:
+                self.monitoring_active = not skip
+                print(f"Epoch {epoch + 1}: early stopping {'de' if skip else ''}activated by custom condition")
+            if skip:
+                return
+
+        return super().on_epoch_end(epoch, logs)

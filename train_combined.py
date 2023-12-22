@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+import time
 import random
 from collections import defaultdict
 from getpass import getuser
@@ -14,22 +15,49 @@ from typing import Callable
 import numpy as np
 import tensorflow as tf
 
-from util import load_sample, phi_mpi_to_pi, calc_new_columns, get_device, L2Metric, epsilon
+from util import (
+    epsilon, load_sample, phi_mpi_to_pi, calc_new_columns, get_device, L2Metric, EarlyStopping, ReduceLROnPlateau,
+)
+from util import debug_layer  # noqa
 from custom_layers import CustomEmbeddingLayer
 from multi_dataset import MultiDataset
 
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
 
-i32 = np.int32
-f32 = np.float32
+# whether to use a gpu
+use_gpu: bool = True
+# forces deterministic behavior on gpus, which can be slower, but it is observed on some gpus that weird numeric effects
+# can occur (e.g. all batches are fine, and then one batch leads to a tensor being randomly transposed, or operations
+# not being applied at all), and whether the flag is needed or not might also depend on the tf and cuda version
+deterministic_ops: bool = True
+# run in eager mode (for proper debuggin, also consider decorating methods in question with @util.debug_layer)
+eager_mode: bool = False
+# limit the cpu to a reduced number of threads
+limit_cpus: bool | int = False
+# profile the training
+run_profiler: bool = False
+# data directory
+data_dir: str = os.environ["TN_SKIMS_2017"]
+# cache dir for data
+cache_dir: str | None = os.path.join(os.environ["TN_DATA_BASE"], "cache")
+# where tensorboard logs should be written
+tensorboard_dir: str | None = os.getenv("TN_TENSORBOARD_DIR", f"/tmp/{getuser()}/tensorboard")
+# model save dir
+model_dir: str = os.getenv("TN_MODEL_DIR", os.path.join(this_dir, "models"))
+# fallback model save dir (in case kerberos permissions were lost in the meantime)
+model_fallback_dir: str | None = f"/tmp/{getuser()}/models"
 
-device = get_device(device="gpu", num_device=0)
-
-# for debugging
-# tf.config.run_functions_eagerly(True)
-# tf.debugging.set_log_device_placement(True)
-
+# apply settings
+if use_gpu and deterministic_ops:
+    tf.config.experimental.enable_op_determinism()
+device = get_device(device="gpu" if use_gpu else "cpu", num_device=0)
+if limit_cpus:
+    tf.config.threading.set_intra_op_parallelism_threads(int(limit_cpus))
+    tf.config.threading.set_inter_op_parallelism_threads(int(limit_cpus))
+if eager_mode:
+    # note: running the following with False would still trigger partial eager mode in keras
+    tf.config.run_functions_eagerly(eager_mode)
 
 # common column configs (TODO: they should live in a different file)
 dynamic_columns = {
@@ -102,7 +130,7 @@ activation_settings = {
     "selu": ActivationSetting("selu", "lecun_normal", (False, False), "AlphaDropout"),
     "tanh": ActivationSetting("tanh", "glorot_normal", (True, False)),
     "softmax": ActivationSetting("softmax", "glorot_normal", (True, False)),
-    "swish": ActivationSetting("swish", "he_normal", (True, False)),
+    "swish": ActivationSetting("swish", "glorot_uniform", (True, False)),
 }
 
 
@@ -117,9 +145,11 @@ class Sample:
 
 def main(
     model_name: str = "test_lreg50_elu_bn",
-    data_dir: str = os.environ["TN_SKIMS_2017"],
-    cache_dir: str = os.path.join(os.environ["TN_DATA_BASE"], "cache"),
-    tensorboard_dir: str = f"/tmp/{getuser()}/tensorboard",
+    data_dir: str = data_dir,
+    cache_dir: str | None = cache_dir,
+    tensorboard_dir: str | None = tensorboard_dir,
+    model_dir: str = model_dir,
+    model_fallback_dir: str | None = model_fallback_dir,
     samples: list[Sample] = [
         # Sample("SKIM_ggF_Radion_m250", 1.0, [1, 0, 0], 0, 250.0),
         # Sample("SKIM_ggF_Radion_m260", 1.0, [1, 0, 0], 0, 260.0),
@@ -210,13 +240,13 @@ def main(
             ]
         ],
     ],
-    # number of layers and units, second entry determines the extra heads (if applicable, otherwise "concatenate")
+    # number of layers and units
     units: list[int] = [125] * 5,
-    # dimension of the embedding layer output will be embedding_output_dim x N_categorical_features
+    # dimension of the embedding layer output will be embedding_output_dim x len(cat_input_names)
     embedding_output_dim: int = 5,
     # activation function after each hidden layer
     activation: str = "elu",
-    # scale fot the l2 loss term (which is already normalized to the number of weights)
+    # scale for the l2 loss term (which is already normalized to the number of weights)
     l2_norm: float = 50.0,
     # dropout percentage
     dropout_rate: float = 0.0,
@@ -227,15 +257,15 @@ def main(
     # learning rate to start with
     initial_learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
-    learning_rate_patience: int = 4,
+    learning_rate_patience: int = 8,
     # how even the learning rate is halfed before training is stopped
-    max_learning_rate_reductions: int = 5,
+    max_learning_rate_reductions: int = 6,
     # stop training if the validation loss hasn't improved since this many validation steps
     early_stopping_patience: int = 10,
     # maximum number of epochs to even cap early stopping
-    max_epochs: int = 10,  # 000,
+    max_epochs: int = 10000,
     # how frequently to calulcate the validation loss
-    validate_every: int = 100,
+    validate_every: int = 500,
     # add the generator spin for the signal samples as categorical input -> network parameterized in spin
     parameterize_spin: bool = True,
     # add the generator mass for the signal samples as continuous input -> network parameterized in mass
@@ -246,7 +276,7 @@ def main(
     validation_folds: int = 3,
     # seed for random number generators
     seed: int = 1,
-):
+) -> tuple[tf.keras.Model, str]:
     # some checks
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
@@ -285,8 +315,8 @@ def main(
         labels_to_samples[tuple(sample.labels)].append(sample.name)
 
     # keep track of spins, masses, number of events per sample, and relative batch weights per sample
-    spins: set[f32] = set()
-    masses: set[f32] = set()
+    spins: set[int] = set()
+    masses: set[float] = set()
     all_n_events: list[int] = []
     batch_weights: list[float] = []
 
@@ -325,19 +355,19 @@ def main(
         rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
 
         # prepare arrays
-        cont_inputs = flatten_rec(rec[cont_input_names], f32)
-        cat_inputs = flatten_rec(rec[cat_input_names], i32)
-        labels = np.array([sample.labels] * n_events, dtype=f32)
+        cont_inputs = flatten_rec(rec[cont_input_names], np.float32)
+        cat_inputs = flatten_rec(rec[cat_input_names], np.int32)
+        labels = np.array([sample.labels] * n_events, dtype=np.float32)
 
         # add spin and mass if given
         if parameterize_mass:
             if sample.mass > -1:
                 masses.add(float(sample.mass))
-            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=f32) * sample.mass)[:, None], axis=1)
+            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
         if parameterize_spin:
             if sample.spin > -1:
                 spins.add(int(sample.spin))
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=i32) * sample.spin)[:, None], axis=1)
+            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
 
         # training and validation mask using event number and fold indices
         last_digit = rec["EventNumber"] % 10
@@ -357,15 +387,6 @@ def main(
         event_weights_train.append(event_weights[train_mask][..., None])
         event_weights_valid.append(event_weights[valid_mask][..., None])
 
-    # for i_sample, (cat_inputs_t, cat_inputs_v) in enumerate(zip(cat_inputs_train, cat_inputs_valid)):
-    #     for i, name in enumerate(cat_input_names):
-    #         if set(cat_inputs_t[:, i]) != set(possible_cont_input_values[i]):
-    #             print(f"WARNING: sample {samples[i_sample].name} has unknown values for {name} in training")
-    #             from IPython import embed; embed()
-    #         if set(cat_inputs_v[:, i]) != set(possible_cont_input_values[i]):
-    #             print(f"WARNING: sample {samples[i_sample].name} has unknown values for {name} in validation")
-    #             from IPython import embed; embed()
-
     # determine contiuous input means and variances
     cont_input_means = (
         np.sum(np.concatenate([inp * bw / len(inp) for inp, bw in zip(cont_inputs_train, batch_weights)]), axis=0) /
@@ -376,49 +397,60 @@ def main(
         sum(batch_weights)
     ) - cont_input_means**2
 
+    # handle masses
+    masses = tf.constant(sorted(masses), dtype=tf.float32)
+    mass_probs = tf.ones_like(masses)  # all masses equally probable when sampling for backgrounds
+    if parameterize_mass:
+        assert len(masses) > 0
+        cont_input_names.append("mass")
+        # replace mean and var with unweighted values
+        cont_input_means[-1] = np.mean(masses.numpy())
+        cont_input_vars[-1] = np.var(masses.numpy())
+
     # handle spins
-    spins = sorted(spins)
+    spins = tf.constant(sorted(spins), dtype=tf.int32)
+    spin_probs = tf.ones_like(spins, dtype=tf.float32)  # all spins equally probable when sampling for backgrounds
     if parameterize_spin:
+        assert len(spins) > 0
         cat_input_names.append("spin")
         # add to possible embedding values
         possible_cont_input_values.append(embedding_expected_inputs["spin"])
 
-    # handle masses
-    masses = sorted(masses)
-    if parameterize_mass:
-        cont_input_names.append("mass")
-        # replace mean and var with unweighted values
-        cont_input_means[-1] = np.mean(masses)
-        cont_input_vars[-1] = np.var(masses)
-
-    # live transformation of inputs to inject spin and mass for backgrounds
-    @tf.function
-    def transform(cont_inputs, cat_inputs, labels, weights):
-        if parameterize_mass:
-            random_masses = tf.gather(masses, tf.random.categorical([[1.0] * len(masses)], cont_inputs.shape[0]))[0]
-            filled_masses = tf.where(cont_inputs[:, -1] < 0, random_masses, cont_inputs[:, -1])
-            cont_inputs = tf.concat([cont_inputs[:, :-1], filled_masses[..., None]], axis=1)
-        if parameterize_mass:
-            random_spins = tf.gather(spins, tf.random.categorical([[1.0] * len(spins)], cat_inputs.shape[0]))[0]
-            filled_spins = tf.where(cat_inputs[:, -1] < 0, random_spins, cat_inputs[:, -1])
-            cat_inputs = tf.concat([cat_inputs[:, :-1], filled_spins[..., None]], axis=1)
-        return cont_inputs, cat_inputs, labels, weights
-
-    # build datasets
-    dataset_train = MultiDataset(
-        data=zip(zip(cont_inputs_train, cat_inputs_train, labels_train, event_weights_train), batch_weights),
-        batch_size=batch_size,
-        kind="train",
-        transform_data=transform,
-    )
-    dataset_valid = MultiDataset(
-        data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
-        batch_size=batch_size,
-        kind="valid",
-        transform_data=transform,
-    )
-
     with device:
+        # live transformation of inputs to inject spin and mass for backgrounds
+        @tf.function
+        def transform(cont_inputs, cat_inputs, labels, weights):
+            if parameterize_mass:
+                idxs_0 = tf.where(cont_inputs[:, -1] < 0)
+                idxs_1 = (cont_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
+                idxs = tf.concat([idxs_0, idxs_1], axis=-1)
+                random_masses = tf.gather(masses, tf.random.categorical([mass_probs], tf.shape(idxs_0)[0]))[0]
+                cont_inputs = tf.tensor_scatter_nd_update(cont_inputs, idxs, random_masses)
+            if parameterize_spin:
+                idxs_0 = tf.where(cat_inputs[:, -1] < 0)
+                idxs_1 = (cat_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
+                idxs = tf.concat([idxs_0, idxs_1], axis=-1)
+                random_spins = tf.gather(spins, tf.random.categorical([spin_probs], tf.shape(idxs_0)[0]))[0]
+                cat_inputs = tf.tensor_scatter_nd_update(cat_inputs, idxs, random_spins)
+            return cont_inputs, cat_inputs, labels, weights
+
+        # build datasets
+        dataset_train = MultiDataset(
+            data=zip(zip(cont_inputs_train, cat_inputs_train, labels_train, event_weights_train), batch_weights),
+            batch_size=batch_size,
+            kind="train",
+            transform_data=transform,
+            seed=seed,
+        )
+        dataset_valid = MultiDataset(
+            data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
+            batch_size=batch_size,
+            kind="valid",
+            yield_valid_rest=True,
+            transform_data=transform,
+            seed=seed,
+        )
+
         # create the model
         model = create_model(
             n_cont_inputs=len(cont_input_names),
@@ -434,7 +466,6 @@ def main(
             l2_norm=l2_norm,
             dropout_rate=dropout_rate,
         )
-        model.summary()
 
         # compile
         model.compile(
@@ -446,53 +477,93 @@ def main(
                 tf.keras.metrics.CategoricalAccuracy(name="acc"),
             ],
             jit_compile=False,
-            run_eagerly=False,
+            run_eagerly=eager_mode,
         )
+
+        # helper to connect the lr scheduler and early stopping through the skip_monitoring_fn callback
+        def skip_es_monitoring(es_callback: EarlyStopping, epoch: int) -> bool:
+            final_lr_reached = abs(float(model.optimizer.lr) - lr_callback.min_lr) <= epsilon
+            # skip when the final lr was not yet reached
+            skip = not final_lr_reached
+            # when not skipping for the first time, port the best model weights over from the lr scheduler
+            if not skip and not es_callback.monitoring_active:
+                print(f"Epoch {epoch}: porting best metric and model weights from lr to es callback")
+                es_callback.best = lr_callback.best
+                es_callback.best_weights = lr_callback.best_weights
+                es_callback.best_epoch = -1
+            return not final_lr_reached
 
         # callbacks
         fit_callbacks = [
             # drop learning rate when plateau is reached
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss",
+            lr_callback := ReduceLROnPlateau(
+                model=model,
+                monitor="val_ce",
                 factor=0.5,
                 patience=learning_rate_patience,
-                min_lr=initial_learning_rate * 0.5**max_learning_rate_reductions - epsilon,
+                min_lr=initial_learning_rate * 0.5**max_learning_rate_reductions,
+                min_delta=0.0001,
+                verbose=1,
             ),
             # early stopping (patience set to twice the patience passed to the ReduceLROnPlateau callback)
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss",
+            EarlyStopping(
+                monitor="val_ce",
                 patience=2 * learning_rate_patience,
                 restore_best_weights=True,
-                start_from_epoch=learning_rate_patience,
+                min_delta=0.0001,
+                verbose=1,
+                skip_monitoring_fn=skip_es_monitoring,
             ),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
                 log_dir=os.path.join(tensorboard_dir, model_name),
                 histogram_freq=1,
-                # write_graph=True,
-                # profile_batch="500,520",
+                write_graph=True,
+                profile_batch=(500, 1500) if run_profiler else 0,
             ) if tensorboard_dir else None,
         ]
 
+        # some logs
+        model.summary()
+        print(f"training samples  : {len(dataset_train):_}")
+        print(f"validation samples: {len(dataset_valid):_}")
+
         # training
+        t_start = time.perf_counter()
         try:
             model.fit(
                 x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
                 validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-                shuffle=False,
+                shuffle=False,  # already shuffled
                 epochs=max_epochs,
                 steps_per_epoch=validate_every,
                 validation_freq=1,
-                validation_steps=dataset_valid.max_iter_valid,
+                validation_steps=dataset_valid.batches_per_cycle,
                 callbacks=list(filter(None, fit_callbacks)),
             )
+            t_end = time.perf_counter()
         except KeyboardInterrupt:
-            print("\ndetected manual interrupt\n")
+            t_end = time.perf_counter()
+            print("\n\ndetected manual interrupt!\n")
             print("type 's' to gracefully stop training and save the model,")
-            inp = input("or any other key to terminate directly without saving: ")
+            try:
+                inp = input("or any other key to terminate directly without saving: ")
+            except KeyboardInterrupt:
+                inp = ""
             if inp != "s":
                 print("model not saved")
                 return
+            print("")
+        print(f"training took {t_end - t_start:.2f} seconds")
+
+        # perform one final validation round for verification of the best model
+        print("performing final round of validation")
+        results_valid = model.evaluate(
+            x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            batch_size=batch_size,
+            steps=dataset_valid.batches_per_cycle,
+            return_dict=True,
+        )
 
         # model saving
         def save_model(path):
@@ -502,12 +573,8 @@ def main(
                 os.makedirs(os.path.dirname(path))
 
             # save the model
-            tf.keras.saving.save_model(
-                model,
-                os.path.join(this_dir, "models", model_name),
-                overwrite=True,
-                save_format="tf",
-            )
+            tf.keras.saving.save_model(model, path, overwrite=True, save_format="tf")
+
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
                 "model_name": model_name,
@@ -516,6 +583,8 @@ def main(
                     "cont": cont_input_names,
                     "cat": cat_input_names,
                 },
+                "fold_index": fold_index,
+                "validation_folds": validation_folds,
                 "architecture": {
                     "units": units,
                     "embedding_output_dim": embedding_output_dim,
@@ -529,26 +598,33 @@ def main(
                     "parameterize_spin": parameterize_spin,
                     "parameterize_mass": parameterize_mass,
                 },
-                "steps_trained": int(model.optimizer.iterations.numpy()),
+                "result": {
+                    **results_valid,
+                    "steps_trained": int(model.optimizer.iterations.numpy()),
+                },
             }
-            with open(os.path.join(this_dir, "models", model_name, "meta.json"), "w") as f:
+            with open(os.path.join(path, "meta.json"), "w") as f:
                 json.dump(meta, f, indent=4)
+
+            return path
 
         # save at actual location, fallback to tmp dir
         try:
-            save_model(os.path.join(this_dir, "models", model_name))
+            model_path = save_model(os.path.join(model_dir, model_name))
         except OSError as e:
+            if not model_fallback_dir:
+                raise e
             print(f"saving at default path failed: {e}")
-            save_model(f"/tmp/{getuser()}/models/{model_name}")
+            model_path = save_model(os.path.join(model_fallback_dir, model_name))
+
+    return model, model_path
 
     # TODOs (in order):
-    # - check batch composition (also in validation! are all samples used there?) and weights
-    # - find weird bug that _sometimes_ leads to concat errors (does this also cause the initial high validation peaks?)
+    # - proper model names
     # - other samples
     # - read inputs from root files directly (making use of cache)
     # - binary or multi-class?
     # - prepend tauNN
-    # - proper model names
     # - ensembling encapuslation after trainings for simple export, should also include spin and mass loop
     # - skip connections, hyper-opt, symmetric CCE and group weight
 
@@ -582,8 +658,8 @@ def create_model(
     l2_reg = tf.keras.regularizers.l2(1.0) if l2_norm > 0 else None
 
     # input layers
-    x_cont = tf.keras.Input(n_cont_inputs, name="cont_input")
-    x_cat = tf.keras.Input(n_cat_inputs, name="cat_input")
+    x_cont = tf.keras.Input(n_cont_inputs, dtype=tf.float32, name="cont_input")
+    x_cat = tf.keras.Input(n_cat_inputs, dtype=tf.int32, name="cat_input")
 
     # normalize continuous inputs
     norm_layer = tf.keras.layers.Normalization(mean=cont_input_means, variance=cont_input_vars, name="norm")
@@ -613,7 +689,7 @@ def create_model(
         a = dense_layer(a)
 
         # batch norm before activation if requested
-        batchnorm_layer = tf.keras.layers.BatchNormalization(dtype="float32", name=f"norm_{i}")
+        batchnorm_layer = tf.keras.layers.BatchNormalization(dtype=tf.float32, name=f"norm_{i}")
         if batch_norm and act_settings.batch_norm[0]:
             a = batchnorm_layer(a)
 

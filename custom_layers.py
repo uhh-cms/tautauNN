@@ -13,6 +13,7 @@ class CustomEmbeddingLayer(tf.keras.layers.Layer):
 
         self.output_dim = output_dim
         self.expected_inputs = expected_inputs
+        self.n_inputs = len(expected_inputs)
         self.offsets = None
         self.embedding_layer = None
         self.flatten_layer = None
@@ -40,39 +41,39 @@ class CustomEmbeddingLayer(tf.keras.layers.Layer):
         This helps Keras to defer variable registration to the point where it is
         needed the first time, and in particular not at definition time.
         """
-        self.offsets = [
-            sum(len(x) for x in self.expected_inputs[:i])
-            for i in range(len(self.expected_inputs))
-        ]
+        self.offsets = tf.constant(
+            [
+                sum(len(x) for x in self.expected_inputs[:i])
+                for i in range(self.n_inputs)
+            ],
+            dtype=tf.int32,
+        )
 
         self.embedding_layer = tf.keras.layers.Embedding(
-            len(sum(self.expected_inputs, [])),
-            self.output_dim,
-            input_length=len(self.expected_inputs),
+            input_dim=len(sum(self.expected_inputs, [])),
+            output_dim=self.output_dim,
+            input_length=self.n_inputs,
         )
 
         self.flatten_layer = tf.keras.layers.Flatten()
 
         super().build(input_shape)
 
-    def call(self, input_features):
+    def call(self, input_features, **kwargs):
         """
         Payload of the layer that takes features and computes the requested output
         whose shape should match what is defined in compute_output_shape.
         """
-        indices = []
-        # TODO: keras has no clue about the input shape at this point, and input_features.shape cannot be used since
-        # a (None, None) shaped tracer is send through the call methods that crashes everything -.-
-        # for i in range(input_features.shape[1]):
-        for i in range(6):
-            var = input_features[:, i]
-            indices.append(tf.where(var[..., None] == self.expected_inputs[i])[:, 1] + self.offsets[i])
+        indices = [
+            (
+                tf.cast(tf.where(input_features[:, i][..., None] == self.expected_inputs[i])[:, 1], tf.int32) +
+                self.offsets[i]
+            )
+            for i in range(self.n_inputs)
+        ]
 
-        embed_input = tf.concat(
-            [i[..., None] for i in indices],
-            axis=-1,
-        )
-        embed_output = self.embedding_layer(embed_input)
+        embed_input = tf.concat([i[..., None] for i in indices], axis=-1)
+        embed_output = self.embedding_layer(embed_input, **kwargs)
 
         return self.flatten_layer(embed_output)
 
