@@ -13,6 +13,7 @@ class CustomEmbeddingLayer(tf.keras.layers.Layer):
 
         self.output_dim = output_dim
         self.expected_inputs = expected_inputs
+
         self.n_inputs = len(expected_inputs)
         self.offsets = None
         self.embedding_layer = None
@@ -54,6 +55,7 @@ class CustomEmbeddingLayer(tf.keras.layers.Layer):
             output_dim=self.output_dim,
             input_length=self.n_inputs,
         )
+        self.embedding_layer.build(input_shape)
 
         self.flatten_layer = tf.keras.layers.Flatten()
 

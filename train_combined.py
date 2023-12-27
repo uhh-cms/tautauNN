@@ -1,11 +1,38 @@
 # coding: utf-8
 
+"""
+Features included:
+- deterministic model names
+- LR schedule and early stopping
+- FCN, ResNet, and DenseNet connections
+- live plots in tensorboard (confusion matrix)
+- 10-fold xvalidation and ensembling (see export_ensembles.py)
+- random mass and spin value samples for backgrounds during training
+- graceful termination (ctrl+c)
+- preparation for tauNN transfer and fine-tuning
+
+Ttechnical TODOs:
+- S-over-B cutoff plots in tensorboard, or any other more meaningful metric? (would require weights)
+- read inputs from root files directly (making use of cache)
+- highly volatile validation loss still existing with larger stats?
+
+Physics / optimization TODOs:
+- binary or multi-class
+- test other samples
+- finalize input features
+- hyper-opt (including symmetric CCE with group weights)
+- prepend tauNN
+- increased background weights
+- influence of ensembling on limits
+"""
+
 from __future__ import annotations
 
 import os
 import json
 import time
 import random
+import shutil
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
@@ -15,11 +42,11 @@ from typing import Callable
 import numpy as np
 import tensorflow as tf
 
-from util import (
-    epsilon, load_sample, phi_mpi_to_pi, calc_new_columns, get_device, L2Metric, EarlyStopping, ReduceLROnPlateau,
+from util import load_sample, phi_mpi_to_pi, calc_new_columns, encode_hyper_param
+from tf_util import (
+    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
+    ConfusionMatrixWriter,
 )
-from util import debug_layer  # noqa
-from custom_layers import CustomEmbeddingLayer
 from multi_dataset import MultiDataset
 
 
@@ -33,6 +60,8 @@ use_gpu: bool = True
 deterministic_ops: bool = True
 # run in eager mode (for proper debuggin, also consider decorating methods in question with @util.debug_layer)
 eager_mode: bool = False
+# whether to jit compile via xla (not working on GPU right now)
+jit_compile: bool = False
 # limit the cpu to a reduced number of threads
 limit_cpus: bool | int = False
 # profile the training
@@ -40,18 +69,20 @@ run_profiler: bool = False
 # data directory
 data_dir: str = os.environ["TN_SKIMS_2017"]
 # cache dir for data
-cache_dir: str | None = os.path.join(os.environ["TN_DATA_BASE"], "cache")
+cache_dir: str | None = os.path.join(os.environ["TN_DATA_DIR"], "cache")
 # where tensorboard logs should be written
-tensorboard_dir: str | None = os.getenv("TN_TENSORBOARD_DIR", f"/tmp/{getuser()}/tensorboard")
+tensorboard_dir: str | None = os.getenv("TN_TENSORBOARD_DIR", os.path.join(os.environ["TN_DATA_DIR"], "tensorboard"))
 # model save dir
 model_dir: str = os.getenv("TN_MODEL_DIR", os.path.join(this_dir, "models"))
 # fallback model save dir (in case kerberos permissions were lost in the meantime)
 model_fallback_dir: str | None = f"/tmp/{getuser()}/models"
 
 # apply settings
+device = get_device(device="gpu" if use_gpu else "cpu", num_device=0)
+if use_gpu and "gpu" not in device._device_name.lower():
+    use_gpu = False
 if use_gpu and deterministic_ops:
     tf.config.experimental.enable_op_determinism()
-device = get_device(device="gpu" if use_gpu else "cpu", num_device=0)
 if limit_cpus:
     tf.config.threading.set_intra_op_parallelism_threads(int(limit_cpus))
     tf.config.threading.set_inter_op_parallelism_threads(int(limit_cpus))
@@ -137,69 +168,72 @@ activation_settings = {
 @dataclass
 class Sample:
     name: str
-    class_weight: float
-    labels: list[int]
+    label: int
+    class_name: str | None = None
+    loss_weight: float = 1.0
     spin: int = -1
     mass: float = -1.0
 
 
-def main(
-    model_name: str = "test_lreg50_elu_bn",
+def train(
+    model_name: str | None = None,
+    model_prefix: str = "hbtres",
+    model_suffix: str = "",
     data_dir: str = data_dir,
     cache_dir: str | None = cache_dir,
     tensorboard_dir: str | None = tensorboard_dir,
+    clear_existing_tensorboard: bool = True,
     model_dir: str = model_dir,
     model_fallback_dir: str | None = model_fallback_dir,
     samples: list[Sample] = [
-        # Sample("SKIM_ggF_Radion_m250", 1.0, [1, 0, 0], 0, 250.0),
-        # Sample("SKIM_ggF_Radion_m260", 1.0, [1, 0, 0], 0, 260.0),
-        # Sample("SKIM_ggF_Radion_m270", 1.0, [1, 0, 0], 0, 270.0),
-        # Sample("SKIM_ggF_Radion_m280", 1.0, [1, 0, 0], 0, 280.0),
-        # Sample("SKIM_ggF_Radion_m300", 1.0, [1, 0, 0], 0, 300.0),
-        Sample("SKIM_ggF_Radion_m320", 1.0, [1, 0, 0], 0, 320.0),
-        Sample("SKIM_ggF_Radion_m350", 1.0, [1, 0, 0], 0, 350.0),
-        Sample("SKIM_ggF_Radion_m400", 1.0, [1, 0, 0], 0, 400.0),
-        Sample("SKIM_ggF_Radion_m450", 1.0, [1, 0, 0], 0, 450.0),
-        Sample("SKIM_ggF_Radion_m500", 1.0, [1, 0, 0], 0, 500.0),
-        Sample("SKIM_ggF_Radion_m550", 1.0, [1, 0, 0], 0, 550.0),
-        Sample("SKIM_ggF_Radion_m600", 1.0, [1, 0, 0], 0, 600.0),
-        Sample("SKIM_ggF_Radion_m650", 1.0, [1, 0, 0], 0, 650.0),
-        Sample("SKIM_ggF_Radion_m700", 1.0, [1, 0, 0], 0, 700.0),
-        Sample("SKIM_ggF_Radion_m750", 1.0, [1, 0, 0], 0, 750.0),
-        Sample("SKIM_ggF_Radion_m800", 1.0, [1, 0, 0], 0, 800.0),
-        Sample("SKIM_ggF_Radion_m850", 1.0, [1, 0, 0], 0, 850.0),
-        Sample("SKIM_ggF_Radion_m900", 1.0, [1, 0, 0], 0, 900.0),
-        Sample("SKIM_ggF_Radion_m1000", 1.0, [1, 0, 0], 0, 1000.0),
-        Sample("SKIM_ggF_Radion_m1250", 1.0, [1, 0, 0], 0, 1250.0),
-        Sample("SKIM_ggF_Radion_m1500", 1.0, [1, 0, 0], 0, 1500.0),
-        Sample("SKIM_ggF_Radion_m1750", 1.0, [1, 0, 0], 0, 1750.0),
-        # Sample("SKIM_ggF_BulkGraviton_m250", 1.0, [1, 0, 0], 2, 250.0),
-        # Sample("SKIM_ggF_BulkGraviton_m260", 1.0, [1, 0, 0], 2, 260.0),
-        # Sample("SKIM_ggF_BulkGraviton_m270", 1.0, [1, 0, 0], 2, 270.0),
-        # Sample("SKIM_ggF_BulkGraviton_m280", 1.0, [1, 0, 0], 2, 280.0),
-        # Sample("SKIM_ggF_BulkGraviton_m300", 1.0, [1, 0, 0], 2, 300.0),
-        Sample("SKIM_ggF_BulkGraviton_m320", 1.0, [1, 0, 0], 2, 320.0),
-        Sample("SKIM_ggF_BulkGraviton_m350", 1.0, [1, 0, 0], 2, 350.0),
-        Sample("SKIM_ggF_BulkGraviton_m400", 1.0, [1, 0, 0], 2, 400.0),
-        Sample("SKIM_ggF_BulkGraviton_m450", 1.0, [1, 0, 0], 2, 450.0),
-        Sample("SKIM_ggF_BulkGraviton_m500", 1.0, [1, 0, 0], 2, 500.0),
-        Sample("SKIM_ggF_BulkGraviton_m550", 1.0, [1, 0, 0], 2, 550.0),
-        Sample("SKIM_ggF_BulkGraviton_m600", 1.0, [1, 0, 0], 2, 600.0),
-        Sample("SKIM_ggF_BulkGraviton_m650", 1.0, [1, 0, 0], 2, 650.0),
-        Sample("SKIM_ggF_BulkGraviton_m700", 1.0, [1, 0, 0], 2, 700.0),
-        Sample("SKIM_ggF_BulkGraviton_m750", 1.0, [1, 0, 0], 2, 750.0),
-        Sample("SKIM_ggF_BulkGraviton_m800", 1.0, [1, 0, 0], 2, 800.0),
-        Sample("SKIM_ggF_BulkGraviton_m850", 1.0, [1, 0, 0], 2, 850.0),
-        Sample("SKIM_ggF_BulkGraviton_m900", 1.0, [1, 0, 0], 2, 900.0),
-        Sample("SKIM_ggF_BulkGraviton_m1000", 1.0, [1, 0, 0], 2, 1000.0),
-        Sample("SKIM_ggF_BulkGraviton_m1250", 1.0, [1, 0, 0], 2, 1250.0),
-        Sample("SKIM_ggF_BulkGraviton_m1500", 1.0, [1, 0, 0], 2, 1500.0),
-        Sample("SKIM_ggF_BulkGraviton_m1750", 1.0, [1, 0, 0], 2, 1750.0),
-        Sample("SKIM_DY_amc_incl", 1.0, [0, 1, 0], -1, -1.0),
-        Sample("SKIM_TT_fullyLep", 1.0, [0, 0, 1], -1, -1.0),
-        Sample("SKIM_TT_semiLep", 1.0, [0, 0, 1], -1, -1.0),
-        # Sample("SKIM_GluGluHToTauTau", 1.0, [0, 0, 0, 0, 1, 0], -1, -1.0),
-        # Sample("SKIM_ttHToTauTau", 1.0, [0, 0, 0, 1], -1, -1.0),
+        # Sample("SKIM_ggF_Radion_m250", label=0, spin=0, mass=250.0),
+        # Sample("SKIM_ggF_Radion_m260", label=0, spin=0, mass=260.0),
+        # Sample("SKIM_ggF_Radion_m270", label=0, spin=0, mass=270.0),
+        # Sample("SKIM_ggF_Radion_m280", label=0, spin=0, mass=280.0),
+        # Sample("SKIM_ggF_Radion_m300", label=0, spin=0, mass=300.0),
+        Sample("SKIM_ggF_Radion_m320", label=0, spin=0, mass=320.0, class_name="HH"),
+        Sample("SKIM_ggF_Radion_m350", label=0, spin=0, mass=350.0),
+        Sample("SKIM_ggF_Radion_m400", label=0, spin=0, mass=400.0),
+        Sample("SKIM_ggF_Radion_m450", label=0, spin=0, mass=450.0),
+        Sample("SKIM_ggF_Radion_m500", label=0, spin=0, mass=500.0),
+        Sample("SKIM_ggF_Radion_m550", label=0, spin=0, mass=550.0),
+        Sample("SKIM_ggF_Radion_m600", label=0, spin=0, mass=600.0),
+        Sample("SKIM_ggF_Radion_m650", label=0, spin=0, mass=650.0),
+        Sample("SKIM_ggF_Radion_m700", label=0, spin=0, mass=700.0),
+        Sample("SKIM_ggF_Radion_m750", label=0, spin=0, mass=750.0),
+        Sample("SKIM_ggF_Radion_m800", label=0, spin=0, mass=800.0),
+        Sample("SKIM_ggF_Radion_m850", label=0, spin=0, mass=850.0),
+        Sample("SKIM_ggF_Radion_m900", label=0, spin=0, mass=900.0),
+        Sample("SKIM_ggF_Radion_m1000", label=0, spin=0, mass=1000.0),
+        Sample("SKIM_ggF_Radion_m1250", label=0, spin=0, mass=1250.0),
+        Sample("SKIM_ggF_Radion_m1500", label=0, spin=0, mass=1500.0),
+        Sample("SKIM_ggF_Radion_m1750", label=0, spin=0, mass=1750.0),
+        # Sample("SKIM_ggF_BulkGraviton_m250", label=0, spin=2, mass=250.0),
+        # Sample("SKIM_ggF_BulkGraviton_m260", label=0, spin=2, mass=260.0),
+        # Sample("SKIM_ggF_BulkGraviton_m270", label=0, spin=2, mass=270.0),
+        # Sample("SKIM_ggF_BulkGraviton_m280", label=0, spin=2, mass=280.0),
+        # Sample("SKIM_ggF_BulkGraviton_m300", label=0, spin=2, mass=300.0),
+        Sample("SKIM_ggF_BulkGraviton_m320", label=0, spin=2, mass=320.0),
+        Sample("SKIM_ggF_BulkGraviton_m350", label=0, spin=2, mass=350.0),
+        Sample("SKIM_ggF_BulkGraviton_m400", label=0, spin=2, mass=400.0),
+        Sample("SKIM_ggF_BulkGraviton_m450", label=0, spin=2, mass=450.0),
+        Sample("SKIM_ggF_BulkGraviton_m500", label=0, spin=2, mass=500.0),
+        Sample("SKIM_ggF_BulkGraviton_m550", label=0, spin=2, mass=550.0),
+        Sample("SKIM_ggF_BulkGraviton_m600", label=0, spin=2, mass=600.0),
+        Sample("SKIM_ggF_BulkGraviton_m650", label=0, spin=2, mass=650.0),
+        Sample("SKIM_ggF_BulkGraviton_m700", label=0, spin=2, mass=700.0),
+        Sample("SKIM_ggF_BulkGraviton_m750", label=0, spin=2, mass=750.0),
+        Sample("SKIM_ggF_BulkGraviton_m800", label=0, spin=2, mass=800.0),
+        Sample("SKIM_ggF_BulkGraviton_m850", label=0, spin=2, mass=850.0),
+        Sample("SKIM_ggF_BulkGraviton_m900", label=0, spin=2, mass=900.0),
+        Sample("SKIM_ggF_BulkGraviton_m1000", label=0, spin=2, mass=1000.0),
+        Sample("SKIM_ggF_BulkGraviton_m1250", label=0, spin=2, mass=1250.0),
+        Sample("SKIM_ggF_BulkGraviton_m1500", label=0, spin=2, mass=1500.0),
+        Sample("SKIM_ggF_BulkGraviton_m1750", label=0, spin=2, mass=1750.0),
+        Sample("SKIM_DY_amc_incl", label=1, class_name="DY"),
+        Sample("SKIM_TT_fullyLep", label=2, class_name="TT"),
+        Sample("SKIM_TT_semiLep", label=2),
+        # Sample("SKIM_ttHToTauTau", label=3),
     ],
     # additional columns to load
     extra_columns: list[str] = [
@@ -242,6 +276,8 @@ def main(
     ],
     # number of layers and units
     units: list[int] = [125] * 5,
+    # connection type, "fcn", "res", or "dense"
+    connection_type: str = "fcn",
     # dimension of the embedding layer output will be embedding_output_dim x len(cat_input_names)
     embedding_output_dim: int = 5,
     # activation function after each hidden layer
@@ -255,11 +291,11 @@ def main(
     # batch size
     batch_size: int = 4096,
     # learning rate to start with
-    initial_learning_rate: float = 3e-3,
+    learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
     learning_rate_patience: int = 8,
     # how even the learning rate is halfed before training is stopped
-    max_learning_rate_reductions: int = 6,
+    learning_rate_reductions: int = 6,
     # stop training if the validation loss hasn't improved since this many validation steps
     early_stopping_patience: int = 10,
     # maximum number of epochs to even cap early stopping
@@ -274,14 +310,47 @@ def main(
     fold_index: int = 0,
     # how many of the 9 training folds to use for validation
     validation_folds: int = 3,
-    # seed for random number generators
-    seed: int = 1,
+    # seed for random number generators, if None, uses fold_index + 1
+    seed: int | None = None,
 ) -> tuple[tf.keras.Model, str]:
     # some checks
+    assert units
+    unique_labels: set[int] = {sample.label for sample in samples}
+    n_classes: int = len(unique_labels)
+    assert n_classes > 1
+    assert unique_labels == set(range(n_classes))
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
     assert 0 <= fold_index <= 9
     assert 1 <= validation_folds <= 8
+
+    # conditionally change arguments
+    if seed is None:
+        seed = fold_index + 1
+
+    # construct a model name
+    if model_name is None:
+        name_parts = {
+            "ed": embedding_output_dim,
+            "lu": f"{len(units)}x{units[0]}" if len(set(units)) == 1 else units,
+            "ct": connection_type,
+            "act": activation,
+            "bn": batch_norm,
+            "lt": l2_norm,
+            "do": dropout_rate,
+            "bs": batch_size,
+            "lr": learning_rate,
+            "spin": parameterize_spin,
+            "mass": parameterize_mass,
+            "fi": fold_index,
+            "sd": seed,
+        }
+        model_name = "_".join(f"{k.upper()}{encode_hyper_param(v)}" for k, v in name_parts.items())
+    if model_prefix:
+        model_name = f"{model_prefix.rstrip('_')}_{model_name}"
+    if model_suffix:
+        model_name = f"{model_name}_{model_suffix.lstrip('_')}"
+    print(f"building and training model {model_name}\n")
 
     # set the seed to everything (Python, NumPy, TensorFlow, Keras)
     tf.keras.utils.set_random_seed(seed)
@@ -310,9 +379,17 @@ def main(
     possible_cont_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
 
     # scan samples and their labels to construct relative weights such that each class starts with equal importance
-    labels_to_samples = defaultdict(list)
+    # and class names
+    labels_to_samples: dict[int, list[str]] = defaultdict(list)
+    class_names: dict[int, str] = {}
     for sample in samples:
-        labels_to_samples[tuple(sample.labels)].append(sample.name)
+        labels_to_samples[sample.label].append(sample.name)
+        if sample.class_name and sample.label not in class_names:
+            class_names[sample.label] = sample.class_name
+    if len(class_names) == 0:
+        class_names = {i: f"class_{i}" for i in range(n_classes)}
+    elif len(class_names) != n_classes:
+        raise ValueError(f"class names {class_names} do not correspond to the number of classes {n_classes}")
 
     # keep track of spins, masses, number of events per sample, and relative batch weights per sample
     spins: set[int] = set()
@@ -340,7 +417,7 @@ def main(
         rec, event_weights = load_sample(
             data_dir,
             sample.name,
-            sample.class_weight,
+            sample.loss_weight,
             list(columns_to_read),
             selections,
             # maxevents=10000,
@@ -349,7 +426,7 @@ def main(
         all_n_events.append(n_events := len(event_weights))
 
         # compute the batch weight, i.e. the weight that ensure that each class is equally represented in each batch
-        batch_weights.append(1 / len(labels_to_samples[tuple(sample.labels)]))
+        batch_weights.append(1 / len(labels_to_samples[sample.label]))
 
         # add dynamic columns
         rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
@@ -357,7 +434,8 @@ def main(
         # prepare arrays
         cont_inputs = flatten_rec(rec[cont_input_names], np.float32)
         cat_inputs = flatten_rec(rec[cat_input_names], np.int32)
-        labels = np.array([sample.labels] * n_events, dtype=np.float32)
+        labels = np.zeros((n_events, n_classes), dtype=np.float32)
+        labels[:, sample.label] = 1
 
         # add spin and mass if given
         if parameterize_mass:
@@ -386,6 +464,15 @@ def main(
 
         event_weights_train.append(event_weights[train_mask][..., None])
         event_weights_valid.append(event_weights[valid_mask][..., None])
+
+    # count number of training and validation samples per class
+    samples_per_class = {
+        label: (
+            int(sum(sum(labels[:, label]) for labels in labels_train)),
+            int(sum(sum(labels[:, label]) for labels in labels_valid)),
+        )
+        for label in unique_labels
+    }
 
     # determine contiuous input means and variances
     cont_input_means = (
@@ -455,12 +542,13 @@ def main(
         model = create_model(
             n_cont_inputs=len(cont_input_names),
             n_cat_inputs=len(cat_input_names),
-            n_classes=labels_train[0].shape[1],
+            n_classes=n_classes,
             embedding_expected_inputs=possible_cont_input_values,
             embedding_output_dim=embedding_output_dim,
             cont_input_means=cont_input_means,
             cont_input_vars=cont_input_vars,
             units=units,
+            connection_type=connection_type,
             activation=activation,
             batch_norm=batch_norm,
             l2_norm=l2_norm,
@@ -470,63 +558,60 @@ def main(
         # compile
         model.compile(
             loss="categorical_crossentropy",
-            optimizer=tf.keras.optimizers.Adam(learning_rate=initial_learning_rate),
+            optimizer=tf.keras.optimizers.Adam(
+                learning_rate=learning_rate,
+                jit_compile=jit_compile,
+            ),
             metrics=[
                 tf.keras.metrics.CategoricalCrossentropy(name="ce"),
                 L2Metric(model, name="l2"),
                 tf.keras.metrics.CategoricalAccuracy(name="acc"),
             ],
-            jit_compile=False,
+            jit_compile=jit_compile,
             run_eagerly=eager_mode,
         )
 
-        # helper to connect the lr scheduler and early stopping through the skip_monitoring_fn callback
-        def skip_es_monitoring(es_callback: EarlyStopping, epoch: int) -> bool:
-            final_lr_reached = abs(float(model.optimizer.lr) - lr_callback.min_lr) <= epsilon
-            # skip when the final lr was not yet reached
-            skip = not final_lr_reached
-            # when not skipping for the first time, port the best model weights over from the lr scheduler
-            if not skip and not es_callback.monitoring_active:
-                print(f"Epoch {epoch}: porting best metric and model weights from lr to es callback")
-                es_callback.best = lr_callback.best
-                es_callback.best_weights = lr_callback.best_weights
-                es_callback.best_epoch = -1
-            return not final_lr_reached
+        # prepare the tensorboard dir
+        full_tensorboard_dir = os.path.join(tensorboard_dir, model_name) if tensorboard_dir else None
+        if full_tensorboard_dir and clear_existing_tensorboard and os.path.exists(full_tensorboard_dir):
+            shutil.rmtree(full_tensorboard_dir)
 
         # callbacks
         fit_callbacks = [
-            # drop learning rate when plateau is reached
-            lr_callback := ReduceLROnPlateau(
-                model=model,
+            # learning rate dropping followed by early stopping
+            lres_callback := ReduceLRAndStop(
                 monitor="val_ce",
-                factor=0.5,
-                patience=learning_rate_patience,
-                min_lr=initial_learning_rate * 0.5**max_learning_rate_reductions,
-                min_delta=0.0001,
+                mode="min",
+                lr_patience=learning_rate_patience,
+                lr_factor=0.5,
+                lr_reductions=learning_rate_reductions,
+                es_patience=2 * learning_rate_patience,
                 verbose=1,
-            ),
-            # early stopping (patience set to twice the patience passed to the ReduceLROnPlateau callback)
-            EarlyStopping(
-                monitor="val_ce",
-                patience=2 * learning_rate_patience,
-                restore_best_weights=True,
-                min_delta=0.0001,
-                verbose=1,
-                skip_monitoring_fn=skip_es_monitoring,
             ),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
-                log_dir=os.path.join(tensorboard_dir, model_name),
+                log_dir=full_tensorboard_dir,
                 histogram_freq=1,
                 write_graph=True,
                 profile_batch=(500, 1500) if run_profiler else 0,
-            ) if tensorboard_dir else None,
+            ) if full_tensorboard_dir else None,
+            # confusion matrix
+            ConfusionMatrixWriter(
+                log_dir=full_tensorboard_dir,
+                class_names=list(class_names.values()),
+                validate_every=validate_every,
+            ) if full_tensorboard_dir else None,
         ]
 
         # some logs
         model.summary()
-        print(f"training samples  : {len(dataset_train):_}")
+        print(f"training samples: {len(dataset_train):_}")
+        for label, (n, _) in samples_per_class.items():
+            print(f"    class {label}: {n:_}")
         print(f"validation samples: {len(dataset_valid):_}")
+        for label, (_, n) in samples_per_class.items():
+            print(f"    class {label}: {n:_}")
+        print("")
 
         # training
         t_start = time.perf_counter()
@@ -541,6 +626,46 @@ def main(
                 validation_steps=dataset_valid.batches_per_cycle,
                 callbacks=list(filter(None, fit_callbacks)),
             )
+
+            # # fine-tuning test (aka. unfreeze pre-NN weights and re-fit)
+            # # see https://keras.io/guides/transfer_learning/#finetuning
+            # print("start fine-tuning")
+            # # make everything trainable
+            # for layer in model.layers:
+            #     if isinstance(layer, tf.keras.layers.Dense):
+            #         layer.trainable = True
+            # # re-compile (likely with larger l2 on pre-nn and smaller lr)
+            # model.compile(
+            #     loss="categorical_crossentropy",
+            #     optimizer=tf.keras.optimizers.Adam(
+            #         learning_rate=learning_rate,
+            #         jit_compile=jit_compile,
+            #     ),
+            #     metrics=[
+            #         tf.keras.metrics.CategoricalCrossentropy(name="ce"),
+            #         L2Metric(model, name="l2"),
+            #         tf.keras.metrics.CategoricalAccuracy(name="acc"),
+            #     ],
+            #     jit_compile=jit_compile,
+            #     run_eagerly=eager_mode,
+            # )
+            # # opt2.iterations.assign(opt1.iterations)
+            # # reset callback states
+            # lr_callback._reset()
+            # es_callback._reset()
+            # # re-fit
+            # model.fit(
+            #     x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            #     validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            #     shuffle=False,  # already shuffled
+            #     initial_epoch=10,
+            #     epochs=20,  # max_epochs,
+            #     steps_per_epoch=validate_every,
+            #     validation_freq=1,
+            #     validation_steps=dataset_valid.batches_per_cycle,
+            #     callbacks=list(filter(None, fit_callbacks)),
+            # )
+
             t_end = time.perf_counter()
         except KeyboardInterrupt:
             t_end = time.perf_counter()
@@ -554,6 +679,13 @@ def main(
                 print("model not saved")
                 return
             print("")
+            # manually restore best weights
+            if lres_callback.best_weights:
+                print("manually restoring best weights")
+                model.set_weights(lres_callback.best_weights)
+            else:
+                print("no best weights found in callbacks, using current weights")
+
         print(f"training took {t_end - t_start:.2f} seconds")
 
         # perform one final validation round for verification of the best model
@@ -568,12 +700,28 @@ def main(
         # model saving
         def save_model(path):
             print(f"saving model at {path}")
-
             if not os.path.exists(os.path.dirname(path)):
                 os.makedirs(os.path.dirname(path))
 
-            # save the model
-            tf.keras.saving.save_model(model, path, overwrite=True, save_format="tf")
+            # save the model using tf's savedmodel format
+            tf.keras.saving.save_model(
+                model,
+                path,
+                overwrite=True,
+                save_format="tf",
+                include_optimizer=False,
+            )
+
+            # and again in the legacy h5 format
+            h5_path = os.path.join(path, "model.h5")
+            if os.path.exists(h5_path):
+                os.remove(h5_path)
+            tf.keras.saving.save_model(
+                model,
+                h5_path,
+                overwrite=True,
+                save_format="h5",
+            )
 
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
@@ -583,6 +731,7 @@ def main(
                     "cont": cont_input_names,
                     "cat": cat_input_names,
                 },
+                "n_classes": n_classes,
                 "fold_index": fold_index,
                 "validation_folds": validation_folds,
                 "architecture": {
@@ -593,7 +742,7 @@ def main(
                     "drop_out": dropout_rate,
                     "batch_norm": batch_norm,
                     "batch_size": batch_size,
-                    "initial_learning_rate": initial_learning_rate,
+                    "learning_rate": learning_rate,
                     "final_learning_rate": float(model.optimizer.lr.numpy()),
                     "parameterize_spin": parameterize_spin,
                     "parameterize_mass": parameterize_mass,
@@ -619,15 +768,6 @@ def main(
 
     return model, model_path
 
-    # TODOs (in order):
-    # - proper model names
-    # - other samples
-    # - read inputs from root files directly (making use of cache)
-    # - binary or multi-class?
-    # - prepend tauNN
-    # - ensembling encapuslation after trainings for simple export, should also include spin and mass loop
-    # - skip connections, hyper-opt, symmetric CCE and group weight
-
 
 # functional model builder for later use with hyperparameter optimization tools
 # via https://www.tensorflow.org/tutorials/keras/keras_tuner
@@ -641,14 +781,20 @@ def create_model(
     cont_input_means: np.ndarray,
     cont_input_vars: np.ndarray,
     units: list[int],
+    connection_type: str,
     activation: str,
     batch_norm: bool,
     l2_norm: float,
     dropout_rate: float,
 ):
+    """
+    ResNet: https://arxiv.org/pdf/1512.03385.pdf
+    DenseNet: https://arxiv.org/pdf/1608.06993.pdf
+    """
     # checks
     assert len(embedding_expected_inputs) == n_cat_inputs
     assert len(cont_input_means) == len(cont_input_vars) == n_cont_inputs
+    assert connection_type in ["fcn", "res", "dense"]
     assert len(units) > 0
 
     # get activation settings
@@ -667,15 +813,28 @@ def create_model(
 
     # embedding layer
     if n_cat_inputs > 0:
-        embedding_layer = CustomEmbeddingLayer(
+        # encode categorical inputs to indices
+        b = EmbeddingEncoder(embedding_expected_inputs, name="cat_encoder")(x_cat)
+
+        # actual embedding
+        b = tf.keras.layers.Embedding(
+            input_dim=sum(map(len, embedding_expected_inputs)),
             output_dim=embedding_output_dim,
-            expected_inputs=embedding_expected_inputs,
-            name="cat_embedding",
-        )
-        embed_cat = embedding_layer(x_cat)
+            input_length=n_cat_inputs,
+            name="cat_embedded",
+        )(b)
+
+        # flatten
+        b = tf.keras.layers.Flatten(name="cat_flat")(b)
 
         # combine with continuous inputs
-        a = tf.keras.layers.Concatenate(name="concat")([a, embed_cat])
+        a = tf.keras.layers.Concatenate(name="input_concat")([a, b])
+
+    # previous resnet layer for pairwise addition
+    res_prev: tf.keras.layers.Layer | None = None
+
+    # previous dense layer for concatenation
+    dense_prev: tf.keras.layers.Layer | None = None
 
     # add layers programatically
     for i, n_units in enumerate(units, 1):
@@ -693,6 +852,10 @@ def create_model(
         if batch_norm and act_settings.batch_norm[0]:
             a = batchnorm_layer(a)
 
+        # add with previous resnet layer on next even layer
+        if connection_type == "res" and i % 2 == 0 and res_prev is not None:
+            a = tf.keras.layers.Add(name=f"res_add_{i}")([a, res_prev])
+
         # activation
         a = tf.keras.layers.Activation(act_settings.name, name=f"act_{i}")(a)
 
@@ -704,6 +867,16 @@ def create_model(
         if dropout_rate:
             dropout_cls = getattr(tf.keras.layers, act_settings.dropout_name)
             a = dropout_cls(dropout_rate, name=f"do_{i}")(a)
+
+        # save for resnet
+        if connection_type == "res" and i % 2 == 0:
+            res_prev = a
+
+        # concatenate with previous dense layer to define new output
+        if connection_type == "dense":
+            if dense_prev is not None:
+                a = tf.keras.layers.Concatenate(name=f"dense_concat_{i}")([a, dense_prev])
+            dense_prev = a
 
     # add the output layer
     output_layer = tf.keras.layers.Dense(
@@ -717,9 +890,11 @@ def create_model(
     y = output_layer(a)
 
     # build the model
-    model = tf.keras.Model(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
+    model = ClassificationModelWithValidationBuffers(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
 
     # normalize the l2 regularization to the number of weights in dense layers
+    # TODO: when performing transfer learning with pre-NN, one might need to recalculate this for fine tuning,
+    # depending on whether l2 is applied to the pre-NN weights or not
     if l2_norm > 0:
         n_weights = sum(map(
             tf.keras.backend.count_params,
@@ -730,6 +905,46 @@ def create_model(
                 layer.kernel_regularizer.l2[...] = l2_norm / n_weights
 
     return model
+
+
+def main() -> tuple[tf.keras.Model, str]:
+    import argparse
+
+    def _csv_int(s: str) -> list[int]:
+        return list(map(int, (c.strip() for c in s.strip().split(","))))
+
+    def _bool(s: str) -> bool:
+        if s.lower() in ["true", "yes", "y", "1"]:
+            return True
+        if s.lower() in ["false", "f", "n", "0"]:
+            return False
+        raise ValueError(f"invalid boolean value {s!r}")
+
+    parser = argparse.ArgumentParser(description="combined hh->bbtautau classifier training")
+    parser.add_argument("--model-name", help="custom model name")
+    parser.add_argument("--model-prefix", help="custom model prefix")
+    parser.add_argument("--model-suffix", help="custom model suffix")
+    parser.add_argument("--embedding-output-dim", type=int, help="dimension of the categorical embedding")
+    parser.add_argument("--units", type=_csv_int, nargs="+", help="number of units per layer")
+    parser.add_argument("--connection-type", type=str, help="connection type between layers")
+    parser.add_argument("--activation", type=str, help="activation function")
+    parser.add_argument("--l2-norm", type=float, help="weight-normalized l2 regularization")
+    parser.add_argument("--dropout-rate", type=float, help="dropout percentage")
+    parser.add_argument("--batch-norm", type=_bool, help="enable batch normalization between layers")
+    parser.add_argument("--batch-size", type=int, help="batch size")
+    parser.add_argument("--learning-rate", type=float, help="learning rate")
+    parser.add_argument("--learning-rate-patience", type=int, help="non-improving steps before reducing learning rate")
+    parser.add_argument("--learning-rate-reductions", type=int, help="number of possible learning rate reductions")
+    parser.add_argument("--early-stopping-patience", type=int, help="non-improving steps before stopping training")
+    parser.add_argument("--parameterize-spin", type=_bool, help="parametrize spin as categorical input")
+    parser.add_argument("--parameterize-mass", type=_bool, help="parametrize mass as continuous input")
+    parser.add_argument("--fold-index", type=int, help="number of the fold to train for")
+    parser.add_argument("--seed", type=int, help="random seed")
+    args = parser.parse_args()
+
+    # extract set arguments and train
+    train_kwargs = {k: v for k, v in args.__dict__.items() if v is not None}
+    return train(**train_kwargs)
 
 
 if __name__ == "__main__":

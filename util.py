@@ -8,20 +8,22 @@ import glob
 import hashlib
 import pickle
 import inspect
-from typing import Callable
+import itertools
+from typing import Any
 
 import numpy as np
 import numpy.lib.recfunctions as rfn
 import tensorflow as tf
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 
 epsilon = 1e-6
 
-debug_layer = tf.autograph.experimental.do_not_convert
 
-
-def load_sample(data_dir, sample, weight, features, selections, maxevents=1000000, cache_dir=None):
-    print(f"loading sample {sample} ...")
+def load_sample(data_dir, sample, loss_weight, features, selections, maxevents=1000000, cache_dir=None):
+    print(f"loading sample {sample} ... ", end="", flush=True)
 
     # potentially read from cache
     cache_path = get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents)
@@ -48,7 +50,7 @@ def load_sample(data_dir, sample, weight, features, selections, maxevents=100000
                 if nevents > maxevents:
                     break
         feature_vecs = np.concatenate(feature_vecs, axis=0)
-        print(f"done, found {len(feature_vecs)} events in {i} file(s)")
+        print(f"loaded {len(feature_vecs)} events from {i} file(s)")
 
         # save to cache
         if cache_path:
@@ -57,7 +59,7 @@ def load_sample(data_dir, sample, weight, features, selections, maxevents=100000
                 pickle.dump(feature_vecs, f)
 
     # weight vector
-    weights = np.array([weight] * len(feature_vecs), dtype="float32")
+    weights = np.array([loss_weight] * len(feature_vecs), dtype="float32")
 
     return feature_vecs, weights
 
@@ -159,104 +161,49 @@ def create_tensorboard_callbacks(log_dir):
     return add, flush
 
 
-def get_device(device="cpu", num_device=0):
-    """
-    Check if there is a main gpu and raises error if not. Returns a tf.device wrapper with the device
-    Args:
-        device: cpu or gpu, Default: CPU
-
-    Returns: tf.device
-    """
-    if device == "gpu":
-        gpus = tf.config.experimental.list_physical_devices("GPU")
-        if len(gpus) == 0:
-            print("There is no GPU on the working machine, default to CPU")
-        else:
-            if gpus:
-                try:
-                    tf.config.experimental.set_memory_growth(gpus[num_device], True)
-                except RuntimeError as e:
-                    print(e)
-            return tf.device(f"/device:GPU:{num_device}")
-
-    return tf.device(f"/device:CPU:{num_device}")
+def encode_hyper_param(value: Any) -> str:
+    # conversions
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    # encodings
+    if value is None:
+        return "none"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "ny"[value]
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value) if 0.01 <= abs(value) <= 100.0 else f"{value:.1e}"
+    if isinstance(value, (list, tuple)):
+        return "_".join(map(encode_hyper_param, value))
+    raise NotImplementedError(f"cannot encode hyper parameter '{value}'")
 
 
-class L2Metric(tf.keras.metrics.Metric):
+def plot_confusion_matrix(cm: np.ndarray, class_names: list[str], colorbar: bool = True):
+    fig, ax = plt.subplots()
 
-    def __init__(self, model: tf.keras.Model, name: str = "l2", **kwargs) -> None:
-        super().__init__(name=name, **kwargs)
+    # draw matrix and colorbar
+    im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
+    if colorbar:
+        fig.colorbar(im)
 
-        # store kernels and l2 norms of dense layers
-        self.kernels: list[tf.Tensor] = []
-        self.norms: list[np.ndarray] = []
-        for layer in model.layers:
-            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None:
-                self.kernels.append(layer.kernel)
-                self.norms.append(layer.kernel_regularizer.l2)
+    # styles
+    ax.set_title("Confusion matrix")
+    tick_marks = np.arange(len(class_names))
+    ax.set_xticks(tick_marks, class_names, rotation=45)
+    ax.set_yticks(tick_marks, class_names)
+    ax.set_xlabel("Predicted class")
+    ax.set_ylabel("True class")
 
-        # book the l2 metric
-        self.l2: tf.Variable = self.add_weight(name="l2", initializer="zeros")
+    # cell labels
+    labels = np.around(cm.astype("float") / cm.sum(axis=1)[:, None], decimals=2)
+    white_threshold = 0.5 * cm.max()
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        color = "white" if cm[i, j] > white_threshold else "black"
+        ax.text(j, i, labels[i, j], horizontalalignment="center", color=color)
 
-    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: tf.Tensor | None = None) -> None:
-        self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
+    fig.tight_layout()
 
-    def result(self) -> tf.Tensor:
-        return self.l2
-
-    def reset_states(self) -> None:
-        self.l2.assign(0.0)
-
-
-class ReduceLROnPlateau(tf.keras.callbacks.ReduceLROnPlateau):
-    """
-    Extension of keras' ReduceLROnPlateau, adding a setter hook to :py:attr:`best` to save the best model weights.
-    """
-
-    def __init__(self, model: tf.keras.Model, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.model = model
-        self._best: float = 0.0
-        self.best_weights = None
-
-    @property
-    def best(self) -> float:
-        return self._best
-
-    @best.setter
-    def best(self, best: float) -> None:
-        self._best = float(best)
-        if self._best not in (0, np.inf, -np.inf) and self.model is not None:
-            self.best_weights = self.model.get_weights()
-
-
-class EarlyStopping(tf.keras.callbacks.EarlyStopping):
-    """
-    Extension of keras' EarlyStopping, adding the option to control when to skip monitoring using a functional
-    condition. When set, *skip_monitoring_fn* receives the callback instance and the current epoch and should return
-    a boolean deciding whether to skip the monitoring for this epoch.
-    """
-
-    def __init__(
-        self,
-        *args,
-        skip_monitoring_fn: Callable[[EarlyStopping, int], bool] | None = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-
-        self.skip_monitoring_fn = skip_monitoring_fn
-        self.monitoring_active = not callable(skip_monitoring_fn)
-
-    def on_epoch_end(self, epoch: int, logs: dict | None = None) -> None:
-        # note: epoch is 0-indexed
-        if callable(self.skip_monitoring_fn):
-            skip = self.skip_monitoring_fn(self, epoch + 1)
-            if self.verbose > 0 and skip == self.monitoring_active:
-                self.monitoring_active = not skip
-                print(f"Epoch {epoch + 1}: early stopping {'de' if skip else ''}activated by custom condition")
-            if skip:
-                return
-
-        return super().on_epoch_end(epoch, logs)
+    return fig, ax

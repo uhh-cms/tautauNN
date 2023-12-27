@@ -59,8 +59,8 @@ class MultiDataset(object):
         for batch_weight in self.batch_weights:
             bs = batch_weight / sum_batch_weights * batch_size - carry
             bs_int = int(round(bs))
-            carry = bs_int - bs
             self.batch_sizes.append(bs_int)
+            carry = bs_int - bs
         if batch_size != sum(self.batch_sizes):
             print(f"batch size is {sum(self.batch_sizes)} but should be {batch_size}")
 
