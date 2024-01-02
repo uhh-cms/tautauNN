@@ -29,27 +29,45 @@ action() {
     local micromamba_url="https://micro.mamba.pm/api/micromamba/linux-64/latest"
     local pyv="3.11"
     local user_name="$( whoami )"
+    local remote_env="$( [ -z "${TN_REMOTE_ENV}" ] && echo "false" || echo "true" )"
 
 
     #
     # host and user depdenent variables
     #
 
+    local host_matched="false"
     if [[ "$( hostname )" = max-*.desy.de ]]; then
         # maxwell
         export TN_DATA_DIR="/gpfs/dust/cms/user/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_maxwell"
-        export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23"
-    elif [[ "$( hostname )" = naf-*.desy.de ]]; then
+        export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v5_16Oct23"
+        export TN_SLURM_FLAVOR="maxwell"
+        export TN_SLURM_PARTITION="allgpu"
+        host_matched="true"
+    elif [[ "$( hostname )" = naf*.desy.de ]] || [[ "$( hostname )" = bird*.desy.de ]] || [[ "$( hostname )" = batch*.desy.de ]]; then
         # naf
         export TN_DATA_DIR="/nfs/dust/cms/user/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_naf"
-        export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v4_17Jul23"
+        export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v5_16Oct23"
+        export TN_HTCONDOR_FLAVOR="naf"
+        host_matched="true"
     elif [[ "$( hostname )" = *.cern.ch ]]; then
         # lxplus
         export TN_DATA_DIR="/eos/user/${user_name:0:1}/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_lxplus"
         export TN_SKIMS_2017="/eos/user/t/tokramer/hhbbtautau/skims/2017"
+        export TN_HTCONDOR_FLAVOR="cern"
+        host_matched="true"
+    fi
+
+    # complain when in a remote env and none of the above host patterns matched
+    if ! ${host_matched}; then
+        echo "no host pattern matched for host '$( hostname )'"
+        if [ ! -z "${TN_REMOTE_ENV}" ]; then
+            >&2 echo "pattern match required in remote env '${TN_REMOTE_ENV}', stopping setup"
+            return "1"
+        fi
     fi
 
 
@@ -61,8 +79,17 @@ action() {
     # start exporting variables, potentially giving priority to already exported ones
     export TN_DIR="${this_dir}"
     export TN_DATA_DIR="${TN_DATA_DIR:-${TN_DIR}/data}"
+    export TN_STORE_DIR="${TN_STORE_DIR:-${TN_DATA_DIR}/store}"
     export TN_SOFTWARE_DIR="${TN_SOFTWARE_DIR:-${TN_DATA_DIR}/software}"
     export TN_CONDA_DIR="${TN_CONDA_DIR:-${TN_SOFTWARE_DIR}/conda}"
+    export TN_JOB_DIR="${TN_JOB_DIR:-${TN_DATA_DIR}/jobs}"
+    export TN_LOCAL_SCHEDULER="${TN_LOCAL_SCHEDULER:-true}"
+    export TN_SCHEDULER_HOST="${TN_SCHEDULER_HOST:-$( hostname )}"
+    export TN_SCHEDULER_PORT="8088"
+    export TN_WORKER_KEEP_ALIVE="${TN_WORKER_KEEP_ALIVE:-"${remote_env}"}"
+    export TN_HTCONDOR_FLAVOR="${TN_HTCONDOR_FLAVOR:-naf}"
+    export TN_SLURM_FLAVOR="${TN_SLURM_FLAVOR:-maxwell}"
+    export TN_SLURM_PARTITION="${TN_SLURM_PARTITION:-allgpu}"
 
     # external variable defaults
     export LANGUAGE="${LANGUAGE:-en_US.UTF-8}"
@@ -78,6 +105,8 @@ action() {
     #
     # minimal local software setup
     #
+
+    export PYTHONPATH="${TN_DIR}:${PYTHONPATH}"
 
     # increase stack size
     ulimit -s unlimited
@@ -144,7 +173,25 @@ EOF
             "flake8-commas" \
             "flake8-quotes" \
             "cmsml" \
+            "hist" \
+            "git+https://github.com/riga/law.git@master" \
             || return "$?"
+    fi
+
+
+    #
+    # law setup
+    #
+
+    export LAW_HOME="${LAW_HOME:-${TN_DIR}/.law}"
+    export LAW_CONFIG_FILE="${LAW_CONFIG_FILE:-${TN_DIR}/law.cfg}"
+
+    if which law &> /dev/null; then
+        # source law's bash completion scipt
+        source "$( law completion )" ""
+
+        # silently index
+        law index -q
     fi
 }
 

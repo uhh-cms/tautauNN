@@ -15,7 +15,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from util import plot_confusion_matrix
+from tautaunn.util import plot_confusion_matrix, plot_class_outputs
 
 
 debug_layer = tf.autograph.experimental.do_not_convert
@@ -262,7 +262,7 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         return value
 
 
-class ConfusionMatrixWriter(tf.keras.callbacks.Callback):
+class LivePlotWriter(tf.keras.callbacks.Callback):
 
     def __init__(
         self,
@@ -286,22 +286,34 @@ class ConfusionMatrixWriter(tf.keras.callbacks.Callback):
     def on_test_end(self, logs: dict[str, Any] | None = None) -> None:
         self.counter += 1
 
-        if None in (getattr(self.model, "buffer_y", None), getattr(self.model, "buffer_y_pred", None)):
+        if getattr(self.model, "buffer_y", None) is None or getattr(self.model, "buffer_y_pred", None) is None:
             print_msg(
-                f"\n{self.__class__.__name__} requires model.buffer_y and model.buffer_y_predto be set, "
+                f"\n{self.__class__.__name__} requires model.buffer_y and model.buffer_y_pred to be set, "
                 "not writing summary images",
             )
             return
 
-        pred_classes = np.argmax(self.model.buffer_y_pred.numpy(), axis=1)
-        true_classes = np.argmax(self.model.buffer_y.numpy(), axis=1)
+        # get data
+        y = self.model.buffer_y.numpy()
+        y_pred = self.model.buffer_y_pred.numpy()
 
+        # confusion matrix
+        true_classes = np.argmax(y, axis=1)
+        pred_classes = np.argmax(y_pred, axis=1)
         cm = sklearn.metrics.confusion_matrix(true_classes, pred_classes, normalize="true")
-        fig, _ = plot_confusion_matrix(cm, self.class_names, colorbar=False)
-        cm_image = fig_to_image_tensor(fig)
+        cm_image = fig_to_image_tensor(plot_confusion_matrix(cm, self.class_names, colorbar=False)[0])
+
+        # output distributions
+        out_imgs = [
+            fig_to_image_tensor(plot_class_outputs(y_pred, y, i, self.class_names)[0])
+            for i in range(len(self.class_names))
+        ]
 
         with self.file_writer.as_default():
-            tf.summary.image("epoch_confusion_matrix", cm_image, step=self.counter * self.validate_every)
+            step = self.counter * self.validate_every
+            tf.summary.image("epoch_confusion_matrix", cm_image, step=step)
+            for i, img in enumerate(out_imgs):
+                tf.summary.image(f"epoch_output_distribution_{self.class_names[i]}", img, step=step)
             self.file_writer.flush()
 
 

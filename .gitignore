@@ -17,6 +17,8 @@
 *.pb
 *.txt
 *.out
+*.law
+*.vscode
 __pycache__
 dist
 build

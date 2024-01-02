@@ -2,18 +2,17 @@
 
 """
 Features included:
+- reading events directly from root files
 - deterministic model names
 - LR schedule and early stopping
-- FCN, ResNet, and DenseNet connections
-- live plots in tensorboard (confusion matrix)
+- FCN, Res, and Dense connections
+- live plots in tensorboard (confusion matrix and output distributions)
 - 10-fold xvalidation and ensembling (see export_ensembles.py)
-- random mass and spin value samples for backgrounds during training
+- random mass and spin value sampling for backgrounds during training
 - graceful termination (ctrl+c)
 - preparation for tauNN transfer and fine-tuning
 
-Ttechnical TODOs:
-- S-over-B cutoff plots in tensorboard, or any other more meaningful metric? (would require weights)
-- read inputs from root files directly (making use of cache)
+Technical TODOs:
 - highly volatile validation loss still existing with larger stats?
 
 Physics / optimization TODOs:
@@ -29,6 +28,7 @@ Physics / optimization TODOs:
 from __future__ import annotations
 
 import os
+import re
 import json
 import time
 import random
@@ -36,18 +36,17 @@ import shutil
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 import tensorflow as tf
 
-from util import load_sample, phi_mpi_to_pi, calc_new_columns, encode_hyper_param
-from tf_util import (
+from tautaunn.multi_dataset import MultiDataset
+from tautaunn.tf_util import (
     get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
-    ConfusionMatrixWriter,
+    LivePlotWriter,
 )
-from multi_dataset import MultiDataset
+from tautaunn.util import load_sample_root, calc_new_columns, create_model_name
+from tautaunn.config import Sample, activation_settings, dynamic_columns, embedding_expected_inputs
 
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
@@ -90,90 +89,6 @@ if eager_mode:
     # note: running the following with False would still trigger partial eager mode in keras
     tf.config.run_functions_eagerly(eager_mode)
 
-# common column configs (TODO: they should live in a different file)
-dynamic_columns = {
-    "DeepMET_ResolutionTune_phi": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"), (lambda x, y: np.arctan2(y, x))),
-    "met_dphi": (("met_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "dmet_resp_px": (("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_phi"), (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y)),
-    "dmet_resp_py": (("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_phi"), (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y)),
-    "dmet_reso_px": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "DeepMET_ResolutionTune_phi"), (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y)),
-    "dmet_reso_py": (("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "DeepMET_ResolutionTune_phi"), (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y)),
-    "met_px": (("met_et", "met_dphi"), (lambda a, b: a * np.cos(b))),
-    "met_py": (("met_et", "met_dphi"), (lambda a, b: a * np.sin(b))),
-    "dau1_dphi": (("dau1_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "dau2_dphi": (("dau2_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "genNu1_dphi": (("genNu1_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "genNu2_dphi": (("genNu2_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "dau1_px": (("dau1_pt", "dau1_dphi"), (lambda a, b: a * np.cos(b))),
-    "dau1_py": (("dau1_pt", "dau1_dphi"), (lambda a, b: a * np.sin(b))),
-    "dau1_pz": (("dau1_pt", "dau1_eta"), (lambda a, b: a * np.sinh(b))),
-    "dau1_m": (("dau1_px", "dau1_py", "dau1_pz", "dau1_e"), (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2)))),
-    "dau2_px": (("dau2_pt", "dau2_dphi"), (lambda a, b: a * np.cos(b))),
-    "dau2_py": (("dau2_pt", "dau2_dphi"), (lambda a, b: a * np.sin(b))),
-    "dau2_pz": (("dau2_pt", "dau2_eta"), (lambda a, b: a * np.sinh(b))),
-    "dau2_m": (("dau2_px", "dau2_py", "dau2_pz", "dau2_e"), (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2)))),
-    "ditau_deltaphi": (("dau1_dphi", "dau2_dphi"), (lambda a, b: np.abs(phi_mpi_to_pi(a - b)))),
-    "ditau_deltaeta": (("dau1_eta", "dau2_eta"), (lambda a, b: np.abs(a - b))),
-    "genNu1_px": (("genNu1_pt", "genNu1_dphi"), (lambda a, b: a * np.cos(b))),
-    "genNu1_py": (("genNu1_pt", "genNu1_dphi"), (lambda a, b: a * np.sin(b))),
-    "genNu1_pz": (("genNu1_pt", "genNu1_eta"), (lambda a, b: a * np.sinh(b))),
-    "genNu2_px": (("genNu2_pt", "genNu2_dphi"), (lambda a, b: a * np.cos(b))),
-    "genNu2_py": (("genNu2_pt", "genNu2_dphi"), (lambda a, b: a * np.sin(b))),
-    "genNu2_pz": (("genNu2_pt", "genNu2_eta"), (lambda a, b: a * np.sinh(b))),
-    "bjet1_dphi": (("bjet1_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "bjet1_px": (("bjet1_pt", "bjet1_dphi"), (lambda a, b: a * np.cos(b))),
-    "bjet1_py": (("bjet1_pt", "bjet1_dphi"), (lambda a, b: a * np.sin(b))),
-    "bjet1_pz": (("bjet1_pt", "bjet1_eta"), (lambda a, b: a * np.sinh(b))),
-    "bjet2_dphi": (("bjet2_phi", "DeepMET_ResolutionTune_phi"), (lambda a, b: phi_mpi_to_pi(a - b))),
-    "bjet2_px": (("bjet2_pt", "bjet2_dphi"), (lambda a, b: a * np.cos(b))),
-    "bjet2_py": (("bjet2_pt", "bjet2_dphi"), (lambda a, b: a * np.sin(b))),
-    "bjet2_pz": (("bjet2_pt", "bjet2_eta"), (lambda a, b: a * np.sinh(b))),
-}
-
-# possible values of categorical inputs (TODO: they should live in a different file)
-embedding_expected_inputs = {
-    "pairType": [0, 1, 2],
-    "dau1_decayMode": [-1, 0, 1, 10, 11],  # -1 for e/mu
-    "dau2_decayMode": [0, 1, 10, 11],
-    "dau1_charge": [-1, 1],
-    "dau2_charge": [-1, 1],
-    "spin": [0, 2],
-}
-
-
-@dataclass
-class ActivationSetting:
-    # name of the activation as understood by tf.keras.layers.Activation
-    name: str
-    # name of the kernel initializer as understood by tf.keras.layers.Dense
-    weight_init: str
-    # whether to apply batch normalization before or after the activation (and if at all)
-    batch_norm: tuple[bool, bool]
-    # name of the dropout layer under tf.keras.layers
-    dropout_name: str = "Dropout"
-
-
-# setting for typical activations (TODO: they should live in a different file)
-activation_settings = {
-    "elu": ActivationSetting("ELU", "he_uniform", (True, False)),
-    "relu": ActivationSetting("ReLU", "he_uniform", (False, True)),
-    "prelu": ActivationSetting("PReLU", "he_normal", (True, False)),
-    "selu": ActivationSetting("selu", "lecun_normal", (False, False), "AlphaDropout"),
-    "tanh": ActivationSetting("tanh", "glorot_normal", (True, False)),
-    "softmax": ActivationSetting("softmax", "glorot_normal", (True, False)),
-    "swish": ActivationSetting("swish", "glorot_uniform", (True, False)),
-}
-
-
-@dataclass
-class Sample:
-    name: str
-    label: int
-    class_name: str | None = None
-    loss_weight: float = 1.0
-    spin: int = -1
-    mass: float = -1.0
-
 
 def train(
     model_name: str | None = None,
@@ -191,7 +106,7 @@ def train(
         # Sample("SKIM_ggF_Radion_m270", label=0, spin=0, mass=270.0),
         # Sample("SKIM_ggF_Radion_m280", label=0, spin=0, mass=280.0),
         # Sample("SKIM_ggF_Radion_m300", label=0, spin=0, mass=300.0),
-        Sample("SKIM_ggF_Radion_m320", label=0, spin=0, mass=320.0, class_name="HH"),
+        Sample("SKIM_ggF_Radion_m320", label=0, spin=0, mass=320.0),
         Sample("SKIM_ggF_Radion_m350", label=0, spin=0, mass=350.0),
         Sample("SKIM_ggF_Radion_m400", label=0, spin=0, mass=400.0),
         Sample("SKIM_ggF_Radion_m450", label=0, spin=0, mass=450.0),
@@ -230,25 +145,30 @@ def train(
         Sample("SKIM_ggF_BulkGraviton_m1250", label=0, spin=2, mass=1250.0),
         Sample("SKIM_ggF_BulkGraviton_m1500", label=0, spin=2, mass=1500.0),
         Sample("SKIM_ggF_BulkGraviton_m1750", label=0, spin=2, mass=1750.0),
-        Sample("SKIM_DY_amc_incl", label=1, class_name="DY"),
-        Sample("SKIM_TT_fullyLep", label=2, class_name="TT"),
-        Sample("SKIM_TT_semiLep", label=2),
+        Sample("SKIM_DY_amc_incl", label=1),
+        Sample("SKIM_TT_fullyLep", label=1),
+        Sample("SKIM_TT_semiLep", label=1),
         # Sample("SKIM_ttHToTauTau", label=3),
     ],
+    # names of classes
+    class_names: dict[int, str] = {
+        0: "HH",
+        1: "Background",
+    },
     # additional columns to load
     extra_columns: list[str] = [
         "EventNumber",
     ],
     # selections to apply before training
-    selections: list[tuple[tuple[str, ...], Callable]] = [
-        (("nbjetscand",), (lambda a: a > 1)),
-        (("pairType",), (lambda a: a < 3)),
-        (("nleps",), (lambda a: a == 0)),
-        (("isOS",), (lambda a: a == 1)),
-        (("dau2_deepTauVsJet",), (lambda a: a >= 5)),
+    selections: str | list[str] = [
+        "nbjetscand > 1",
+        "nleps == 0",
+        "isOS == 1",
+        "dau2_deepTauVsJet >= 5",
         (
-            ("pairType", "dau1_iso", "dau1_eleMVAiso", "dau1_deepTauVsJet"),
-            (lambda a, b, c, d: (((a == 0) & (b < 0.15)) | ((a == 1) & (c == 1)) | ((a == 2) & (d >= 5)))),
+            "((pairType == 0) & (dau1_iso < 0.15) & (isLeptrigger == 1)) | "
+            "((pairType == 1) & (dau1_eleMVAiso == 1) & (isLeptrigger == 1)) | "
+            "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
         ),
     ],
     # categorical input features for the network
@@ -290,6 +210,8 @@ def train(
     batch_norm: bool = True,
     # batch size
     batch_size: int = 4096,
+    # name of the optimizer to use
+    optimizer: str = "adam",
     # learning rate to start with
     learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
@@ -312,55 +234,74 @@ def train(
     validation_folds: int = 3,
     # seed for random number generators, if None, uses fold_index + 1
     seed: int | None = None,
-) -> tuple[tf.keras.Model, str]:
+) -> tuple[tf.keras.Model, str] | None:
     # some checks
     assert units
     unique_labels: set[int] = {sample.label for sample in samples}
     n_classes: int = len(unique_labels)
     assert n_classes > 1
-    assert unique_labels == set(range(n_classes))
+    assert len(class_names) == n_classes
+    assert all(label in class_names for label in unique_labels)
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
     assert 0 <= fold_index <= 9
     assert 1 <= validation_folds <= 8
+    assert optimizer in ["adam", "adamw"]
+
+    # copy mutables to avoid side effects
+    samples = deepcopy(samples)
+    class_names = deepcopy(class_names)
+    extra_columns = deepcopy(extra_columns)
+    selections = deepcopy(selections)
+    cat_input_names = deepcopy(cat_input_names)
+    cont_input_names = deepcopy(cont_input_names)
+    units = deepcopy(units)
 
     # conditionally change arguments
     if seed is None:
         seed = fold_index + 1
 
     # construct a model name
-    if model_name is None:
-        name_parts = {
-            "ed": embedding_output_dim,
-            "lu": f"{len(units)}x{units[0]}" if len(set(units)) == 1 else units,
-            "ct": connection_type,
-            "act": activation,
-            "bn": batch_norm,
-            "lt": l2_norm,
-            "do": dropout_rate,
-            "bs": batch_size,
-            "lr": learning_rate,
-            "spin": parameterize_spin,
-            "mass": parameterize_mass,
-            "fi": fold_index,
-            "sd": seed,
-        }
-        model_name = "_".join(f"{k.upper()}{encode_hyper_param(v)}" for k, v in name_parts.items())
-    if model_prefix:
-        model_name = f"{model_prefix.rstrip('_')}_{model_name}"
-    if model_suffix:
-        model_name = f"{model_name}_{model_suffix.lstrip('_')}"
-    print(f"building and training model {model_name}\n")
+    model_name = create_model_name(
+        model_name=model_name,
+        model_prefix=model_prefix,
+        model_suffix=model_suffix,
+        embedding_output_dim=embedding_output_dim,
+        units=units,
+        connection_type=connection_type,
+        activation=activation,
+        batch_norm=batch_norm,
+        l2_norm=l2_norm,
+        dropout_rate=dropout_rate,
+        batch_size=batch_size,
+        optimizer=optimizer,
+        learning_rate=learning_rate,
+        parameterize_spin=parameterize_spin,
+        parameterize_mass=parameterize_mass,
+        fold_index=fold_index,
+        seed=seed,
+    )
+
+    # some logs
+    print(f"building and training model {model_name}")
+    if cache_dir:
+        print(f"using cache directory {cache_dir}")
+    print("")
 
     # set the seed to everything (Python, NumPy, TensorFlow, Keras)
-    tf.keras.utils.set_random_seed(seed)
+    tf.keras.utils.set_random_seed(fold_index * 100 + seed)
+
+    # join selections
+    if isinstance(selections, list):
+        selections = " & ".join(map("({})".format, selections))
 
     # determine which columns to read
     columns_to_read = set()
     for name in cont_input_names + cat_input_names:
         columns_to_read.add(name)
-    for sel_columns, _ in selections:
-        columns_to_read |= set(sel_columns)
+    # column names in selections string
+    columns_to_read |= set(re.findall(r"[a-zA-Z_][\w_]*", selections))
+    # extra columns
     columns_to_read |= set(extra_columns)
     # expand dynamic columns, keeping track of those that are needed
     all_dyn_names = set(dynamic_columns)
@@ -379,17 +320,9 @@ def train(
     possible_cont_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
 
     # scan samples and their labels to construct relative weights such that each class starts with equal importance
-    # and class names
     labels_to_samples: dict[int, list[str]] = defaultdict(list)
-    class_names: dict[int, str] = {}
     for sample in samples:
         labels_to_samples[sample.label].append(sample.name)
-        if sample.class_name and sample.label not in class_names:
-            class_names[sample.label] = sample.class_name
-    if len(class_names) == 0:
-        class_names = {i: f"class_{i}" for i in range(n_classes)}
-    elif len(class_names) != n_classes:
-        raise ValueError(f"class names {class_names} do not correspond to the number of classes {n_classes}")
 
     # keep track of spins, masses, number of events per sample, and relative batch weights per sample
     spins: set[int] = set()
@@ -414,13 +347,13 @@ def train(
 
     # loop through samples
     for sample in samples:
-        rec, event_weights = load_sample(
+        rec, event_weights = load_sample_root(
             data_dir,
             sample.name,
             sample.loss_weight,
             list(columns_to_read),
             selections,
-            # maxevents=10000,
+            # max_events=10000,
             cache_dir=cache_dir,
         )
         all_n_events.append(n_events := len(event_weights))
@@ -556,9 +489,13 @@ def train(
         )
 
         # compile
+        opt_cls = {
+            "adam": tf.keras.optimizers.Adam,
+            "adamw": tf.keras.optimizers.AdamW,
+        }[optimizer]
         model.compile(
             loss="categorical_crossentropy",
-            optimizer=tf.keras.optimizers.Adam(
+            optimizer=opt_cls(
                 learning_rate=learning_rate,
                 jit_compile=jit_compile,
             ),
@@ -585,7 +522,7 @@ def train(
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
                 lr_reductions=learning_rate_reductions,
-                es_patience=2 * learning_rate_patience,
+                es_patience=early_stopping_patience,
                 verbose=1,
             ),
             # tensorboard
@@ -595,8 +532,8 @@ def train(
                 write_graph=True,
                 profile_batch=(500, 1500) if run_profiler else 0,
             ) if full_tensorboard_dir else None,
-            # confusion matrix
-            ConfusionMatrixWriter(
+            # confusion matrix and output plots
+            LivePlotWriter(
                 log_dir=full_tensorboard_dir,
                 class_names=list(class_names.values()),
                 validate_every=validate_every,
@@ -606,11 +543,11 @@ def train(
         # some logs
         model.summary()
         print(f"training samples: {len(dataset_train):_}")
-        for label, (n, _) in samples_per_class.items():
-            print(f"    class {label}: {n:_}")
+        for (label, (n, _)), class_name in zip(samples_per_class.items(), class_names.values()):
+            print(f"    class {label}: {n:_}  ({class_name})")
         print(f"validation samples: {len(dataset_valid):_}")
-        for label, (_, n) in samples_per_class.items():
-            print(f"    class {label}: {n:_}")
+        for (label, (_, n)), class_name in zip(samples_per_class.items(), class_names.values()):
+            print(f"    class {label}: {n:_}  ({class_name})")
         print("")
 
         # training
@@ -712,21 +649,22 @@ def train(
                 include_optimizer=False,
             )
 
-            # and again in the legacy h5 format
-            h5_path = os.path.join(path, "model.h5")
-            if os.path.exists(h5_path):
-                os.remove(h5_path)
-            tf.keras.saving.save_model(
-                model,
-                h5_path,
-                overwrite=True,
-                save_format="h5",
-            )
+            # # and again in the legacy h5 format
+            # h5_path = os.path.join(path, "model.h5")
+            # if os.path.exists(h5_path):
+            #     os.remove(h5_path)
+            # tf.keras.saving.save_model(
+            #     model,
+            #     h5_path,
+            #     overwrite=True,
+            #     save_format="h5",
+            # )
 
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
                 "model_name": model_name,
                 "sample_names": [sample.name for sample in samples],
+                "class_names": class_names,
                 "input_names": {
                     "cont": cont_input_names,
                     "cat": cat_input_names,
@@ -760,7 +698,7 @@ def train(
         # save at actual location, fallback to tmp dir
         try:
             model_path = save_model(os.path.join(model_dir, model_name))
-        except OSError as e:
+        except (OSError, ValueError) as e:
             if not model_fallback_dir:
                 raise e
             print(f"saving at default path failed: {e}")
@@ -798,7 +736,7 @@ def create_model(
     assert len(units) > 0
 
     # get activation settings
-    act_settings: ActivationSetting = activation_settings[activation]
+    act_settings = activation_settings[activation]
 
     # prepare l2 regularization, use a dummy value as it is replaced after the model is built
     l2_reg = tf.keras.regularizers.l2(1.0) if l2_norm > 0 else None
@@ -907,44 +845,8 @@ def create_model(
     return model
 
 
-def main() -> tuple[tf.keras.Model, str]:
-    import argparse
-
-    def _csv_int(s: str) -> list[int]:
-        return list(map(int, (c.strip() for c in s.strip().split(","))))
-
-    def _bool(s: str) -> bool:
-        if s.lower() in ["true", "yes", "y", "1"]:
-            return True
-        if s.lower() in ["false", "f", "n", "0"]:
-            return False
-        raise ValueError(f"invalid boolean value {s!r}")
-
-    parser = argparse.ArgumentParser(description="combined hh->bbtautau classifier training")
-    parser.add_argument("--model-name", help="custom model name")
-    parser.add_argument("--model-prefix", help="custom model prefix")
-    parser.add_argument("--model-suffix", help="custom model suffix")
-    parser.add_argument("--embedding-output-dim", type=int, help="dimension of the categorical embedding")
-    parser.add_argument("--units", type=_csv_int, nargs="+", help="number of units per layer")
-    parser.add_argument("--connection-type", type=str, help="connection type between layers")
-    parser.add_argument("--activation", type=str, help="activation function")
-    parser.add_argument("--l2-norm", type=float, help="weight-normalized l2 regularization")
-    parser.add_argument("--dropout-rate", type=float, help="dropout percentage")
-    parser.add_argument("--batch-norm", type=_bool, help="enable batch normalization between layers")
-    parser.add_argument("--batch-size", type=int, help="batch size")
-    parser.add_argument("--learning-rate", type=float, help="learning rate")
-    parser.add_argument("--learning-rate-patience", type=int, help="non-improving steps before reducing learning rate")
-    parser.add_argument("--learning-rate-reductions", type=int, help="number of possible learning rate reductions")
-    parser.add_argument("--early-stopping-patience", type=int, help="non-improving steps before stopping training")
-    parser.add_argument("--parameterize-spin", type=_bool, help="parametrize spin as categorical input")
-    parser.add_argument("--parameterize-mass", type=_bool, help="parametrize mass as continuous input")
-    parser.add_argument("--fold-index", type=int, help="number of the fold to train for")
-    parser.add_argument("--seed", type=int, help="random seed")
-    args = parser.parse_args()
-
-    # extract set arguments and train
-    train_kwargs = {k: v for k, v in args.__dict__.items() if v is not None}
-    return train(**train_kwargs)
+def main() -> None:
+    train()
 
 
 if __name__ == "__main__":
