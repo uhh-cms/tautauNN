@@ -152,8 +152,8 @@ EOF
         micromamba clean --yes --all
 
         # pip packages
-        pip install -U pip setuptools wheel
-        pip install -U \
+        pip install --no-cache-dir -U pip setuptools wheel
+        pip install --no-cache-dir -U \
             "ipython" \
             "notebook" \
             "tensorflow[and-cuda]" \

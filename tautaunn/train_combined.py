@@ -42,8 +42,7 @@ import tensorflow as tf
 
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
-    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
-    LivePlotWriter,
+    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder, LivePlotWriter,
 )
 from tautaunn.util import load_sample_root, calc_new_columns, create_model_name
 from tautaunn.config import Sample, activation_settings, dynamic_columns, embedding_expected_inputs
@@ -457,12 +456,14 @@ def train(
                 idxs_1 = (cont_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
                 idxs = tf.concat([idxs_0, idxs_1], axis=-1)
                 random_masses = tf.gather(masses, tf.random.categorical([mass_probs], tf.shape(idxs_0)[0]))[0]
+                # random_masses = 500.0 * tf.ones(tf.shape(idxs_0)[0], dtype=tf.float32)
                 cont_inputs = tf.tensor_scatter_nd_update(cont_inputs, idxs, random_masses)
             if parameterize_spin:
                 idxs_0 = tf.where(cat_inputs[:, -1] < 0)
                 idxs_1 = (cat_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
                 idxs = tf.concat([idxs_0, idxs_1], axis=-1)
                 random_spins = tf.gather(spins, tf.random.categorical([spin_probs], tf.shape(idxs_0)[0]))[0]
+                # random_spins = tf.zeros(tf.shape(idxs_0)[0], dtype=tf.int32)
                 cat_inputs = tf.tensor_scatter_nd_update(cat_inputs, idxs, random_spins)
             return cont_inputs, cat_inputs, labels, weights
 
@@ -476,7 +477,6 @@ def train(
         )
         dataset_valid = MultiDataset(
             data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
-            batch_size=batch_size,
             kind="valid",
             yield_valid_rest=True,
             transform_data=transform,
@@ -511,10 +511,12 @@ def train(
                 learning_rate=learning_rate,
                 jit_compile=jit_compile,
             ),
-            metrics=[
+            weighted_metrics=[
                 tf.keras.metrics.CategoricalCrossentropy(name="ce"),
-                L2Metric(model, name="l2"),
                 tf.keras.metrics.CategoricalAccuracy(name="acc"),
+            ],
+            metrics=[
+                L2Metric(model, name="l2"),
             ],
             jit_compile=jit_compile,
             run_eagerly=eager_mode,
@@ -641,8 +643,8 @@ def train(
         print("performing final round of validation")
         results_valid = model.evaluate(
             x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-            batch_size=batch_size,
-            steps=dataset_valid.batches_per_cycle,
+            batch_size=len(dataset_valid),
+            steps=1,
             return_dict=True,
         )
 

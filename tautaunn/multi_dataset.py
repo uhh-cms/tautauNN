@@ -53,13 +53,17 @@ class MultiDataset(object):
             self.counts.append(len(arrays[0]))
             self.batch_weights.append(batch_weight)
 
+        # when used for validation, set the batch size to the total number of events
+        if self.kind == "valid":
+            self.batch_size = sum(self.counts)
+
         # transform batch weights to relative probabilities
         sum_batch_weights = sum(self.batch_weights)
         self.probs = [w / sum_batch_weights for w in self.batch_weights]
 
         # the number of batches that constitute one iteration cycle through all events
         # (floating point number, to be ceiled or floored depending on whether rest is used)
-        self._batches_per_cycle: float = len(self) / batch_size
+        self._batches_per_cycle: float = len(self) / self.batch_size
 
     def __len__(self):
         return sum(self.counts)
