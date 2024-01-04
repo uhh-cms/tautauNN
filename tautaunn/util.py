@@ -66,7 +66,7 @@ def load_sample(data_dir, sample, loss_weight, features, selections, maxevents=1
     return feature_vecs, weights
 
 
-def load_sample_root(data_dir, sample, loss_weight, features, selections, max_events=1000000, cache_dir=None):
+def load_sample_root(data_dir, sample, features, selections, max_events=1000000, cache_dir=None):
     from tautaunn.config import klub_aliases
 
     print(f"loading sample {sample} ... ", end="", flush=True)
@@ -104,10 +104,7 @@ def load_sample_root(data_dir, sample, loss_weight, features, selections, max_ev
             with open(cache_path, "wb") as f:
                 pickle.dump(feature_vecs, f)
 
-    # weight vector
-    weights = np.array([loss_weight] * len(feature_vecs), dtype="float32")
-
-    return feature_vecs, weights
+    return feature_vecs
 
 
 def transform_data_dir_cache(data_dir: str) -> str:
@@ -233,6 +230,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
                 name_parts[key] = fmt(params.pop(name))
 
         add("ls", "label_set")
+        add("ss", "sample_set")
         add("fs", "feature_set")
         add("ed", "embedding_output_dim")
         add("lu", "units", lambda x: f"{len(x)}x{x[0]}")

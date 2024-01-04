@@ -101,11 +101,6 @@ def train(
     model_dir: str = model_dir,
     model_fallback_dir: str | None = model_fallback_dir,
     samples: list[Sample] = [
-        # Sample("SKIM_ggF_Radion_m250", label=0, spin=0, mass=250.0),
-        # Sample("SKIM_ggF_Radion_m260", label=0, spin=0, mass=260.0),
-        # Sample("SKIM_ggF_Radion_m270", label=0, spin=0, mass=270.0),
-        # Sample("SKIM_ggF_Radion_m280", label=0, spin=0, mass=280.0),
-        # Sample("SKIM_ggF_Radion_m300", label=0, spin=0, mass=300.0),
         Sample("SKIM_ggF_Radion_m320", label=0, spin=0, mass=320.0),
         Sample("SKIM_ggF_Radion_m350", label=0, spin=0, mass=350.0),
         Sample("SKIM_ggF_Radion_m400", label=0, spin=0, mass=400.0),
@@ -123,11 +118,6 @@ def train(
         Sample("SKIM_ggF_Radion_m1250", label=0, spin=0, mass=1250.0),
         Sample("SKIM_ggF_Radion_m1500", label=0, spin=0, mass=1500.0),
         Sample("SKIM_ggF_Radion_m1750", label=0, spin=0, mass=1750.0),
-        # Sample("SKIM_ggF_BulkGraviton_m250", label=0, spin=2, mass=250.0),
-        # Sample("SKIM_ggF_BulkGraviton_m260", label=0, spin=2, mass=260.0),
-        # Sample("SKIM_ggF_BulkGraviton_m270", label=0, spin=2, mass=270.0),
-        # Sample("SKIM_ggF_BulkGraviton_m280", label=0, spin=2, mass=280.0),
-        # Sample("SKIM_ggF_BulkGraviton_m300", label=0, spin=2, mass=300.0),
         Sample("SKIM_ggF_BulkGraviton_m320", label=0, spin=2, mass=320.0),
         Sample("SKIM_ggF_BulkGraviton_m350", label=0, spin=2, mass=350.0),
         Sample("SKIM_ggF_BulkGraviton_m400", label=0, spin=2, mass=400.0),
@@ -148,7 +138,6 @@ def train(
         Sample("SKIM_DY_amc_incl", label=1),
         Sample("SKIM_TT_fullyLep", label=1),
         Sample("SKIM_TT_semiLep", label=1),
-        # Sample("SKIM_ttHToTauTau", label=3),
     ],
     # names of classes
     class_names: dict[int, str] = {
@@ -157,7 +146,7 @@ def train(
     },
     # additional columns to load
     extra_columns: list[str] = [
-        "EventNumber",
+        "EventNumber", "MC_weight", "PUReweight",
     ],
     # selections to apply before training
     selections: str | list[str] = [
@@ -324,11 +313,10 @@ def train(
     for sample in samples:
         labels_to_samples[sample.label].append(sample.name)
 
-    # keep track of spins, masses, number of events per sample, and relative batch weights per sample
+    # keep track of spins, masses, and yield factors
     spins: set[int] = set()
     masses: set[float] = set()
-    all_n_events: list[int] = []
-    batch_weights: list[float] = []
+    yield_factors: dict[str, float] = {}
 
     # lists for collection data to be forwarded into the MultiDataset
     cont_inputs_train, cont_inputs_valid = [], []
@@ -347,19 +335,15 @@ def train(
 
     # loop through samples
     for sample in samples:
-        rec, event_weights = load_sample_root(
+        rec = load_sample_root(
             data_dir,
             sample.name,
-            sample.loss_weight,
             list(columns_to_read),
             selections,
             # max_events=10000,
             cache_dir=cache_dir,
         )
-        all_n_events.append(n_events := len(event_weights))
-
-        # compute the batch weight, i.e. the weight that ensure that each class is equally represented in each batch
-        batch_weights.append(1 / len(labels_to_samples[sample.label]))
+        n_events = len(rec)
 
         # add dynamic columns
         rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
@@ -395,8 +379,37 @@ def train(
         labels_train.append(labels[train_mask])
         labels_valid.append(labels[valid_mask])
 
+        event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
         event_weights_train.append(event_weights[train_mask][..., None])
         event_weights_valid.append(event_weights[valid_mask][..., None])
+
+        # store the yield factor for later use
+        yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
+
+    # compute batch weights that ensures that each class is equally represented in each batch
+    # and that samples within a class are weighted according to their yield
+    batch_weights: list[float] = []
+    for label, _samples in labels_to_samples.items():
+        if label == 0:
+            # signal samples are to be drawn equally often
+            batch_weights += [1 / len(_samples)] * len(_samples)
+        else:
+            # repeat backgrounds according to their yield in that class
+            sum_yield_factors = sum(yield_factors[sample] for sample in _samples)
+            for sample in _samples:
+                batch_weights.append(yield_factors[sample] / sum_yield_factors)
+
+    # compute weights to be applied to validation events to resemble the batch composition seen during training
+    n_events_valid = list(map(len, event_weights_valid))
+    sum_events_valid = sum(n_events_valid)
+    sum_batch_weights = sum(batch_weights)
+    composition_weights_valid: list[float] = [
+        batch_weight / len(event_weights) * sum_events_valid / sum_batch_weights
+        for batch_weight, event_weights in zip(batch_weights, event_weights_valid)
+    ]
+    # multiply to the original weights
+    for i in range(len(event_weights_valid)):
+        event_weights_valid[i] = event_weights_valid[i] * composition_weights_valid[i]
 
     # count number of training and validation samples per class
     samples_per_class = {
@@ -438,8 +451,7 @@ def train(
 
     with device:
         # live transformation of inputs to inject spin and mass for backgrounds
-        @tf.function
-        def transform(cont_inputs, cat_inputs, labels, weights):
+        def transform(inst, cont_inputs, cat_inputs, labels, weights):
             if parameterize_mass:
                 idxs_0 = tf.where(cont_inputs[:, -1] < 0)
                 idxs_1 = (cont_inputs.shape[1] - 1) * tf.ones_like(idxs_0)

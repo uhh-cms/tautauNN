@@ -104,16 +104,15 @@ class TrainingParameters(Task):
         significant=False,
         description="validate every n batches; default: 500",
     )
-    sample_set = luigi.ChoiceParameter(
-        default="default",
-        choices=list(cfg.sample_sets.keys()),
-        significant=False,
-        description="name of sample set; default: default",
-    )
     label_set = luigi.ChoiceParameter(
         default="binary",
         choices=list(cfg.label_sets.keys()),
         description="name of label set; default: default",
+    )
+    sample_set = luigi.ChoiceParameter(
+        default="default",
+        choices=list(cfg.sample_sets.keys()),
+        description="name of sample set; default: default",
     )
     cont_feature_set = luigi.ChoiceParameter(
         default="reg",
@@ -132,6 +131,7 @@ class TrainingParameters(Task):
             model_prefix=None if self.model_prefix in (None, "", law.NO_STR) else self.model_prefix,
             model_suffix=None if self.model_suffix in (None, "", law.NO_STR) else self.model_suffix,
             label_set=self.label_set,
+            # sample_set=self.sample_set,  # TODO: add once big xvalidation test is done
             feature_set=f"{self.cont_feature_set}-{self.cat_feature_set}",
             embedding_output_dim=self.embedding_output_dim,
             units=list(self.units),

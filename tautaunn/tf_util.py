@@ -54,25 +54,29 @@ class ClassificationModelWithValidationBuffers(tf.keras.Model):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # buffers for labels and predictions that are filled after validation
-        self.buffer_y = self._create_validation_buffer()
-        self.buffer_y_pred = self._create_validation_buffer()
-        self.buffer_y_empty = self._create_validation_buffer()
+        # buffers for labels, predictions and weights that are filled after validation
+        self.buffer_y = self._create_validation_buffer(self.output_shape[-1])
+        self.buffer_y_pred = self._create_validation_buffer(self.output_shape[-1])
+        self.buffer_y_empty = self._create_validation_buffer(self.output_shape[-1])
+        self.buffer_weight = self._create_validation_buffer(1)
+        self.buffer_weight_empty = self._create_validation_buffer(1)
 
-    def _create_validation_buffer(self):
+    def _create_validation_buffer(self, dim: int) -> tf.Variable:
         return tf.Variable(
-            tnp.empty((0, self.output_shape[-1]), dtype=tf.float32),
-            shape=[None, self.output_shape[-1]],
+            tnp.empty((0, dim), dtype=tf.float32),
+            shape=[None, dim],
             trainable=False,
         )
 
-    def _reset_validation_buffer(self):
+    def _reset_validation_buffer(self) -> None:
         self.buffer_y.assign(self.buffer_y_empty)
         self.buffer_y_pred.assign(self.buffer_y_empty)
+        self.buffer_weight.assign(self.buffer_weight_empty)
 
-    def _extend_validation_buffer(self, y, y_pred):
+    def _extend_validation_buffer(self, y: tf.Tensor, y_pred: tf.Tensor, weight: tf.Tensor) -> None:
         self.buffer_y.assign(tf.concat([self.buffer_y, y], axis=0))
         self.buffer_y_pred.assign(tf.concat([self.buffer_y_pred, y_pred], axis=0))
+        self.buffer_weight.assign(tf.concat([self.buffer_weight, weight], axis=0))
 
     def test_on_batch(self, *args, **kwargs):
         self._reset_validation_buffer()
@@ -86,7 +90,7 @@ class ClassificationModelWithValidationBuffers(tf.keras.Model):
         x, y, sample_weight = tf.keras.utils.unpack_x_y_sample_weight(data)
         y_pred = self(x, training=False)
 
-        self._extend_validation_buffer(y, y_pred)
+        self._extend_validation_buffer(y, y_pred, sample_weight)
 
         self.compute_loss(x, y, y_pred, sample_weight)
         return self.compute_metrics(x, y, y_pred, sample_weight)
@@ -296,11 +300,12 @@ class LivePlotWriter(tf.keras.callbacks.Callback):
         # get data
         y = self.model.buffer_y.numpy()
         y_pred = self.model.buffer_y_pred.numpy()
+        weight = self.model.buffer_weight[:, 0].numpy()
 
         # confusion matrix
         true_classes = np.argmax(y, axis=1)
         pred_classes = np.argmax(y_pred, axis=1)
-        cm = sklearn.metrics.confusion_matrix(true_classes, pred_classes, normalize="true")
+        cm = sklearn.metrics.confusion_matrix(true_classes, pred_classes, sample_weight=weight, normalize="true")
         cm_image = fig_to_image_tensor(plot_confusion_matrix(cm, self.class_names, colorbar=False)[0])
 
         # output distributions

@@ -29,11 +29,12 @@ class MultiDataset(object):
         kind: DatasetKind | str = "train",
         yield_valid_rest: bool = True,
         seed: int | None = None,
-        transform_data: Callable[[tuple[tf.Tensor, ...]], tuple[tf.Tensor, ...]] | None = None,
+        transform_data: Callable[[MultiDataset, tuple[tf.Tensor, ...]], tuple[tf.Tensor, ...]] | None = None,
     ):
         super().__init__()
 
         # attributes
+        self.batch_size = batch_size
         self.kind = DatasetKind.from_str(kind) if isinstance(kind, str) else kind
         self.yield_valid_rest = yield_valid_rest
         self.seed = seed
@@ -48,32 +49,20 @@ class MultiDataset(object):
             if not isinstance(arrays, tuple):
                 arrays = (arrays,)
             self.tuple_length = len(arrays)
-            self.datasets.append(tf.data.Dataset.from_tensor_slices(arrays))
+            self.datasets.append(arrays)
             self.counts.append(len(arrays[0]))
             self.batch_weights.append(batch_weight)
 
-        # determine batch sizes per dataset during training iterations
-        self.batch_sizes = []
+        # transform batch weights to relative probabilities
         sum_batch_weights = sum(self.batch_weights)
-        carry = 0.0
-        for batch_weight in self.batch_weights:
-            bs = batch_weight / sum_batch_weights * batch_size - carry
-            bs_int = int(round(bs))
-            self.batch_sizes.append(bs_int)
-            carry = bs_int - bs
-        if batch_size != sum(self.batch_sizes):
-            print(f"batch size is {sum(self.batch_sizes)} but should be {batch_size}")
+        self.probs = [w / sum_batch_weights for w in self.batch_weights]
 
         # the number of batches that constitute one iteration cycle through all events
-        # (floating point number, to be ceiled or floored depending on if rest is used)
+        # (floating point number, to be ceiled or floored depending on whether rest is used)
         self._batches_per_cycle: float = len(self) / batch_size
 
     def __len__(self):
         return sum(self.counts)
-
-    @property
-    def batch_size(self) -> int:
-        return sum(self.batch_sizes)
 
     @property
     def batches_per_cycle(self) -> int:
@@ -89,54 +78,34 @@ class MultiDataset(object):
 
     def iter_train(self):
         # preparations
-        datasets = self.datasets
-        transform_data = self.transform_data if callable(self.transform_data) else lambda x: x
+        transform_data = self.transform_data if callable(self.transform_data) else (lambda self, x: x)
 
-        # shuffle each dataset
-        datasets = [
-            dataset.shuffle(10 * count, reshuffle_each_iteration=True, seed=self.seed)
-            for dataset, count in zip(datasets, self.counts)
-        ]
-
-        # repeat each dataset indefinitely
-        datasets = [
-            dataset.repeat(-1)
-            for dataset in datasets
-        ]
-
-        # batch each dataset with its specific batch size
-        datasets = [
-            dataset.batch(bs_size)
-            for dataset, bs_size in zip(datasets, self.batch_sizes)
-        ]
+        # prepare indices for random sampling
+        indices = [np.array([], dtype=np.int32) for _ in range(self.n_datasets)]
 
         # start iterating
-        its = [iter(dataset) for dataset in datasets]
         while True:
-            chunks = []
-            do_continue = False
-            do_break = False
-            for i, it in enumerate(its):
-                try:
-                    chunks.append(next(it))
-                except tf.errors.DataLossError as e:
-                    print(f"\nDataLossError in dataset {i}:\n{e}\n")
-                    do_continue = True
-                    break
-                except StopIteration:
-                    # this should not happen since repetition is used
-                    print(f"\nStopIteration reached in dataset {i}, which should not happen\n")
-                    do_break = True
-                    break
+            # determine batch sizes per dataset for this chunk
+            batch_sizes = np.random.multinomial(self.batch_size, self.probs)
 
-            # next batch or stop completely
-            if do_continue:
-                continue
-            if do_break:
-                break
+            # fill chunks per dataset that eventually form a batch
+            chunks = []
+            for i, (arrays, _indices, batch_size) in enumerate(zip(self.datasets, indices, batch_sizes)):
+                # extend indices if necessary
+                if len(_indices) < batch_size:
+                    new_indices = np.arange(len(arrays[0]), dtype=np.int32)
+                    np.random.shuffle(new_indices)
+                    _indices = np.concatenate([_indices, new_indices], axis=0)
+                # get indices for the current chunk
+                chunk_indices = _indices[:batch_size]
+                # store remaining indices
+                indices[i] = _indices[batch_size:]
+
+                # fill the chunk
+                chunks.append([a[chunk_indices] for a in arrays])
 
             # yield
-            yield transform_data(*tuple(
+            yield transform_data(self, *tuple(
                 tf.concat([chunk[i] for chunk in chunks], axis=0)
                 for i in range(self.tuple_length)
             ))
@@ -144,60 +113,41 @@ class MultiDataset(object):
 
     def iter_valid(self):
         # preparations
-        datasets = self.datasets
-        batch_size = self.batch_size
-        transform_data = self.transform_data if callable(self.transform_data) else lambda x: x
-
-        # shuffle each dataset
-        datasets = [
-            dataset.shuffle(10 * count, reshuffle_each_iteration=False, seed=self.seed)
-            for dataset, count in zip(datasets, self.counts)
-        ]
-
-        # batch each dataset with the total batch size
-        datasets = [
-            dataset.batch(batch_size)
-            for dataset in datasets
-        ]
+        transform_data = self.transform_data if callable(self.transform_data) else (lambda self, x: x)
 
         # start iterating
         dataset_index = -1
-        dataset_iter = None
+        dataset_indices = np.array([], dtype=np.int32)
         chunks = []
         n_total = 0
         while True:
             # iterate until batch size is reached
-            while n_total < batch_size:
-                # optionally switch to next, unrepeated dataset
-                if dataset_iter is None:
-                    dataset_index = (dataset_index + 1) % len(datasets)
-                    dataset_iter = iter(datasets[dataset_index])
-                # get next chunk if iterator not broken or exhausted
-                try:
-                    chunks.append(chunk := next(dataset_iter))
-                    n_total += len(chunk[0])
-                except tf.errors.DataLossError as e:
-                    print(f"\nDataLossError in dataset {dataset_index}:\n{e}\n")
-                    dataset_iter = None
-                    continue
-                except StopIteration:
-                    dataset_iter = None
-                    # if this was the last dataset, yield the rest if desired
-                    if dataset_index == len(datasets) - 1 and self.yield_valid_rest:
-                        break
-                    continue
+            while n_total < self.batch_size:
+                # optionally switch to next dataset and fill indices
+                if len(dataset_indices) == 0:
+                    dataset_index = (dataset_index + 1) % self.n_datasets
+                    dataset_indices = np.arange(self.counts[dataset_index], dtype=np.int32)
+                # get indices for this chunk
+                chunk_indices = dataset_indices[:self.batch_size - n_total]
+                dataset_indices = dataset_indices[self.batch_size - n_total:]
+                # fill the chunk
+                chunks.append([a[chunk_indices] for a in self.datasets[dataset_index]])
+                n_total += len(chunk_indices)
+                # manually stop when the last dataset is exhausted and the rest is to be yielded on its own
+                # (otherwise, the above will cycle back to the first dataset and fill the chunk)
+                if n_total < self.batch_size and dataset_index == self.n_datasets - 1 and self.yield_valid_rest:
+                    break
 
-            # concatenate chunks, cut off excess over batch size, but remember it for the next batch
-            data = ()
-            excess_chunk = ()
-            for i in range(self.tuple_length):
-                data += ((_data := tf.concat([chunk[i] for chunk in chunks], axis=0))[:batch_size],)
-                excess_chunk += (_data[batch_size:],)
-            chunks = [excess_chunk]
-            n_total = len(excess_chunk[0])
+            # concatenate chunks
+            data = [
+                tf.concat([chunk[i] for chunk in chunks], axis=0)
+                for i in range(self.tuple_length)
+            ]
+            chunks.clear()
+            n_total = 0
 
             # yield
-            yield transform_data(*data)
+            yield transform_data(self, *data)
             self.batches_seen += 1
 
     def create_keras_generator(self, input_names: list[str] | None = None):

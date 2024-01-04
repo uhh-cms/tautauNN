@@ -877,9 +877,12 @@ def load_file(
         # use klub array index to filter dnn array
         dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
         if ak.sum(dnn_mask) != len(klub_array):
+            klub_path = os.path.join(skim_directory, f"SKIM_{sample_name}", file_name)
+            eval_path = os.path.join(eval_directory, f"SKIM_{sample_name}", file_name)
             raise Exception(
                 f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
-                f"number of elements in the klub array ({len(klub_array)}) for file {file_name}",
+                f"number of elements in the klub array ({len(klub_array)}) for file {file_name} "
+                f"(klub: {klub_path}, dnn: {eval_path})",
             )
         dnn_array = dnn_array[dnn_mask]
 

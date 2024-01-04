@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import fnmatch
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +42,9 @@ class Sample:
     spin: int = -1
     mass: float = -1.0
 
+    def __hash__(self) -> int:
+        return hash(self.name)
+
     def with_label_and_loss_weight(self, label: int | None, loss_weight: float = 1.0) -> Sample:
         return self.__class__(
             name=self.name,
@@ -50,57 +55,108 @@ class Sample:
         )
 
 
+all_samples = [
+    Sample("SKIM_ggF_Radion_m250", spin=0, mass=250.0),
+    Sample("SKIM_ggF_Radion_m260", spin=0, mass=260.0),
+    Sample("SKIM_ggF_Radion_m270", spin=0, mass=270.0),
+    Sample("SKIM_ggF_Radion_m280", spin=0, mass=280.0),
+    Sample("SKIM_ggF_Radion_m300", spin=0, mass=300.0),
+    Sample("SKIM_ggF_Radion_m320", spin=0, mass=320.0),
+    Sample("SKIM_ggF_Radion_m350", spin=0, mass=350.0),
+    Sample("SKIM_ggF_Radion_m400", spin=0, mass=400.0),
+    Sample("SKIM_ggF_Radion_m450", spin=0, mass=450.0),
+    Sample("SKIM_ggF_Radion_m500", spin=0, mass=500.0),
+    Sample("SKIM_ggF_Radion_m550", spin=0, mass=550.0),
+    Sample("SKIM_ggF_Radion_m600", spin=0, mass=600.0),
+    Sample("SKIM_ggF_Radion_m650", spin=0, mass=650.0),
+    Sample("SKIM_ggF_Radion_m700", spin=0, mass=700.0),
+    Sample("SKIM_ggF_Radion_m750", spin=0, mass=750.0),
+    Sample("SKIM_ggF_Radion_m800", spin=0, mass=800.0),
+    Sample("SKIM_ggF_Radion_m850", spin=0, mass=850.0),
+    Sample("SKIM_ggF_Radion_m900", spin=0, mass=900.0),
+    Sample("SKIM_ggF_Radion_m1000", spin=0, mass=1000.0),
+    Sample("SKIM_ggF_Radion_m1250", spin=0, mass=1250.0),
+    Sample("SKIM_ggF_Radion_m1500", spin=0, mass=1500.0),
+    Sample("SKIM_ggF_Radion_m1750", spin=0, mass=1750.0),
+    Sample("SKIM_ggF_Radion_m2000", spin=0, mass=2000.0),
+    Sample("SKIM_ggF_Radion_m2500", spin=0, mass=2500.0),
+    Sample("SKIM_ggF_Radion_m3000", spin=0, mass=3000.0),
+    Sample("SKIM_ggF_BulkGraviton_m250", spin=2, mass=250.0),
+    Sample("SKIM_ggF_BulkGraviton_m260", spin=2, mass=260.0),
+    Sample("SKIM_ggF_BulkGraviton_m270", spin=2, mass=270.0),
+    Sample("SKIM_ggF_BulkGraviton_m280", spin=2, mass=280.0),
+    Sample("SKIM_ggF_BulkGraviton_m300", spin=2, mass=300.0),
+    Sample("SKIM_ggF_BulkGraviton_m320", spin=2, mass=320.0),
+    Sample("SKIM_ggF_BulkGraviton_m350", spin=2, mass=350.0),
+    Sample("SKIM_ggF_BulkGraviton_m400", spin=2, mass=400.0),
+    Sample("SKIM_ggF_BulkGraviton_m450", spin=2, mass=450.0),
+    Sample("SKIM_ggF_BulkGraviton_m500", spin=2, mass=500.0),
+    Sample("SKIM_ggF_BulkGraviton_m550", spin=2, mass=550.0),
+    Sample("SKIM_ggF_BulkGraviton_m600", spin=2, mass=600.0),
+    Sample("SKIM_ggF_BulkGraviton_m650", spin=2, mass=650.0),
+    Sample("SKIM_ggF_BulkGraviton_m700", spin=2, mass=700.0),
+    Sample("SKIM_ggF_BulkGraviton_m750", spin=2, mass=750.0),
+    Sample("SKIM_ggF_BulkGraviton_m800", spin=2, mass=800.0),
+    Sample("SKIM_ggF_BulkGraviton_m850", spin=2, mass=850.0),
+    Sample("SKIM_ggF_BulkGraviton_m900", spin=2, mass=900.0),
+    Sample("SKIM_ggF_BulkGraviton_m1000", spin=2, mass=1000.0),
+    Sample("SKIM_ggF_BulkGraviton_m1250", spin=2, mass=1250.0),
+    Sample("SKIM_ggF_BulkGraviton_m1500", spin=2, mass=1500.0),
+    Sample("SKIM_ggF_BulkGraviton_m1750", spin=2, mass=1750.0),
+    Sample("SKIM_ggF_BulkGraviton_m2000", spin=2, mass=2000.0),
+    Sample("SKIM_ggF_BulkGraviton_m2500", spin=2, mass=2500.0),
+    Sample("SKIM_ggF_BulkGraviton_m3000", spin=2, mass=3000.0),
+    Sample("SKIM_DY_amc_incl"),
+    Sample("SKIM_DY_amc_0j"),
+    Sample("SKIM_DY_amc_1j"),
+    Sample("SKIM_DY_amc_2j"),
+    Sample("SKIM_DY_amc_PtZ_0To50"),
+    Sample("SKIM_DY_amc_PtZ_100To250"),
+    Sample("SKIM_DY_amc_PtZ_250To400"),
+    Sample("SKIM_DY_amc_PtZ_400To650"),
+    Sample("SKIM_DY_amc_PtZ_50To100"),
+    Sample("SKIM_DY_amc_PtZ_650ToInf"),
+    Sample("SKIM_TT_fullyLep"),
+    Sample("SKIM_TT_semiLep"),
+    Sample("SKIM_ttHToTauTau"),
+]
+
+
+# helper to select samples
+def select_samples(*patterns):
+    samples = []
+    for pattern in patterns:
+        match = (
+            (lambda name: re.match(pattern, name))
+            if pattern.startswith("^") and pattern.endswith("$")
+            else (lambda name: fnmatch.fnmatch(name, pattern))
+        )
+        for sample in all_samples:
+            if match(sample.name) and sample not in samples:
+                samples.append(sample)
+    return samples
+
+
 sample_sets = {
-    "default": [
-        # Sample("SKIM_ggF_Radion_m250", spin=0, mass=250.0),
-        # Sample("SKIM_ggF_Radion_m260", spin=0, mass=260.0),
-        # Sample("SKIM_ggF_Radion_m270", spin=0, mass=270.0),
-        # Sample("SKIM_ggF_Radion_m280", spin=0, mass=280.0),
-        # Sample("SKIM_ggF_Radion_m300", spin=0, mass=300.0),
-        Sample("SKIM_ggF_Radion_m320", spin=0, mass=320.0),
-        Sample("SKIM_ggF_Radion_m350", spin=0, mass=350.0),
-        Sample("SKIM_ggF_Radion_m400", spin=0, mass=400.0),
-        Sample("SKIM_ggF_Radion_m450", spin=0, mass=450.0),
-        Sample("SKIM_ggF_Radion_m500", spin=0, mass=500.0),
-        Sample("SKIM_ggF_Radion_m550", spin=0, mass=550.0),
-        Sample("SKIM_ggF_Radion_m600", spin=0, mass=600.0),
-        Sample("SKIM_ggF_Radion_m650", spin=0, mass=650.0),
-        Sample("SKIM_ggF_Radion_m700", spin=0, mass=700.0),
-        Sample("SKIM_ggF_Radion_m750", spin=0, mass=750.0),
-        Sample("SKIM_ggF_Radion_m800", spin=0, mass=800.0),
-        Sample("SKIM_ggF_Radion_m850", spin=0, mass=850.0),
-        Sample("SKIM_ggF_Radion_m900", spin=0, mass=900.0),
-        Sample("SKIM_ggF_Radion_m1000", spin=0, mass=1000.0),
-        Sample("SKIM_ggF_Radion_m1250", spin=0, mass=1250.0),
-        Sample("SKIM_ggF_Radion_m1500", spin=0, mass=1500.0),
-        Sample("SKIM_ggF_Radion_m1750", spin=0, mass=1750.0),
-        # Sample("SKIM_ggF_BulkGraviton_m250", spin=2, mass=250.0),
-        # Sample("SKIM_ggF_BulkGraviton_m260", spin=2, mass=260.0),
-        # Sample("SKIM_ggF_BulkGraviton_m270", spin=2, mass=270.0),
-        # Sample("SKIM_ggF_BulkGraviton_m280", spin=2, mass=280.0),
-        # Sample("SKIM_ggF_BulkGraviton_m300", spin=2, mass=300.0),
-        Sample("SKIM_ggF_BulkGraviton_m320", spin=2, mass=320.0),
-        Sample("SKIM_ggF_BulkGraviton_m350", spin=2, mass=350.0),
-        Sample("SKIM_ggF_BulkGraviton_m400", spin=2, mass=400.0),
-        Sample("SKIM_ggF_BulkGraviton_m450", spin=2, mass=450.0),
-        Sample("SKIM_ggF_BulkGraviton_m500", spin=2, mass=500.0),
-        Sample("SKIM_ggF_BulkGraviton_m550", spin=2, mass=550.0),
-        Sample("SKIM_ggF_BulkGraviton_m600", spin=2, mass=600.0),
-        Sample("SKIM_ggF_BulkGraviton_m650", spin=2, mass=650.0),
-        Sample("SKIM_ggF_BulkGraviton_m700", spin=2, mass=700.0),
-        Sample("SKIM_ggF_BulkGraviton_m750", spin=2, mass=750.0),
-        Sample("SKIM_ggF_BulkGraviton_m800", spin=2, mass=800.0),
-        Sample("SKIM_ggF_BulkGraviton_m850", spin=2, mass=850.0),
-        Sample("SKIM_ggF_BulkGraviton_m900", spin=2, mass=900.0),
-        Sample("SKIM_ggF_BulkGraviton_m1000", spin=2, mass=1000.0),
-        Sample("SKIM_ggF_BulkGraviton_m1250", spin=2, mass=1250.0),
-        Sample("SKIM_ggF_BulkGraviton_m1500", spin=2, mass=1500.0),
-        Sample("SKIM_ggF_BulkGraviton_m1750", spin=2, mass=1750.0),
-        Sample("SKIM_DY_amc_incl"),
-        Sample("SKIM_TT_fullyLep"),
-        Sample("SKIM_TT_semiLep"),
-        # Sample("SKIM_ttHToTauTau"),
-    ],
+    "default": select_samples(
+        r"^SKIM_ggF_Radion_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
+        r"^SKIM_ggF_BulkGraviton_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
+        "SKIM_DY_amc_incl",
+        r"^SKIM_TT_(fully|semi)Lep$",
+    ),
+    "dyptz": select_samples(
+        r"^SKIM_ggF_Radion_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
+        r"^SKIM_ggF_BulkGraviton_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
+        r"^SKIM_DY_amc_PtZ_.*$",
+        r"^SKIM_TT_(fully|semi)Lep$",
+    ),
+    "test": select_samples(
+        "SKIM_ggF_BulkGraviton_m500",
+        "SKIM_ggF_BulkGraviton_m550",
+        "SKIM_DY_amc_PtZ_0To50",
+        "SKIM_DY_amc_PtZ_100To250",
+        "SKIM_TT_semiLep",
+    ),
 }
 
 
@@ -134,6 +190,15 @@ cont_feature_sets = {
                 "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef", "HHbtag",
             ]
         ],
+    ],
+    "reg2": [
+        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
+        "ditau_deltaphi", "ditau_deltaeta",
+        "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_iso",
+        "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_iso",
+        "met_cov00", "met_cov01", "met_cov11",
+        "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor",
+        "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor",
     ],
 }
 
