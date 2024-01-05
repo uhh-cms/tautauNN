@@ -39,6 +39,7 @@ class MultiDataset(object):
         self.yield_valid_rest = yield_valid_rest
         self.seed = seed
         self.transform_data = transform_data
+        self.tuple_length = 0
         self.batches_seen = 0
 
         # create datasets, store counts and relative weights
@@ -52,6 +53,9 @@ class MultiDataset(object):
             self.datasets.append(arrays)
             self.counts.append(len(arrays[0]))
             self.batch_weights.append(batch_weight)
+
+        if self.tuple_length < 3:
+            raise Exception("per dataset, at least three arrays must be given: inputs, targets, weights")
 
         # when used for validation, set the batch size to the total number of events
         if self.kind == "valid":
@@ -158,15 +162,22 @@ class MultiDataset(object):
         # this assumes that at least three arrays are yielded by the __iter__ method: inputs, targets, weights
         # when input_names are given, the inputs array is split into a dictionary with the given names
         # when there is more than one input array, input_names are mandatory
-        if self.tuple_length > 3:
-            if not input_names:
-                raise ValueError("input_names must be given when there is more than one output to be yielded")
-            if len(input_names) != self.tuple_length - 2:
-                raise ValueError(
-                    f"input_names ({len(input_names)}) must have the same length as the number of input arrays "
-                    f"(({self.tuple_length - 2}))",
-                )
+        if self.tuple_length > 3 and not input_names:
+            raise ValueError("input_names must be given when there is more than one output to be yielded")
 
         # start generating
+        n_names = len(input_names or [])
         for arrays in self:
-            yield dict(zip(input_names, arrays[:2])) if input_names else arrays[:2], *arrays[2:]
+            n_arrays = len(arrays)
+            if n_arrays == 1:
+                assert n_names in [0, 1]
+                yield {input_names[0]: arrays[0]} if input_names else arrays[0]
+            elif n_arrays == 2:
+                assert n_names in [0, 1]
+                yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), arrays[1]
+            elif n_arrays == 3:
+                assert n_names in [0, 1]
+                yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), *arrays[1:]
+            else:
+                assert n_arrays - 2 == n_names
+                yield dict(zip(input_names, arrays[:n_names])), *arrays[n_names:]

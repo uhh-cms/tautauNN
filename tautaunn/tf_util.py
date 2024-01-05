@@ -98,22 +98,34 @@ class ClassificationModelWithValidationBuffers(tf.keras.Model):
 
 class L2Metric(tf.keras.metrics.Metric):
 
-    def __init__(self, model: tf.keras.Model, name: str = "l2", **kwargs) -> None:
+    def __init__(
+        self,
+        model: tf.keras.Model,
+        select_layers: Callable[[tf.keras.Model], list[tf.keras.layers.Layer]] | None = None,
+        name: str = "l2",
+        **kwargs,
+    ) -> None:
         super().__init__(name=name, **kwargs)
 
         # store kernels and l2 norms of dense layers
         self.kernels: list[tf.Tensor] = []
         self.norms: list[np.ndarray] = []
-        for layer in model.layers:
-            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None:
-                self.kernels.append(layer.kernel)
-                self.norms.append(layer.kernel_regularizer.l2)
+        for layer in (select_layers if callable(select_layers) else self._select_layers)(model):
+            self.kernels.append(layer.kernel)
+            self.norms.append(layer.kernel_regularizer.l2)
 
         # book the l2 metric
         self.l2: tf.Variable = self.add_weight(name="l2", initializer="zeros")
 
+    def _select_layers(self, model: tf.keras.Model) -> list[tf.keras.layers.Layer]:
+        return [
+            layer for layer in model.layers
+            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
+        ]
+
     def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: tf.Tensor | None = None) -> None:
-        self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
+        if self.kernels and self.norms:
+            self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
 
     def result(self) -> tf.Tensor:
         return self.l2
@@ -122,7 +134,7 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
-class ReduceLRAndStop(tf.keras.callbacks.Callback):
+class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
 
     def __init__(
         self,
@@ -135,6 +147,7 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         es_patience: int = 1,
         restore_best_weights: bool = True,
         start_from_epoch: int = 0,
+        repeat_func: Callable[[ReduceLRAndStopAndRepeat, dict[str, Any]], None] | None = None,
         verbose: int = 0,
         **kwargs,
     ):
@@ -162,6 +175,7 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         self.es_patience = int(es_patience)
         self.restore_best_weights = restore_best_weights
         self.start_from_epoch = int(start_from_epoch)
+        self.repeat_func = repeat_func
         self.verbose = int(verbose)
 
         # state
@@ -171,6 +185,7 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         self.best_weights: tuple[tf.Tensor, ...] | None = None
         self.best_metric: float = np.nan
         self.monitor_op: Callable[[float, float], bool] | None = None
+        self.repeat_counter: int = 0
 
         self._reset()
 
@@ -179,6 +194,7 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         self.lr_counter = 0
         self.best_epoch = -1
         self.best_weights = None
+        self.repeat_counter = 0
 
         if self.mode == "min":
             self.best_metric = np.inf
@@ -186,6 +202,10 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         else:  # "max"
             self.best_metric = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
+
+    def _reset_before_repeat(self) -> None:
+        self.wait = 0
+        self.lr_counter = 0
 
     def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
         self._reset()
@@ -246,11 +266,21 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
                         )
             return
 
-        # stop training?
+        # stop training or even repeat?
         if self.wait > self.es_patience:
-            self.model.stop_training = True
-            if self.verbose >= 1:
-                print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+            if callable(self.repeat_func) and self.repeat_func(self, logs):
+                # repeat
+                self.repeat_counter += 1
+                self._reset_before_repeat()
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
+                    )
+            else:
+                # stop
+                self.model.stop_training = True
+                if self.verbose >= 1:
+                    print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_train_end(self, logs: dict[str, Any] | None = None) -> None:
         if self.best_weights is not None:

@@ -12,9 +12,6 @@ Features included:
 - graceful termination (ctrl+c)
 - preparation for tauNN transfer and fine-tuning
 
-Technical TODOs:
-- highly volatile validation loss still existing with larger stats?
-
 Physics / optimization TODOs:
 - binary or multi-class
 - test other samples
@@ -36,16 +33,21 @@ import shutil
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
 
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
-    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder, LivePlotWriter,
+    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStopAndRepeat, EmbeddingEncoder,
+    LivePlotWriter,
 )
 from tautaunn.util import load_sample_root, calc_new_columns, create_model_name
-from tautaunn.config import Sample, activation_settings, dynamic_columns, embedding_expected_inputs
+from tautaunn.config import (
+    Sample, activation_settings, dynamic_columns, embedding_expected_inputs, regression_sets, cont_feature_sets,
+    cat_feature_sets,
+)
 
 
 this_dir = os.path.dirname(os.path.realpath(__file__))
@@ -64,8 +66,13 @@ jit_compile: bool = False
 limit_cpus: bool | int = False
 # profile the training
 run_profiler: bool = False
-# data directory
-data_dir: str = os.environ["TN_SKIMS_2017"]
+# data directories per year
+data_dirs: dict[str, str] = {
+    "2016": os.environ["TN_SKIMS_2016"],
+    "2016APV": os.environ["TN_SKIMS_2016APV"],
+    "2017": os.environ["TN_SKIMS_2017"],
+    "2018": os.environ["TN_SKIMS_2018"],
+}
 # cache dir for data
 cache_dir: str | None = os.path.join(os.environ["TN_DATA_DIR"], "cache")
 # where tensorboard logs should be written
@@ -93,7 +100,7 @@ def train(
     model_name: str | None = None,
     model_prefix: str = "hbtres",
     model_suffix: str = "",
-    data_dir: str = data_dir,
+    data_dirs: dict[str, str] = data_dirs,
     cache_dir: str | None = cache_dir,
     tensorboard_dir: str | None = tensorboard_dir,
     clear_existing_tensorboard: bool = True,
@@ -216,6 +223,8 @@ def train(
     parameterize_spin: bool = True,
     # add the generator mass for the signal samples as continuous input -> network parameterized in mass
     parameterize_mass: bool = True,
+    # the name of a regression config set to use
+    regression_set: str | None = None,
     # number of the fold to train for (0-9, events with event numbers ending in the fold number are not used at all!)
     fold_index: int = 0,
     # how many of the 9 training folds to use for validation
@@ -235,6 +244,17 @@ def train(
     assert 0 <= fold_index <= 9
     assert 1 <= validation_folds <= 8
     assert optimizer in ["adam", "adamw"]
+    assert all(sample.year in data_dirs for sample in samples)
+    regression_cfg = regression_sets[regression_set] if regression_set else None
+    if regression_cfg:
+        assert fold_index in regression_cfg.model_files
+        assert os.path.exists(regression_cfg.model_files[fold_index])
+        reg_cont_input_names = list(cont_feature_sets[regression_cfg.cont_feature_set])
+        reg_cat_input_names = list(cat_feature_sets[regression_cfg.cat_feature_set])
+
+    # conditionally change arguments
+    if seed is None:
+        seed = fold_index + 1
 
     # copy mutables to avoid side effects
     samples = deepcopy(samples)
@@ -244,10 +264,6 @@ def train(
     cat_input_names = deepcopy(cat_input_names)
     cont_input_names = deepcopy(cont_input_names)
     units = deepcopy(units)
-
-    # conditionally change arguments
-    if seed is None:
-        seed = fold_index + 1
 
     # construct a model name
     model_name = create_model_name(
@@ -262,10 +278,11 @@ def train(
         l2_norm=l2_norm,
         dropout_rate=dropout_rate,
         batch_size=batch_size,
-        optimizer=optimizer,
         learning_rate=learning_rate,
+        optimizer=optimizer,
         parameterize_spin=parameterize_spin,
         parameterize_mass=parameterize_mass,
+        regression_set=regression_set,
         fold_index=fold_index,
         seed=seed,
     )
@@ -283,9 +300,20 @@ def train(
     if isinstance(selections, list):
         selections = " & ".join(map("({})".format, selections))
 
+    # extend input names by that of regression
+    combined_cont_input_names = list(cont_input_names)
+    combined_cat_input_names = list(cat_input_names)
+    if regression_cfg:
+        for name in reg_cont_input_names:
+            if name not in combined_cont_input_names:
+                combined_cont_input_names.append(name)
+        for name in reg_cat_input_names:
+            if name not in combined_cat_input_names:
+                combined_cat_input_names.append(name)
+
     # determine which columns to read
     columns_to_read = set()
-    for name in cont_input_names + cat_input_names:
+    for name in combined_cont_input_names + combined_cat_input_names:
         columns_to_read.add(name)
     # column names in selections string
     columns_to_read |= set(re.findall(r"[a-zA-Z_][\w_]*", selections))
@@ -335,7 +363,7 @@ def train(
     # loop through samples
     for sample in samples:
         rec = load_sample_root(
-            data_dir,
+            data_dirs[sample.year],
             sample.name,
             list(columns_to_read),
             selections,
@@ -348,8 +376,8 @@ def train(
         rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
 
         # prepare arrays
-        cont_inputs = flatten_rec(rec[cont_input_names], np.float32)
-        cat_inputs = flatten_rec(rec[cat_input_names], np.int32)
+        cont_inputs = flatten_rec(rec[combined_cont_input_names], np.float32)
+        cat_inputs = flatten_rec(rec[combined_cat_input_names], np.int32)
         labels = np.zeros((n_events, n_classes), dtype=np.float32)
         labels[:, sample.label] = 1
 
@@ -432,9 +460,16 @@ def train(
     # handle masses
     masses = tf.constant(sorted(masses), dtype=tf.float32)
     mass_probs = tf.ones_like(masses)  # all masses equally probable when sampling for backgrounds
+    add_mass = False
     if parameterize_mass:
-        assert len(masses) > 0
         cont_input_names.append("mass")
+        add_mass = True
+    if regression_cfg and regression_cfg.parameterize_mass:
+        reg_cont_input_names.append("mass")
+        add_mass = True
+    if add_mass:
+        assert len(masses) > 0
+        combined_cont_input_names.append("mass")
         # replace mean and var with unweighted values
         cont_input_means[-1] = np.mean(masses.numpy())
         cont_input_vars[-1] = np.var(masses.numpy())
@@ -442,9 +477,16 @@ def train(
     # handle spins
     spins = tf.constant(sorted(spins), dtype=tf.int32)
     spin_probs = tf.ones_like(spins, dtype=tf.float32)  # all spins equally probable when sampling for backgrounds
+    add_spin = False
     if parameterize_spin:
-        assert len(spins) > 0
         cat_input_names.append("spin")
+        add_spin = True
+    if regression_cfg and regression_cfg.parameterize_spin:
+        reg_cat_input_names.append("spin")
+        add_spin = True
+    if add_spin:
+        assert len(spins) > 0
+        combined_cat_input_names.append("spin")
         # add to possible embedding values
         possible_cont_input_values.append(embedding_expected_inputs["spin"])
 
@@ -483,10 +525,25 @@ def train(
             seed=seed,
         )
 
+        # store tensors for selecting either features for the classification or regression-pre-NN
+        regression_data = None
+        if regression_cfg:
+            def get_indices(combined_names, names):
+                return tf.constant(list(map(combined_names.index, names)), dtype=tf.int32)
+            regression_data = {
+                "model_file": regression_cfg.model_files[fold_index],
+                "use_last_layers": regression_cfg.use_last_layers,
+                "cont_input_indices": get_indices(combined_cont_input_names, cont_input_names),
+                "cat_input_indices": get_indices(combined_cat_input_names, cat_input_names),
+                "reg_cont_input_indices": get_indices(combined_cont_input_names, reg_cont_input_names),
+                "reg_cat_input_indices": get_indices(combined_cat_input_names, reg_cat_input_names),
+            }
+
         # create the model
         model = create_model(
-            n_cont_inputs=len(cont_input_names),
-            n_cat_inputs=len(cat_input_names),
+            n_cont_inputs=len(combined_cont_input_names),
+            n_cat_inputs=len(combined_cat_input_names),
+            regression_data=regression_data,
             n_classes=n_classes,
             embedding_expected_inputs=possible_cont_input_values,
             embedding_output_dim=embedding_output_dim,
@@ -499,6 +556,10 @@ def train(
             l2_norm=l2_norm,
             dropout_rate=dropout_rate,
         )
+        if regression_cfg:
+            reg_models = [layer for layer in model.layers if layer.name == "htautau_regression"]
+            assert len(reg_models) == 1
+            reg_model = reg_models[0]  # noqa
 
         # compile
         opt_cls = {
@@ -516,11 +577,65 @@ def train(
                 tf.keras.metrics.CategoricalAccuracy(name="acc"),
             ],
             metrics=[
-                L2Metric(model, name="l2"),
+                L2Metric(
+                    model,
+                    select_layers=(lambda model: model.l2_layers["main"]),
+                    name="l2",
+                ),
             ],
             jit_compile=jit_compile,
             run_eagerly=eager_mode,
         )
+
+        # callback to repeat the lr and es scheduler once to enable fine-tuning of the regression pre-nn if set
+        lres_repeat = None
+        if regression_cfg and regression_cfg.fine_tune:
+            def lres_repeat(lres_callback: ReduceLRAndStopAndRepeat, logs: dict[str, Any]) -> bool:  # noqa
+                # only repeat once
+                if lres_callback.repeat_counter != 0:
+                    return False
+                # 1. make the reg_model trainable
+                reg_model.trainable = True
+                # 2. update l2 norms (enabled those on reg_model and just update others)
+                if l2_norm > 0:
+                    # TODO: one could also consider different methods for resetting l2:
+                    # a) use current weights of both networks to determine the new l2 norm such that the loss will be
+                    #    equal to the current one of only the main NN
+                    # b) like a), but set the new norm to 2x (3x, ...) the current one
+                    # c) use the same norm, although this might lead to a way too large l2 component as the reg_model
+                    #    usually has many weights
+                    # some naive first shot:
+                    n_weights_total = sum(map(
+                        tf.keras.backend.count_params,
+                        [layer.kernel for layer in model.l2_layers["main"] + model.l2_layers["reg"]],
+                    ))
+                    for layer in model.l2_layers["main"] + model.l2_layers["reg"]:
+                        layer.kernel_regularizer.l2[...] = l2_norm / n_weights_total
+                # 3. re-compile, optionally update learning rate
+                model.compile(
+                    loss="categorical_crossentropy",
+                    optimizer=opt_cls(
+                        learning_rate=tf.keras.backend.get_value(model.optimizer.lr),
+                        jit_compile=jit_compile,
+                    ),
+                    weighted_metrics=[
+                        tf.keras.metrics.CategoricalCrossentropy(name="ce"),
+                        tf.keras.metrics.CategoricalAccuracy(name="acc"),
+                    ],
+                    metrics=[
+                        L2Metric(
+                            model,
+                            select_layers=(lambda model: model.l2_layers["main"] + model.l2_layers["reg"]),
+                            name="l2",
+                        ),
+                    ],
+                    jit_compile=jit_compile,
+                    run_eagerly=eager_mode,
+                )
+                # 4. optionally update lr and es patiences, lr factor and reductions
+                pass  # to be seen
+                print(f"\nenabled fine-tuning of {reg_model.name} layers")
+                return True
 
         # prepare the tensorboard dir
         full_tensorboard_dir = os.path.join(tensorboard_dir, model_name) if tensorboard_dir else None
@@ -529,14 +644,15 @@ def train(
 
         # callbacks
         fit_callbacks = [
-            # learning rate dropping followed by early stopping
-            lres_callback := ReduceLRAndStop(
+            # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
+            lres_callback := ReduceLRAndStopAndRepeat(
                 monitor="val_ce",
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
                 lr_reductions=learning_rate_reductions,
                 es_patience=early_stopping_patience,
+                repeat_func=lres_repeat,
                 verbose=1,
             ),
             # tensorboard
@@ -570,15 +686,16 @@ def train(
             model.fit(
                 x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
                 validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-                shuffle=False,  # already shuffled
+                shuffle=False,  # the custom generators already shuffle
                 epochs=max_epochs,
                 steps_per_epoch=validate_every,
                 validation_freq=1,
-                validation_steps=dataset_valid.batches_per_cycle,
+                validation_steps=1,
                 callbacks=list(filter(None, fit_callbacks)),
             )
+            # model.load_weights("/gpfs/dust/cms/user/riegerma/taunn_data/store/Training/dev_weights/hbtres_LSbinary_FSreg-reg_ED5_LU5x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_LR3.0e-03_SPINy_MASSy_FI0_SD1")  # noqa
 
-            # # fine-tuning test (aka. unfreeze pre-NN weights and re-fit)
+            # # fine-tuning (aka. unfreeze pre-NN weights and re-fit)
             # # see https://keras.io/guides/transfer_learning/#finetuning
             # print("start fine-tuning")
             # # make everything trainable
@@ -663,16 +780,15 @@ def train(
                 include_optimizer=False,
             )
 
-            # # and again in the legacy h5 format
-            # h5_path = os.path.join(path, "model.h5")
-            # if os.path.exists(h5_path):
-            #     os.remove(h5_path)
-            # tf.keras.saving.save_model(
-            #     model,
-            #     h5_path,
-            #     overwrite=True,
-            #     save_format="h5",
-            # )
+            # and in the new .keras high-level format
+            keras_path = os.path.join(path, "model.keras")
+            if os.path.exists(keras_path):
+                os.remove(keras_path)
+            model.save(
+                keras_path,
+                overwrite=True,
+                save_format="keras",
+            )
 
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
@@ -680,30 +796,37 @@ def train(
                 "sample_names": [sample.name for sample in samples],
                 "class_names": class_names,
                 "input_names": {
-                    "cont": cont_input_names,
-                    "cat": cat_input_names,
+                    "cont": combined_cont_input_names,
+                    "cat": combined_cat_input_names,
                 },
                 "n_classes": n_classes,
                 "fold_index": fold_index,
                 "validation_folds": validation_folds,
+                "seed": seed,
                 "architecture": {
                     "units": units,
                     "embedding_output_dim": embedding_output_dim,
                     "activation": activation,
+                    "connection_type": connection_type,
                     "l2_norm": l2_norm,
                     "drop_out": dropout_rate,
                     "batch_norm": batch_norm,
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
+                    "optimizer": optimizer,
                     "final_learning_rate": float(model.optimizer.lr.numpy()),
                     "parameterize_spin": parameterize_spin,
                     "parameterize_mass": parameterize_mass,
+                    "regression_set": regression_set,
                 },
                 "result": {
                     **results_valid,
                     "steps_trained": int(model.optimizer.iterations.numpy()),
                 },
             }
+            if regression_cfg:
+                meta["input_names"]["reg_cont"] = reg_cont_input_names
+                meta["input_names"]["reg_cat"] = reg_cat_input_names
             with open(os.path.join(path, "meta.json"), "w") as f:
                 json.dump(meta, f, indent=4)
 
@@ -727,6 +850,7 @@ def create_model(
     *,
     n_cont_inputs: int,
     n_cat_inputs: int,
+    regression_data: dict[str, Any] | None,
     n_classes: int,
     embedding_expected_inputs: list[list[int]],
     embedding_output_dim: int,
@@ -748,25 +872,65 @@ def create_model(
     assert len(cont_input_means) == len(cont_input_vars) == n_cont_inputs
     assert connection_type in ["fcn", "res", "dense"]
     assert len(units) > 0
+    assert regression_data is None or len(regression_data) == 6
 
     # get activation settings
     act_settings = activation_settings[activation]
-
-    # prepare l2 regularization, use a dummy value as it is replaced after the model is built
-    l2_reg = tf.keras.regularizers.l2(1.0) if l2_norm > 0 else None
 
     # input layers
     x_cont = tf.keras.Input(n_cont_inputs, dtype=tf.float32, name="cont_input")
     x_cat = tf.keras.Input(n_cat_inputs, dtype=tf.int32, name="cat_input")
 
+    # aliases that might be changed in case of regression pre-NN
+    a_cont = x_cont
+    a_cat = x_cat
+
+    # regression pre-NN
+    if regression_data:
+        # load the model
+        with tf.name_scope("regression_nn"):
+            reg_model = tf.keras.models.load_model(regression_data["model_file"])
+
+        # add back empty kernel regualizers to all dense layers
+        for layer in reg_model.layers:
+            if isinstance(layer, tf.keras.layers.Dense):
+                layer.kernel_regularizer = tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None
+
+        # make layers non-trainable at first
+        reg_model.trainable = False
+
+        # get the pre-NN inputs
+        reg_x_cont = tf.gather(a_cont, regression_data["reg_cont_input_indices"], axis=1)
+        reg_x_cat = tf.gather(a_cat, regression_data["reg_cat_input_indices"], axis=1)
+
+        # run the pre-NN
+        reg_out_reg, _, reg_out_cls, reg_out_reg_last, reg_out_cls_last = reg_model([reg_x_cont, reg_x_cat])
+        n_reg_cont_outputs = int(reg_out_reg.shape[1] + reg_out_cls.shape[1])
+        if regression_data["use_last_layers"]:
+            n_reg_cont_outputs += int(reg_out_reg_last.shape[1] + reg_out_cls_last.shape[1])
+
+        # update original inputs
+        a_cont = tf.gather(a_cont, regression_data["cont_input_indices"], axis=1)
+        a_cat = tf.gather(a_cat, regression_data["cat_input_indices"], axis=1)
+
+        # update continuous input means and vars assuming that regression outputs are in a good range
+        cont_input_means = np.append(cont_input_means, [0.0] * n_reg_cont_outputs, axis=0)
+        cont_input_vars = np.append(cont_input_vars, [1.0] * n_reg_cont_outputs, axis=0)
+
+        # concatenate the regression outputs to the continuous inputs
+        reg_concat_layers = [a_cont, reg_out_reg, reg_out_cls]
+        if regression_data["use_last_layers"]:
+            reg_concat_layers += [reg_out_reg_last, reg_out_cls_last]
+        a_cont = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
+
     # normalize continuous inputs
     norm_layer = tf.keras.layers.Normalization(mean=cont_input_means, variance=cont_input_vars, name="norm")
-    a = norm_layer(x_cont)
+    a = norm_layer(a_cont)
 
     # embedding layer
     if n_cat_inputs > 0:
         # encode categorical inputs to indices
-        b = EmbeddingEncoder(embedding_expected_inputs, name="cat_encoder")(x_cat)
+        b = EmbeddingEncoder(embedding_expected_inputs, name="cat_encoder")(a_cat)
 
         # actual embedding
         b = tf.keras.layers.Embedding(
@@ -795,13 +959,14 @@ def create_model(
             n_units,
             use_bias=True,
             kernel_initializer=act_settings.weight_init,
-            kernel_regularizer=l2_reg,
+            kernel_regularizer=tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None,
             name=f"dense_{i}")
         a = dense_layer(a)
 
         # batch norm before activation if requested
         batchnorm_layer = tf.keras.layers.BatchNormalization(dtype=tf.float32, name=f"norm_{i}")
-        if batch_norm and act_settings.batch_norm[0]:
+        batch_norm_before, batch_norm_after = act_settings.batch_norm
+        if batch_norm and batch_norm_before:
             a = batchnorm_layer(a)
 
         # add with previous resnet layer on next even layer
@@ -812,7 +977,7 @@ def create_model(
         a = tf.keras.layers.Activation(act_settings.name, name=f"act_{i}")(a)
 
         # batch norm after activation if requested
-        if batch_norm and act_settings.batch_norm[1]:
+        if batch_norm and batch_norm_after:
             a = batchnorm_layer(a)
 
         # add random unit dropout
@@ -836,7 +1001,7 @@ def create_model(
         activation="softmax",
         use_bias=True,
         kernel_initializer=activation_settings["softmax"].weight_init,
-        kernel_regularizer=l2_reg,
+        kernel_regularizer=tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None,
         name="output",
     )
     y = output_layer(a)
@@ -844,17 +1009,37 @@ def create_model(
     # build the model
     model = ClassificationModelWithValidationBuffers(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
 
-    # normalize the l2 regularization to the number of weights in dense layers
-    # TODO: when performing transfer learning with pre-NN, one might need to recalculate this for fine tuning,
-    # depending on whether l2 is applied to the pre-NN weights or not
+    # lookup layers whose kernels should be subject to l2
+    l2_layers = {
+        "main": [
+            layer for layer in model.layers
+            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
+        ],
+    }
+    if regression_data:
+        l2_layers["reg"] = [
+            layer for layer in reg_model.layers
+            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
+        ]
+    # add them as attributes to the model which enables keras to track them to compute the overall l2 loss
+    # (note: they will be listed in model.layers as well, and main l2 layers are not counted twice)
+    model.l2_layers = l2_layers
+
+    # scale the l2 regularization to the number of weights in dense layers of the main network
+    # (the pre-nn is not included yet as it is not trainable at first by default, so once fine-tuning is enabled,
+    # the l2 regularization should be updated accordingly)
     if l2_norm > 0:
-        n_weights = sum(map(
+        # compute number of weights in the main network
+        n_weights_main = sum(map(
             tf.keras.backend.count_params,
-            [layer.kernel for layer in model.layers if isinstance(layer, tf.keras.layers.Dense)],
+            [layer.kernel for layer in l2_layers["main"]],
         ))
-        for layer in model.layers:
-            if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None:
-                layer.kernel_regularizer.l2[...] = l2_norm / n_weights
+        # compute the scaled l2 norm
+        l2_norm_scaled = l2_norm / n_weights_main
+        print(f"scaled l2 norm from {l2_norm:.1f} to {l2_norm_scaled:5f} based in {n_weights_main} weights")
+        # update regularizers
+        for layer in l2_layers["main"]:
+            layer.kernel_regularizer.l2[...] = l2_norm_scaled
 
     return model
 

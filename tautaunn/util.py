@@ -244,6 +244,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
         add("lr", "learning_rate")
         add("spin", "parameterize_spin")
         add("mass", "parameterize_mass")
+        add("rs", "regression_set")
         add("bw", "background_weight")
         add("fi", "fold_index")
         add("fi", "fold_indices")

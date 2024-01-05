@@ -41,6 +41,7 @@ class Sample:
     loss_weight: float = 1.0
     spin: int = -1
     mass: float = -1.0
+    year: str = "2017"
 
     def __hash__(self) -> int:
         return hash(self.name)
@@ -120,6 +121,14 @@ all_samples = [
     Sample("SKIM_TT_semiLep"),
     Sample("SKIM_ttHToTauTau"),
 ]
+
+
+# helper to get a single sample by name and year
+def get_sample(name: str, year: int) -> Sample:
+    for sample in all_samples:
+        if sample.name == name and sample.year == year:
+            return sample
+    raise ValueError(f"sample {name} (year {year}) not found")
 
 
 # helper to select samples
@@ -382,4 +391,40 @@ embedding_expected_inputs = {
     "dau1_charge": [-1, 1],
     "dau2_charge": [-1, 1],
     "spin": [0, 2],
+    "year": [2016, 2017, 2018],
+}
+
+
+@dataclass
+class RegressionSet:
+    model_files: dict[int, str]
+    cont_feature_set: str
+    cat_feature_set: str
+    parameterize_spin: bool = True
+    parameterize_mass: bool = True
+    use_last_layers: bool = False
+    fine_tune: bool = False
+
+    def with_attr(self, **attrs) -> RegressionSet:
+        kwargs = self.__dict__.copy()
+        kwargs.update(attrs)
+        return self.__class__(**kwargs)
+
+
+regression_sets = {
+    "default": (default_reg_set := RegressionSet(
+        model_files={
+            # TODO: update to actual model
+            # fold: "/gpfs/dust/cms/user/riegerma/taunn_data/reg_models/ttnn_para_set_0"
+            fold: "/gpfs/dust/cms/user/riegerma/taunn_data/reg_models/reg_mass_para_class_l2n400_removeMoreVars_addBkgs_addlast_test_set_1"
+            for fold in range(10)
+        },
+        cont_feature_set="reg2",
+        cat_feature_set="reg",
+        parameterize_spin=True,
+        parameterize_mass=True,
+        fine_tune=False,
+        use_last_layers=True,
+    )),
+    "default_ft": default_reg_set.with_attr(fine_tune=True),
 }

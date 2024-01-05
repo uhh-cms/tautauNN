@@ -107,7 +107,7 @@ class TrainingParameters(Task):
     label_set = luigi.ChoiceParameter(
         default="binary",
         choices=list(cfg.label_sets.keys()),
-        description="name of label set; default: default",
+        description="name of label set; default: binary",
     )
     sample_set = luigi.ChoiceParameter(
         default="default",
@@ -124,6 +124,16 @@ class TrainingParameters(Task):
         choices=list(cfg.cat_feature_sets.keys()),
         description="name of categorical feature set; default: reg",
     )
+    regression_set = luigi.ChoiceParameter(
+        default=law.NO_STR,
+        choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
+        description="name of a regression set to use; default: empty",
+    )
+    skip_tensorboard = luigi.BoolParameter(
+        default=False,
+        significant=False,
+        description="skip tensorboard logging; default: False",
+    )
 
     def get_model_name_kwargs(self) -> dict[str, Any]:
         kwargs = dict(
@@ -131,7 +141,7 @@ class TrainingParameters(Task):
             model_prefix=None if self.model_prefix in (None, "", law.NO_STR) else self.model_prefix,
             model_suffix=None if self.model_suffix in (None, "", law.NO_STR) else self.model_suffix,
             label_set=self.label_set,
-            # sample_set=self.sample_set,  # TODO: add once big xvalidation test is done
+            sample_set=self.sample_set,
             feature_set=f"{self.cont_feature_set}-{self.cat_feature_set}",
             embedding_output_dim=self.embedding_output_dim,
             units=list(self.units),
@@ -141,17 +151,16 @@ class TrainingParameters(Task):
             dropout_rate=self.dropout_rate,
             batch_norm=self.batch_norm,
             batch_size=self.batch_size,
+            optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             parameterize_spin=True,
             parameterize_mass=True,
+            regression_set="none" if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
             fold_index=self.fold,
             seed=self.seed,
         )
 
         # optionals
-        # TODO: make non-optional at some point
-        if self.optimizer != "adam":
-            kwargs["optimizer"] = self.optimizer
         if self.background_weight != 1.0:
             kwargs["background_weight"] = self.background_weight
 
@@ -190,9 +199,18 @@ class Training(TrainingParameters):
             model_name=self.get_model_name(),
             model_prefix="",
             model_suffix="",
-            data_dir=os.environ["TN_SKIMS_2017"],
+            data_dirs={
+                "2016": os.environ["TN_SKIMS_2016"],
+                "2016APV": os.environ["TN_SKIMS_2016APV"],
+                "2017": os.environ["TN_SKIMS_2017"],
+                "2018": os.environ["TN_SKIMS_2018"],
+            },
             cache_dir=os.path.join(os.environ["TN_DATA_DIR"], "training_cache"),
-            tensorboard_dir=os.getenv("TN_TENSORBOARD_DIR", os.path.join(os.environ["TN_DATA_DIR"], "tensorboard")),
+            tensorboard_dir=(
+                None
+                if self.skip_tensorboard
+                else os.getenv("TN_TENSORBOARD_DIR", os.path.join(os.environ["TN_DATA_DIR"], "tensorboard"))
+            ),
             clear_existing_tensorboard=True,
             model_dir=self.output()["saved_model"].parent.path,
             samples=samples,
@@ -216,6 +234,7 @@ class Training(TrainingParameters):
             validate_every=self.validate_every,
             parameterize_spin=True,
             parameterize_mass=True,
+            regression_set=None if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
             fold_index=self.fold,
             validation_folds=3,
             seed=self.seed,
