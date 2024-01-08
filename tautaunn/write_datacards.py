@@ -38,43 +38,18 @@ import uproot
 import hist
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
 
 
 #
 # configurations
 #
 
-# in /pb
-luminosities = {
-    "2016pre": 19_500.0,
-    "2016post": 16_800.0,
-    "2017": 41_480.0,
-    "2018": 59_830.0,
-}
 br_hh_bbtt = 0.073056256
 channels = {
     "mutau": 0,
     "etau": 1,
     "tautau": 2,
-}
-btag_wps = {
-    "2016pre": {
-        "loose": 0.0508,
-        "medium": 0.2598,
-    },
-    "2016post": {
-        "loose": 0.0480,
-        "medium": 0.2489,
-    },
-    "2017": {
-        "loose": 0.0532,
-        "medium": 0.3040,
-    },
-    "2018": {
-        "loose": 0.0490,
-        "medium": 0.2783,
-    },
 }
 klub_weight_columns = [
     "MC_weight",
@@ -756,18 +731,18 @@ def category_factory(
 
 
 for channel in channels:
-    cats_2016pre = category_factory(year="2016pre", channel=channel)
-    for name, sel in cats_2016pre.items():
-        categories[f"2016pre_{channel}_{name}"] = {
+    cats_2016APV = category_factory(year="2016APV", channel=channel)
+    for name, sel in cats_2016APV.items():
+        categories[f"2016APV_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2016),
             **sel.extra,
         }
-    cats_2016post = category_factory(year="2016post", channel=channel)
-    for name, sel in cats_2016post.items():
-        categories[f"2016post_{channel}_{name}"] = {
+    cats_2016 = category_factory(year="2016", channel=channel)
+    for name, sel in cats_2016.items():
+        categories[f"2016_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
@@ -838,6 +813,7 @@ def load_klub_file(
         array = ak.without_field(array, c)
 
     # also get the sum of generated MC weights
+    # TODO: don't use for data as the hist is not always available there
     sum_gen_mc_weights = float(f["h_eff"].values()[0])
 
     return array, sum_gen_mc_weights

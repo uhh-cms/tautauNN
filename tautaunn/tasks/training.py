@@ -1,14 +1,13 @@
 # coding: utf-8
 
 import os
-import fnmatch
 from typing import Any
 
 import luigi
 import law
 
 from tautaunn.tasks.base import Task
-from tautaunn.util import create_model_name
+from tautaunn.util import create_model_name, match
 import tautaunn.config as cfg
 
 
@@ -71,16 +70,16 @@ class TrainingParameters(Task):
         description="learning rate; default: 3e-3",
     )
     learning_rate_patience = luigi.IntParameter(
-        default=8,
+        default=10,
         description="non-improving steps before reducing learning rate; default: 10",
     )
     learning_rate_reductions = luigi.IntParameter(
-        default=6,
-        description="number of possible learning rate reductions; default: 6",
+        default=8,
+        description="number of possible learning rate reductions; default: 8",
     )
     early_stopping_patience = luigi.IntParameter(
-        default=12,
-        description="non-improving steps before stopping training; default: 10",
+        default=15,
+        description="non-improving steps before stopping training; default: 15",
     )
     background_weight = luigi.FloatParameter(
         default=1.0,
@@ -104,10 +103,15 @@ class TrainingParameters(Task):
         significant=False,
         description="validate every n batches; default: 500",
     )
+    selection_set = luigi.ChoiceParameter(
+        default="baseline",
+        choices=list(cfg.selection_sets.keys()),
+        description="name of selection set; default: baseline",
+    )
     label_set = luigi.ChoiceParameter(
-        default="binary",
+        default="multi3",
         choices=list(cfg.label_sets.keys()),
-        description="name of label set; default: binary",
+        description="name of label set; default: multi3",
     )
     sample_set = luigi.ChoiceParameter(
         default="default",
@@ -134,12 +138,21 @@ class TrainingParameters(Task):
         significant=False,
         description="skip tensorboard logging; default: False",
     )
+    n_folds = 5
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.regression_cfg = None
+        if self.regression_set not in (None, "", law.NO_STR):
+            self.regression_cfg = cfg.regression_sets[self.regression_set]
 
     def get_model_name_kwargs(self) -> dict[str, Any]:
         kwargs = dict(
             model_name=None if self.model_name in (None, "", law.NO_STR) else self.model_name,
             model_prefix=None if self.model_prefix in (None, "", law.NO_STR) else self.model_prefix,
             model_suffix=None if self.model_suffix in (None, "", law.NO_STR) else self.model_suffix,
+            selection_set=self.selection_set,
             label_set=self.label_set,
             sample_set=self.sample_set,
             feature_set=f"{self.cont_feature_set}-{self.cat_feature_set}",
@@ -153,6 +166,7 @@ class TrainingParameters(Task):
             batch_size=self.batch_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
+            parameterize_year=True,
             parameterize_spin=True,
             parameterize_mass=True,
             regression_set="none" if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
@@ -190,7 +204,7 @@ class Training(TrainingParameters):
             class_names[label] = data["name"]
             loss_weight = 1.0 if label == 0 else self.background_weight
             for sample in cfg.sample_sets[self.sample_set]:
-                if any(fnmatch.fnmatch(sample.name, pattern) for pattern in data["sample_patterns"]):
+                if any(match(sample.skim_name, pattern) for pattern in data["sample_patterns"]):
                     samples.append(sample.with_label_and_loss_weight(label, loss_weight))
                     continue
 
@@ -199,12 +213,7 @@ class Training(TrainingParameters):
             model_name=self.get_model_name(),
             model_prefix="",
             model_suffix="",
-            data_dirs={
-                "2016": os.environ["TN_SKIMS_2016"],
-                "2016APV": os.environ["TN_SKIMS_2016APV"],
-                "2017": os.environ["TN_SKIMS_2017"],
-                "2018": os.environ["TN_SKIMS_2018"],
-            },
+            data_dirs=dict(cfg.skim_dirs),
             cache_dir=os.path.join(os.environ["TN_DATA_DIR"], "training_cache"),
             tensorboard_dir=(
                 None
@@ -214,6 +223,7 @@ class Training(TrainingParameters):
             clear_existing_tensorboard=True,
             model_dir=self.output()["saved_model"].parent.path,
             samples=samples,
+            selections=cfg.selection_sets[self.selection_set],
             class_names=class_names,
             cont_input_names=cfg.cont_feature_sets[self.cont_feature_set],
             cat_input_names=cfg.cat_feature_sets[self.cat_feature_set],
@@ -232,11 +242,13 @@ class Training(TrainingParameters):
             early_stopping_patience=self.early_stopping_patience,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,
+            parameterize_year=True,
             parameterize_spin=True,
             parameterize_mass=True,
             regression_set=None if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
+            n_folds=self.n_folds,
             fold_index=self.fold,
-            validation_folds=3,
+            n_validation_folds=1,
             seed=self.seed,
         )
 
@@ -282,14 +294,21 @@ class ExportEnsemble(MultiSeedParameters):
     @law.decorator.safe_output
     def run(self):
         # load the export function
-        from tautaunn.export_ensembles import export_ensemble
+        from tautaunn.export_ensemble import export_ensemble
+
+        # determine number of continuous and categorical inputs
+        cont_input_names = set(cfg.cont_feature_sets[self.cont_feature_set]) | {"mass"}
+        cat_input_names = set(cfg.cat_feature_sets[self.cat_feature_set]) | {"year", "spin"}
+        if self.regression_cfg is not None:
+            cont_input_names |= set(cfg.cont_feature_sets[self.regression_cfg.cont_feature_set])
+            cat_input_names |= set(cfg.cat_feature_sets[self.regression_cfg.cat_feature_set])
 
         # define arguments
         export_kwargs = dict(
             model_dirs=[self.input()[seed]["saved_model"].path for seed in self.flat_seeds],
             ensemble_dir=self.output()["saved_model"].path,
-            n_cont_inputs=len(cfg.cont_feature_sets[self.cont_feature_set]) + 1,  # +1 for mass
-            n_cat_inputs=len(cfg.cat_feature_sets[self.cat_feature_set]) + 1,  # +1 for spin
+            n_cont_inputs=len(cont_input_names),
+            n_cat_inputs=len(cat_input_names),
         )
 
         # export it
@@ -300,7 +319,7 @@ class MultiFoldParameters(MultiSeedParameters):
 
     fold = None
     folds = law.MultiRangeParameter(
-        default=((0,),),
+        default=((0,),),  # TODO: update to ((0, MultiSeedParameters.n_folds),)
         single_value=True,
         require_end=True,
         description="folds to use for training; default: 0",

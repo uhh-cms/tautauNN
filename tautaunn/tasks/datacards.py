@@ -80,15 +80,31 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             self.publish_message(f"read {len(rec)} events")
             rec = calc_new_columns(rec, {name: cfg.dynamic_columns[name] for name in dyn_names})
 
+            # determine names of inputs
+            cont_input_names = list(cfg.cont_feature_sets[self.cont_feature_set])
+            cat_input_names = list(cfg.cat_feature_sets[self.cat_feature_set])
+            if self.regression_cfg is not None:
+                for name in cfg.cont_feature_sets[self.regression_cfg.cont_feature_set]:
+                    if name not in cont_input_names:
+                        cont_input_names.append(name)
+                for name in cfg.cat_feature_sets[self.regression_cfg.cat_feature_set]:
+                    if name not in cat_input_names:
+                        cat_input_names.append(name)
+
             # prepare model inputs
-            cont_inputs = flatten(rec[cfg.cont_feature_sets[self.cont_feature_set]], np.float32)
-            cat_inputs = flatten(rec[cfg.cat_feature_sets[self.cat_feature_set]], np.int32)
-            # reserve columns for masses and spins
-            cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
+            cont_inputs = flatten(rec[cont_input_names], np.float32)
+            cat_inputs = flatten(rec[cat_input_names], np.int32)
+
+            # add year
+            y = self.sample.year_int
+            cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+
+            # reserve columns for spin and mass
             cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+            cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
 
             # determine the fold index to use per event
-            fold = rec["EventNumber"] % 10
+            fold = rec["EventNumber"] % self.n_folds
 
         # create a mask to only select events whose categorical features were seen during training
         cat_mask = np.ones(len(rec), dtype=bool)
@@ -117,9 +133,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         # testing: when there is just a single fold 0, copy it to all other folds
         if len(models) == 1 and list(models.keys())[0] == 0:
-            for i in range(1, 10):
+            for i in range(1, self.n_folds):
                 models[i] = models[0]
-        assert set(models) == set(range(10))
+        assert set(models.keys()) == set(range(self.n_folds))
 
         # evaluate the data
         with self.publish_step("evaluating model ..."):
@@ -150,7 +166,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
     def requires(self):
         return {
             skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.selected_skim_names
+            for skim_name in self.skim_names
         }
 
 
@@ -178,7 +194,9 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="number of bins to use; default: 10",
     )
     variable = luigi.Parameter(
-        default="hbtresdnn_mass{mass}_spin{spin}_signal",
+        default="hbtresdnn_mass{mass}_spin{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'hbtresdnn_mass{mass}_spin{spin}_hh'",
     )
     parallel_read = luigi.IntParameter(
         default=4,
@@ -192,14 +210,23 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         default=law.NO_STR,
         description="suffix to append to the output directory; default: ''",
     )
-    repeat_existing = luigi.BoolParameter(
+    rewrite_existing = luigi.BoolParameter(
         default=False,
         significant=False,
-        description="whether to repeat existing datacards; default: False",
+        description="whether to rewrite existing datacards; default: False",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # only one year at a time is supported for now
+        years = set(sample.year for sample in self.samples)
+        if len(years) != 1:
+            raise ValueError(f"only one year at a time is supported for now, got {','.join(years)}")
+        self.year = years.pop()
+        self.skim_dir = cfg.skim_dirs[self.year]
+
+        # TODO: complain when the year does not match the category patterns (but how to do that for 2016/APV?)
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
@@ -219,7 +246,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def requires(self):
         return {
             skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.selected_skim_names
+            for skim_name in self.skim_names
         }
 
     def store_parts(self):
@@ -261,13 +288,14 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             output_directory=self.output().dir.path,
             output_pattern=self.card_pattern,
             variable_pattern=self.variable,
-            sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
+            # force using all samples, disabling the feature to select a subset
+            # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
             binning=(self.n_bins, 0.0, 1.0, "equal_distance" if self.binning == "equal" else "flat_s"),
             qcd_estimation=self.qcd_estimation,
             n_parallel_read=self.parallel_read,
             n_parallel_write=self.parallel_write,
             cache_directory=os.path.join(os.environ["TN_DATA_DIR"], "datacard_cache"),
-            skip_existing=not self.repeat_existing,
+            skip_existing=not self.rewrite_existing,
         )
 
         # create the cards

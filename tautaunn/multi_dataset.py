@@ -90,6 +90,7 @@ class MultiDataset(object):
 
         # prepare indices for random sampling
         indices = [np.array([], dtype=np.int32) for _ in range(self.n_datasets)]
+        offsets = [0] * self.n_datasets
 
         # start iterating
         while True:
@@ -98,25 +99,27 @@ class MultiDataset(object):
 
             # fill chunks per dataset that eventually form a batch
             chunks = []
-            for i, (arrays, _indices, batch_size) in enumerate(zip(self.datasets, indices, batch_sizes)):
-                # extend indices if necessary
-                if len(_indices) < batch_size:
+            for i, (arrays, _indices, batch_size, offset) in enumerate(zip(self.datasets, indices, batch_sizes, offsets)):
+                # update indices and offset
+                if len(_indices) - offset < batch_size:
                     new_indices = np.arange(len(arrays[0]), dtype=np.int32)
                     np.random.shuffle(new_indices)
-                    _indices = np.concatenate([_indices, new_indices], axis=0)
-                # get indices for the current chunk
-                chunk_indices = _indices[:batch_size]
-                # store remaining indices
-                indices[i] = _indices[batch_size:]
+                    _indices = indices[i] = np.concatenate([_indices[offset:], new_indices], axis=0)
+                    offset = 0
 
-                # fill the chunk
-                chunks.append([a[chunk_indices] for a in arrays])
+                # fill the chunk and adjust the offset
+                chunks.append([a[_indices[offset:offset + batch_size]] for a in arrays])
+                offsets[i] = offset + batch_size
 
             # yield
-            yield transform_data(self, *tuple(
-                tf.concat([chunk[i] for chunk in chunks], axis=0)
+            data = tuple(
+                np.concatenate([chunk[i] for chunk in chunks], axis=0)
                 for i in range(self.tuple_length)
-            ))
+            )
+            data = transform_data(self, *data)
+            chunks.clear()
+
+            yield tuple(map(tf.convert_to_tensor, data))
             self.batches_seen += 1
 
     def iter_valid(self):
@@ -124,33 +127,31 @@ class MultiDataset(object):
         transform_data = self.transform_data if callable(self.transform_data) else (lambda self, x: x)
 
         # start iterating
-        dataset_index = -1
-        dataset_indices = np.array([], dtype=np.int32)
+        dataset_index = 0
+        offset = 0
         chunks = []
         n_total = 0
         while True:
             # iterate until batch size is reached
             while n_total < self.batch_size:
                 # optionally switch to next dataset and fill indices
-                if len(dataset_indices) == 0:
+                if offset >= self.counts[dataset_index]:
                     dataset_index = (dataset_index + 1) % self.n_datasets
-                    dataset_indices = np.arange(self.counts[dataset_index], dtype=np.int32)
-                # get indices for this chunk
-                chunk_indices = dataset_indices[:self.batch_size - n_total]
-                dataset_indices = dataset_indices[self.batch_size - n_total:]
+                    offset = 0
                 # fill the chunk
-                chunks.append([a[chunk_indices] for a in self.datasets[dataset_index]])
-                n_total += len(chunk_indices)
+                chunks.append([a[offset:offset + self.batch_size - n_total] for a in self.datasets[dataset_index]])
+                offset += len(chunks[-1][0])
+                n_total += len(chunks[-1][0])
                 # manually stop when the last dataset is exhausted and the rest is to be yielded on its own
                 # (otherwise, the above will cycle back to the first dataset and fill the chunk)
                 if n_total < self.batch_size and dataset_index == self.n_datasets - 1 and self.yield_valid_rest:
                     break
 
             # concatenate chunks
-            data = [
-                tf.concat([chunk[i] for chunk in chunks], axis=0)
+            data = tuple(
+                np.concatenate([chunk[i] for chunk in chunks], axis=0)
                 for i in range(self.tuple_length)
-            ]
+            )
             chunks.clear()
             n_total = 0
 

@@ -1,25 +1,15 @@
 # coding: utf-8
 
 """
-Features included:
-- reading events directly from root files
-- deterministic model names
-- LR schedule and early stopping
-- FCN, Res, and Dense connections
-- live plots in tensorboard (confusion matrix and output distributions)
-- 10-fold xvalidation and ensembling (see export_ensembles.py)
-- random mass and spin value sampling for backgrounds during training
-- graceful termination (ctrl+c)
-- preparation for tauNN transfer and fine-tuning
-
 Physics / optimization TODOs:
 - binary or multi-class
-- test other samples
+- year weights
 - finalize input features
 - hyper-opt (including symmetric CCE with group weights)
 - prepend tauNN
 - increased background weights
 - influence of ensembling on limits
+- include low-mass signals again?
 """
 
 from __future__ import annotations
@@ -37,6 +27,8 @@ from typing import Any
 
 import numpy as np
 import tensorflow as tf
+from law.util import human_duration
+from tabulate import tabulate
 
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
@@ -107,43 +99,43 @@ def train(
     model_dir: str = model_dir,
     model_fallback_dir: str | None = model_fallback_dir,
     samples: list[Sample] = [
-        Sample("SKIM_ggF_Radion_m320", label=0, spin=0, mass=320.0),
-        Sample("SKIM_ggF_Radion_m350", label=0, spin=0, mass=350.0),
-        Sample("SKIM_ggF_Radion_m400", label=0, spin=0, mass=400.0),
-        Sample("SKIM_ggF_Radion_m450", label=0, spin=0, mass=450.0),
-        Sample("SKIM_ggF_Radion_m500", label=0, spin=0, mass=500.0),
-        Sample("SKIM_ggF_Radion_m550", label=0, spin=0, mass=550.0),
-        Sample("SKIM_ggF_Radion_m600", label=0, spin=0, mass=600.0),
-        Sample("SKIM_ggF_Radion_m650", label=0, spin=0, mass=650.0),
-        Sample("SKIM_ggF_Radion_m700", label=0, spin=0, mass=700.0),
-        Sample("SKIM_ggF_Radion_m750", label=0, spin=0, mass=750.0),
-        Sample("SKIM_ggF_Radion_m800", label=0, spin=0, mass=800.0),
-        Sample("SKIM_ggF_Radion_m850", label=0, spin=0, mass=850.0),
-        Sample("SKIM_ggF_Radion_m900", label=0, spin=0, mass=900.0),
-        Sample("SKIM_ggF_Radion_m1000", label=0, spin=0, mass=1000.0),
-        Sample("SKIM_ggF_Radion_m1250", label=0, spin=0, mass=1250.0),
-        Sample("SKIM_ggF_Radion_m1500", label=0, spin=0, mass=1500.0),
-        Sample("SKIM_ggF_Radion_m1750", label=0, spin=0, mass=1750.0),
-        Sample("SKIM_ggF_BulkGraviton_m320", label=0, spin=2, mass=320.0),
-        Sample("SKIM_ggF_BulkGraviton_m350", label=0, spin=2, mass=350.0),
-        Sample("SKIM_ggF_BulkGraviton_m400", label=0, spin=2, mass=400.0),
-        Sample("SKIM_ggF_BulkGraviton_m450", label=0, spin=2, mass=450.0),
-        Sample("SKIM_ggF_BulkGraviton_m500", label=0, spin=2, mass=500.0),
-        Sample("SKIM_ggF_BulkGraviton_m550", label=0, spin=2, mass=550.0),
-        Sample("SKIM_ggF_BulkGraviton_m600", label=0, spin=2, mass=600.0),
-        Sample("SKIM_ggF_BulkGraviton_m650", label=0, spin=2, mass=650.0),
-        Sample("SKIM_ggF_BulkGraviton_m700", label=0, spin=2, mass=700.0),
-        Sample("SKIM_ggF_BulkGraviton_m750", label=0, spin=2, mass=750.0),
-        Sample("SKIM_ggF_BulkGraviton_m800", label=0, spin=2, mass=800.0),
-        Sample("SKIM_ggF_BulkGraviton_m850", label=0, spin=2, mass=850.0),
-        Sample("SKIM_ggF_BulkGraviton_m900", label=0, spin=2, mass=900.0),
-        Sample("SKIM_ggF_BulkGraviton_m1000", label=0, spin=2, mass=1000.0),
-        Sample("SKIM_ggF_BulkGraviton_m1250", label=0, spin=2, mass=1250.0),
-        Sample("SKIM_ggF_BulkGraviton_m1500", label=0, spin=2, mass=1500.0),
-        Sample("SKIM_ggF_BulkGraviton_m1750", label=0, spin=2, mass=1750.0),
-        Sample("SKIM_DY_amc_incl", label=1),
-        Sample("SKIM_TT_fullyLep", label=1),
-        Sample("SKIM_TT_semiLep", label=1),
+        Sample("ggF_Radion_m320", year="2017", label=0, spin=0, mass=320.0),
+        Sample("ggF_Radion_m350", year="2017", label=0, spin=0, mass=350.0),
+        Sample("ggF_Radion_m400", year="2017", label=0, spin=0, mass=400.0),
+        Sample("ggF_Radion_m450", year="2017", label=0, spin=0, mass=450.0),
+        Sample("ggF_Radion_m500", year="2017", label=0, spin=0, mass=500.0),
+        Sample("ggF_Radion_m550", year="2017", label=0, spin=0, mass=550.0),
+        Sample("ggF_Radion_m600", year="2017", label=0, spin=0, mass=600.0),
+        Sample("ggF_Radion_m650", year="2017", label=0, spin=0, mass=650.0),
+        Sample("ggF_Radion_m700", year="2017", label=0, spin=0, mass=700.0),
+        Sample("ggF_Radion_m750", year="2017", label=0, spin=0, mass=750.0),
+        Sample("ggF_Radion_m800", year="2017", label=0, spin=0, mass=800.0),
+        Sample("ggF_Radion_m850", year="2017", label=0, spin=0, mass=850.0),
+        Sample("ggF_Radion_m900", year="2017", label=0, spin=0, mass=900.0),
+        Sample("ggF_Radion_m1000", year="2017", label=0, spin=0, mass=1000.0),
+        Sample("ggF_Radion_m1250", year="2017", label=0, spin=0, mass=1250.0),
+        Sample("ggF_Radion_m1500", year="2017", label=0, spin=0, mass=1500.0),
+        Sample("ggF_Radion_m1750", year="2017", label=0, spin=0, mass=1750.0),
+        Sample("ggF_BulkGraviton_m320", year="2017", label=0, spin=2, mass=320.0),
+        Sample("ggF_BulkGraviton_m350", year="2017", label=0, spin=2, mass=350.0),
+        Sample("ggF_BulkGraviton_m400", year="2017", label=0, spin=2, mass=400.0),
+        Sample("ggF_BulkGraviton_m450", year="2017", label=0, spin=2, mass=450.0),
+        Sample("ggF_BulkGraviton_m500", year="2017", label=0, spin=2, mass=500.0),
+        Sample("ggF_BulkGraviton_m550", year="2017", label=0, spin=2, mass=550.0),
+        Sample("ggF_BulkGraviton_m600", year="2017", label=0, spin=2, mass=600.0),
+        Sample("ggF_BulkGraviton_m650", year="2017", label=0, spin=2, mass=650.0),
+        Sample("ggF_BulkGraviton_m700", year="2017", label=0, spin=2, mass=700.0),
+        Sample("ggF_BulkGraviton_m750", year="2017", label=0, spin=2, mass=750.0),
+        Sample("ggF_BulkGraviton_m800", year="2017", label=0, spin=2, mass=800.0),
+        Sample("ggF_BulkGraviton_m850", year="2017", label=0, spin=2, mass=850.0),
+        Sample("ggF_BulkGraviton_m900", year="2017", label=0, spin=2, mass=900.0),
+        Sample("ggF_BulkGraviton_m1000", year="2017", label=0, spin=2, mass=1000.0),
+        Sample("ggF_BulkGraviton_m1250", year="2017", label=0, spin=2, mass=1250.0),
+        Sample("ggF_BulkGraviton_m1500", year="2017", label=0, spin=2, mass=1500.0),
+        Sample("ggF_BulkGraviton_m1750", year="2017", label=0, spin=2, mass=1750.0),
+        Sample("DY_amc_incl", year="2017", label=1),
+        Sample("TT_fullyLep", year="2017", label=1),
+        Sample("TT_semiLep", year="2017", label=1),
     ],
     # names of classes
     class_names: dict[int, str] = {
@@ -155,7 +147,7 @@ def train(
         "EventNumber", "MC_weight", "PUReweight",
     ],
     # selections to apply before training
-    selections: str | list[str] = [
+    selections: str | list[str] | dict[str, list[str]] = [
         "nbjetscand > 1",
         "nleps == 0",
         "isOS == 1",
@@ -219,16 +211,20 @@ def train(
     max_epochs: int = 10000,
     # how frequently to calulcate the validation loss
     validate_every: int = 500,
+    # add the year of the sample as a categorical input
+    parameterize_year: bool = True,
     # add the generator spin for the signal samples as categorical input -> network parameterized in spin
     parameterize_spin: bool = True,
     # add the generator mass for the signal samples as continuous input -> network parameterized in mass
     parameterize_mass: bool = True,
     # the name of a regression config set to use
     regression_set: str | None = None,
-    # number of the fold to train for (0-9, events with event numbers ending in the fold number are not used at all!)
+    # number of folds
+    n_folds: int = 5,
+    # number of the fold to train for
     fold_index: int = 0,
-    # how many of the 9 training folds to use for validation
-    validation_folds: int = 3,
+    # how many of the training folds to use for validation
+    n_validation_folds: int = 1,
     # seed for random number generators, if None, uses fold_index + 1
     seed: int | None = None,
 ) -> tuple[tf.keras.Model, str] | None:
@@ -241,9 +237,10 @@ def train(
     assert all(label in class_names for label in unique_labels)
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
-    assert 0 <= fold_index <= 9
-    assert 1 <= validation_folds <= 8
+    assert 0 <= fold_index < n_folds
+    assert 1 <= n_validation_folds < n_folds - 1
     assert optimizer in ["adam", "adamw"]
+    assert len(samples) == len(set(samples))
     assert all(sample.year in data_dirs for sample in samples)
     regression_cfg = regression_sets[regression_set] if regression_set else None
     if regression_cfg:
@@ -280,6 +277,7 @@ def train(
         batch_size=batch_size,
         learning_rate=learning_rate,
         optimizer=optimizer,
+        parameterize_year=parameterize_year,
         parameterize_spin=parameterize_spin,
         parameterize_mass=parameterize_mass,
         regression_set=regression_set,
@@ -296,9 +294,16 @@ def train(
     # set the seed to everything (Python, NumPy, TensorFlow, Keras)
     tf.keras.utils.set_random_seed(fold_index * 100 + seed)
 
-    # join selections
-    if isinstance(selections, list):
-        selections = " & ".join(map("({})".format, selections))
+    # join selections int strings, mapped to years
+    years = sorted(set(sample.year for sample in samples))
+    if not isinstance(selections, dict):
+        selections = {year: selections for year in years}
+    for year, _selections in selections.items():
+        if isinstance(_selections, list):
+            _selections = " & ".join(map("({})".format, _selections))
+        selections[year] = _selections
+    if (uncovered_years := set(years) - set(selections)):
+        raise ValueError(f"selections for years {uncovered_years} are missing")
 
     # extend input names by that of regression
     combined_cont_input_names = list(cont_input_names)
@@ -315,8 +320,9 @@ def train(
     columns_to_read = set()
     for name in combined_cont_input_names + combined_cat_input_names:
         columns_to_read.add(name)
-    # column names in selections string
-    columns_to_read |= set(re.findall(r"[a-zA-Z_][\w_]*", selections))
+    # column names in selections strings
+    for selection_str in selections.values():
+        columns_to_read |= set(re.findall(r"[a-zA-Z_][\w_]*", selection_str))
     # extra columns
     columns_to_read |= set(extra_columns)
     # expand dynamic columns, keeping track of those that are needed
@@ -352,9 +358,9 @@ def train(
     event_weights_train, event_weights_valid = [], []
 
     # prepare fold indices to use
-    train_fold_indices: list[int] = [i for i in range(10) if i != fold_index]
+    train_fold_indices: list[int] = [i for i in range(n_folds) if i != fold_index]
     valid_fold_indices: list[int] = []
-    while len(valid_fold_indices) < validation_folds:
+    while len(valid_fold_indices) < n_validation_folds:
         valid_fold_indices.append(train_fold_indices.pop(random.randint(0, len(train_fold_indices) - 1)))
 
     # helper to flatten rec arrays
@@ -364,9 +370,9 @@ def train(
     for sample in samples:
         rec = load_sample_root(
             data_dirs[sample.year],
-            sample.name,
+            sample,
             list(columns_to_read),
-            selections,
+            selections[sample.year],
             # max_events=10000,
             cache_dir=cache_dir,
         )
@@ -381,18 +387,20 @@ def train(
         labels = np.zeros((n_events, n_classes), dtype=np.float32)
         labels[:, sample.label] = 1
 
-        # add spin and mass if given
-        if parameterize_mass:
+        # add year, spin and mass if given
+        if parameterize_year or (regression_cfg and regression_cfg.parameterize_year):
+            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
+        if parameterize_mass or (regression_cfg and regression_cfg.parameterize_mass):
             if sample.mass > -1:
                 masses.add(float(sample.mass))
             cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
-        if parameterize_spin:
+        if parameterize_spin or (regression_cfg and regression_cfg.parameterize_spin):
             if sample.spin > -1:
                 spins.add(int(sample.spin))
             cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
 
         # training and validation mask using event number and fold indices
-        last_digit = rec["EventNumber"] % 10
+        last_digit = rec["EventNumber"] % n_folds
         train_mask = np.any(last_digit[..., None] == train_fold_indices, axis=1)
         valid_mask = np.any(last_digit[..., None] == valid_fold_indices, axis=1)
 
@@ -457,9 +465,21 @@ def train(
         sum(batch_weights)
     ) - cont_input_means**2
 
+    # handle year
+    add_year = False
+    if parameterize_year:
+        cat_input_names.append("year")
+        add_year = True
+    if regression_cfg and regression_cfg.parameterize_year:
+        reg_cat_input_names.append("year")
+        add_year = True
+    if add_year:
+        combined_cat_input_names.append("year")
+        # add to possible embedding values
+        possible_cont_input_values.append(embedding_expected_inputs["year"])
+
     # handle masses
-    masses = tf.constant(sorted(masses), dtype=tf.float32)
-    mass_probs = tf.ones_like(masses)  # all masses equally probable when sampling for backgrounds
+    masses = sorted(masses)
     add_mass = False
     if parameterize_mass:
         cont_input_names.append("mass")
@@ -471,12 +491,11 @@ def train(
         assert len(masses) > 0
         combined_cont_input_names.append("mass")
         # replace mean and var with unweighted values
-        cont_input_means[-1] = np.mean(masses.numpy())
-        cont_input_vars[-1] = np.var(masses.numpy())
+        cont_input_means[-1] = np.mean(masses)
+        cont_input_vars[-1] = np.var(masses)
 
     # handle spins
-    spins = tf.constant(sorted(spins), dtype=tf.int32)
-    spin_probs = tf.ones_like(spins, dtype=tf.float32)  # all spins equally probable when sampling for backgrounds
+    spins = sorted(spins)
     add_spin = False
     if parameterize_spin:
         cat_input_names.append("spin")
@@ -493,20 +512,12 @@ def train(
     with device:
         # live transformation of inputs to inject spin and mass for backgrounds
         def transform(inst, cont_inputs, cat_inputs, labels, weights):
-            if parameterize_mass:
-                idxs_0 = tf.where(cont_inputs[:, -1] < 0)
-                idxs_1 = (cont_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
-                idxs = tf.concat([idxs_0, idxs_1], axis=-1)
-                random_masses = tf.gather(masses, tf.random.categorical([mass_probs], tf.shape(idxs_0)[0]))[0]
-                # random_masses = 500.0 * tf.ones(tf.shape(idxs_0)[0], dtype=tf.float32)
-                cont_inputs = tf.tensor_scatter_nd_update(cont_inputs, idxs, random_masses)
-            if parameterize_spin:
-                idxs_0 = tf.where(cat_inputs[:, -1] < 0)
-                idxs_1 = (cat_inputs.shape[1] - 1) * tf.ones_like(idxs_0)
-                idxs = tf.concat([idxs_0, idxs_1], axis=-1)
-                random_spins = tf.gather(spins, tf.random.categorical([spin_probs], tf.shape(idxs_0)[0]))[0]
-                # random_spins = tf.zeros(tf.shape(idxs_0)[0], dtype=tf.int32)
-                cat_inputs = tf.tensor_scatter_nd_update(cat_inputs, idxs, random_spins)
+            if add_mass:
+                neg_mass = cont_inputs[:, -1] < 0
+                cont_inputs[:, -1][neg_mass] = np.random.choice(masses, size=neg_mass.sum())
+            if add_spin:
+                neg_spin = cat_inputs[:, -1] < 0
+                cat_inputs[:, -1][neg_spin] = np.random.choice(spins, size=neg_spin.sum())
             return cont_inputs, cat_inputs, labels, weights
 
         # build datasets
@@ -672,12 +683,13 @@ def train(
 
         # some logs
         model.summary()
-        print(f"training samples: {len(dataset_train):_}")
-        for (label, (n, _)), class_name in zip(samples_per_class.items(), class_names.values()):
-            print(f"    class {label}: {n:_}  ({class_name})")
-        print(f"validation samples: {len(dataset_valid):_}")
-        for (label, (_, n)), class_name in zip(samples_per_class.items(), class_names.values()):
-            print(f"    class {label}: {n:_}  ({class_name})")
+        header = ["Class (label)", "Total", "train", "valid"]
+        rows = []
+        for (label, (n_train, n_valid)), class_name in zip(samples_per_class.items(), class_names.values()):
+            rows.append([f"{class_name} ({label})", n_train + n_valid, n_train, n_valid])
+        rows.append(["Total", len(dataset_train) + len(dataset_valid), len(dataset_train), len(dataset_valid)])
+        print("")
+        print(tabulate(rows, headers=header, tablefmt="github", intfmt="_"))
         print("")
 
         # training
@@ -748,19 +760,13 @@ def train(
                 return
             print("")
             # manually restore best weights
-            if lres_callback.best_weights:
-                print("manually restoring best weights")
-                model.set_weights(lres_callback.best_weights)
-            else:
-                print("no best weights found in callbacks, using current weights")
-
-        print(f"training took {t_end - t_start:.2f} seconds")
+            lres_callback.restore_best_weights()
+        print(f"training took {human_duration(seconds=t_end - t_start)}")
 
         # perform one final validation round for verification of the best model
         print("performing final round of validation")
         results_valid = model.evaluate(
             x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-            batch_size=len(dataset_valid),
             steps=1,
             return_dict=True,
         )
@@ -800,8 +806,9 @@ def train(
                     "cat": combined_cat_input_names,
                 },
                 "n_classes": n_classes,
+                "n_folds": n_folds,
                 "fold_index": fold_index,
-                "validation_folds": validation_folds,
+                "n_validation_folds": n_validation_folds,
                 "seed": seed,
                 "architecture": {
                     "units": units,
@@ -1007,7 +1014,9 @@ def create_model(
     y = output_layer(a)
 
     # build the model
-    model = ClassificationModelWithValidationBuffers(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
+    log_live_plots = False
+    model_cls = ClassificationModelWithValidationBuffers if log_live_plots else tf.keras.Model
+    model = model_cls(inputs=[x_cont, x_cat], outputs=[y], name="bbtautau_classifier")
 
     # lookup layers whose kernels should be subject to l2
     l2_layers = {

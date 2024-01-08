@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import re
 import math
 import glob
+import time
 import hashlib
 import pickle
 import inspect
+import fnmatch
 import itertools
+from multiprocessing import Pool
 from typing import Any
 
 import numpy as np
@@ -19,84 +23,70 @@ import tensorflow as tf
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from law.util import human_duration
 
 
 epsilon = 1e-6
 
 
-def load_sample(data_dir, sample, loss_weight, features, selections, maxevents=1000000, cache_dir=None):
-    print(f"loading sample {sample} ... ", end="", flush=True)
-
-    # potentially read from cache
-    cache_path = get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents)
-    if cache_path and os.path.exists(cache_path):
-        with open(cache_path, "rb") as f:
-            feature_vecs = pickle.load(f)
-        print(f"loaded {len(feature_vecs)} events from cache")
-
-    else:
-        feature_vecs = []
-        nevents = 0
-        # weightsum = 0
-        filenames = glob.glob(f"{data_dir}/{sample}/output*.npz")
-        for i, filename in enumerate(filenames, 1):
-            with np.load(filename) as f:
-                # weightsum += f["weightsum"]
-                e = f["events"]
-                mask = [True] * len(e)
-                for (varnames, func) in selections:
-                    variables = [e[v] for v in varnames]
-                    mask = mask & func(*variables)
-                feature_vecs.append(e[features][mask])
-                nevents += len(feature_vecs[-1])
-                if nevents > maxevents:
-                    break
-        feature_vecs = np.concatenate(feature_vecs, axis=0)
-        print(f"loaded {len(feature_vecs)} events from {i} file(s)")
-
-        # save to cache
-        if cache_path:
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, "wb") as f:
-                pickle.dump(feature_vecs, f)
-
-    # weight vector
-    weights = np.array([loss_weight] * len(feature_vecs), dtype="float32")
-
-    return feature_vecs, weights
-
-
-def load_sample_root(data_dir, sample, features, selections, max_events=1000000, cache_dir=None):
+def _load_root_file_impl(file_name: str, features: list[str], selections: str) -> tuple[np.recarray, float, str] | str:
     from tautaunn.config import klub_aliases
 
-    print(f"loading sample {sample} ... ", end="", flush=True)
+    with uproot.open(file_name) as f:
+        if "HTauTauTree" not in f or "h_eff" not in f:
+            return file_name
+        tree = f["HTauTauTree"]
+        ak_array = tree.arrays(features, cut=selections, aliases=klub_aliases, library="ak")
+        ak_array = ak.with_field(ak_array, 1.0, "sum_weights")
+        rec = ak_array.to_numpy()
+        return rec, f["h_eff"].values()[0], file_name
+
+
+def _load_root_file_impl_mp(args):
+    return _load_root_file_impl(*args)
+
+
+def load_sample_root(data_dir, sample, features, selections, max_events=-1, cache_dir=None, n_threads=4):
+    print(f"loading sample {sample.skim_name} ... ", end="", flush=True)
 
     # potentially read from cache
     cache_path = get_cache_path(cache_dir, data_dir, sample, features, selections, max_events)
     if cache_path and os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
             feature_vecs = pickle.load(f)
-        print(f"loaded {len(feature_vecs)} events from cache")
+        print(f"loaded {len(feature_vecs):_} events from cache")
 
     else:
         feature_vecs = []
         n_events = 0
         sum_weights = 0.0
-        filenames = glob.glob(f"{data_dir}/{sample}/output_*.root")
-        for i, filename in enumerate(filenames, 1):
-            with uproot.open(filename) as f:
-                tree = f["HTauTauTree"]
-                ak_array = tree.arrays(features, cut=selections, aliases=klub_aliases, library="ak")
-                ak_array = ak.with_field(ak_array, 1.0, "sum_weights")
-                rec = ak_array.to_numpy()
+        broken_files = []
+        file_names = glob.glob(f"{data_dir}/{sample.directory_name}/output_*.root")
+
+        # load files in parallel
+        n_files_seen = len(file_names)
+        pool_args = [(file_name, features, selections) for file_name in file_names]
+        t0 = time.perf_counter()
+        with Pool(n_threads) as pool:
+            for result in pool.imap(_load_root_file_impl_mp, pool_args):
+                if isinstance(result, str):
+                    broken_files.append(result)
+                    continue
+                rec, file_sum_weights, _ = result
                 feature_vecs.append(rec)
                 n_events += len(rec)
-                sum_weights += f["h_eff"].values()[0]
+                sum_weights += file_sum_weights
                 if max_events > 0 and n_events > max_events:
                     break
+        duration = time.perf_counter() - t0
+
+        # concatenate and add sum_weights column
         feature_vecs = np.concatenate(feature_vecs, axis=0)
         feature_vecs["sum_weights"] *= sum_weights
-        print(f"loaded {len(feature_vecs)} events from {i} file(s)")
+        print(f"loaded {len(feature_vecs):_} events from {n_files_seen} file(s), took {human_duration(seconds=duration)}")
+        if broken_files:
+            broken_files_repr = "\n".join(broken_files)
+            print(f"{len(broken_files)} broken file(s):\n{broken_files_repr}")
 
         # save to cache
         if cache_path:
@@ -123,7 +113,7 @@ def get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents)
 
     cache_key = [
         transform_data_dir_cache(os.path.expandvars(data_dir)),
-        sample,
+        sample.skim_name,
         sorted(features),
         (
             selections.replace(" ", "")
@@ -132,7 +122,14 @@ def get_cache_path(cache_dir, data_dir, sample, features, selections, maxevents)
         ),
         maxevents,
     ]
-    return os.path.join(cache_dir, hashlib.sha256(str(cache_key).encode("utf-8")).hexdigest()[:10] + ".pkl")
+    cache_hash = hashlib.sha256(str(cache_key).encode("utf-8")).hexdigest()[:10]
+    return os.path.join(cache_dir, f"{sample.skim_name}_{cache_hash}.pkl")
+
+
+def match(value: str, pattern: str) -> bool:
+    if pattern.startswith("^") and pattern.endswith("$"):
+        return bool(re.match(pattern, value))
+    return bool(fnmatch.fnmatch(value, pattern))
 
 
 def calc_new_columns(data, rules):
@@ -229,6 +226,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
                 assert key not in name_parts
                 name_parts[key] = fmt(params.pop(name))
 
+        add("ps", "selection_set")
         add("ls", "label_set")
         add("ss", "sample_set")
         add("fs", "feature_set")
@@ -242,6 +240,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
         add("bs", "batch_size")
         add("op", "optimizer")
         add("lr", "learning_rate")
+        add("year", "parameterize_year")
         add("spin", "parameterize_spin")
         add("mass", "parameterize_mass")
         add("rs", "regression_set")

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import io
+import gc
 from typing import Callable, Any
 
+import psutil
 import numpy as np
 import tensorflow as tf
 from tensorflow.experimental import numpy as tnp
@@ -145,7 +147,6 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         lr_factor: float = 0.1,
         lr_reductions: int = 1,
         es_patience: int = 1,
-        restore_best_weights: bool = True,
         start_from_epoch: int = 0,
         repeat_func: Callable[[ReduceLRAndStopAndRepeat, dict[str, Any]], None] | None = None,
         verbose: int = 0,
@@ -173,7 +174,6 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         self.lr_factor = float(lr_factor)
         self.lr_reductions = int(lr_reductions)
         self.es_patience = int(es_patience)
-        self.restore_best_weights = restore_best_weights
         self.start_from_epoch = int(start_from_epoch)
         self.repeat_func = repeat_func
         self.verbose = int(verbose)
@@ -283,10 +283,17 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
                     print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_train_end(self, logs: dict[str, Any] | None = None) -> None:
-        if self.best_weights is not None:
-            self.model.set_weights(self.best_weights)
-            if self.verbose >= 1:
-                print_msg(f"{self.__class__.__name__}: recovered best weights from epoch {self.best_epoch + 1}")
+        self.restore_best_weights()
+
+    def restore_best_weights(self) -> bool:
+        if self.best_weights is None:
+            return False
+        self.model.set_weights(self.best_weights)
+        if self.verbose >= 1:
+            print_msg(
+                f"{self.__class__.__name__}: recovered best weights from epoch {self.best_epoch + 1}, "
+                f"best metric was {self.best_metric:.5f}",
+            )
 
     def get_monitor_value(self, logs: dict[str, Any]) -> float | int:
         logs = logs or {}
@@ -320,11 +327,16 @@ class LivePlotWriter(tf.keras.callbacks.Callback):
     def on_test_end(self, logs: dict[str, Any] | None = None) -> None:
         self.counter += 1
 
-        if getattr(self.model, "buffer_y", None) is None or getattr(self.model, "buffer_y_pred", None) is None:
-            print_msg(
-                f"\n{self.__class__.__name__} requires model.buffer_y and model.buffer_y_pred to be set, "
-                "not writing summary images",
-            )
+        if (
+            getattr(self.model, "buffer_y", None) is None or
+            getattr(self.model, "buffer_y_pred", None) is None or
+            getattr(self.model, "buffer_weight", None) is None
+        ):
+            if self.counter == 1:
+                print_msg(
+                    f"\n{self.__class__.__name__} requires model.buffer_y, model.buffer_y_pred and buffer_weight to be "
+                    "set, not writing summary images",
+                )
             return
 
         # get data
@@ -350,6 +362,14 @@ class LivePlotWriter(tf.keras.callbacks.Callback):
             for i, img in enumerate(out_imgs):
                 tf.summary.image(f"epoch_output_distribution_{self.class_names[i]}", img, step=step)
             self.file_writer.flush()
+
+
+class CollectGarbage(tf.keras.callbacks.Callback):
+
+    def on_test_end(self, logs: dict[str, Any] | None = None) -> None:
+        print(psutil.Process(os.getpid()).memory_info().rss)
+        gc.collect()
+        print(psutil.Process(os.getpid()).memory_info().rss)
 
 
 class EmbeddingEncoder(tf.keras.layers.Layer):

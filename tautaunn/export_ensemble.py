@@ -69,9 +69,9 @@ def export_ensemble(
         ensemble_model = tf.keras.Model(inputs=[x_cont, x_cat], outputs=y)
 
         # test it
-        cont_inputs = tf.constant([1.0] * n_cont_inputs, dtype=tf.float32)[None, ...]
-        cat_inputs = tf.constant([0, -1, 0, -1, -1, 2], dtype=tf.int32)[None, ...]
-        print(f"evaluate -> {ensemble_model([cont_inputs, cat_inputs], training=False)}")
+        # cont_inputs = tf.constant([1.0] * n_cont_inputs, dtype=tf.float32)[None, ...]
+        # cat_inputs = tf.constant([0, -1, 0, -1, -1, 2], dtype=tf.int32)[None, ...]
+        # print(f"evaluate -> {ensemble_model([cont_inputs, cat_inputs], training=False)}")
 
         # save it
         tf.keras.saving.save_model(

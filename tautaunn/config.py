@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import re
-import fnmatch
+import os
+import functools
 from dataclasses import dataclass
 
 import numpy as np
 
-from tautaunn.util import phi_mpi_to_pi
+from tautaunn.util import phi_mpi_to_pi, match
 
 
 @dataclass
@@ -33,22 +33,98 @@ activation_settings = {
     "swish": ActivationSetting("swish", "glorot_uniform", (True, False)),
 }
 
+skim_dirs = {
+    "2016APV": os.environ["TN_SKIMS_2016APV"],
+    "2016": os.environ["TN_SKIMS_2016"],
+    "2017": os.environ["TN_SKIMS_2017"],
+    "2018": os.environ["TN_SKIMS_2018"],
+}
+
+
+@functools.cache
+def get_all_skim_names() -> dict[str, list[str]]:
+    return {
+        year: [
+            d[5:] for d in os.listdir(skim_dir)
+            if d.startswith("SKIM_") and os.path.isdir(os.path.join(skim_dir, d))
+        ]
+        for year, skim_dir in skim_dirs.items()
+    }
+
+
+luminosities = {
+    "2016APV": 19_500.0,
+    "2016": 16_800.0,
+    "2017": 41_480.0,
+    "2018": 59_830.0,
+}
+
+btag_wps = {
+    "2016APV": {
+        "loose": 0.0508,
+        "medium": 0.2598,
+    },
+    "2016": {
+        "loose": 0.0480,
+        "medium": 0.2489,
+    },
+    "2017": {
+        "loose": 0.0532,
+        "medium": 0.3040,
+    },
+    "2018": {
+        "loose": 0.0490,
+        "medium": 0.2783,
+    },
+}
+
+masses = [
+    250, 260, 270, 280, 300, 320, 350, 400, 450, 500, 550, 600, 650,
+    700, 750, 800, 850, 900, 1000, 1250, 1500, 1750, 2000, 2500, 3000,
+]
+
+spins = [0, 2]
+
 
 @dataclass
 class Sample:
+    """
+    Example:
+    - name: "ggF_Radion_m350"
+    - skim_name: "2016APV_ggF_Radion_m350"
+    - directory_name: "SKIM_ggF_Radion_m350"
+    - year: "2016APV"  (this is more like a "campaign")
+    - year_int: 2016
+    - spin: 0
+    - mass: 350.0
+    """
+
     name: str
+    year: str
     label: int | None = None
     loss_weight: float = 1.0
     spin: int = -1
     mass: float = -1.0
-    year: str = "2017"
 
     def __hash__(self) -> int:
-        return hash(self.name)
+        return hash(self.skim_name)
+
+    @property
+    def skim_name(self) -> str:
+        return f"{self.year}_{self.name}"
+
+    @property
+    def directory_name(self):
+        return f"SKIM_{self.name}"
+
+    @property
+    def year_int(self) -> int:
+        return int(self.year[:4])
 
     def with_label_and_loss_weight(self, label: int | None, loss_weight: float = 1.0) -> Sample:
         return self.__class__(
             name=self.name,
+            year=self.year,
             label=label,
             loss_weight=loss_weight,
             spin=self.spin,
@@ -56,131 +132,116 @@ class Sample:
         )
 
 
+# Note that two things are different in 2016APV and 2016 w.r.t. 2017 and 2018:
+# - Graviton samples miss "Bulk" in the name
+# - buggy DY suffix, "To" -> "to" in PtZ 250, 400 and 650
 all_samples = [
-    Sample("SKIM_ggF_Radion_m250", spin=0, mass=250.0),
-    Sample("SKIM_ggF_Radion_m260", spin=0, mass=260.0),
-    Sample("SKIM_ggF_Radion_m270", spin=0, mass=270.0),
-    Sample("SKIM_ggF_Radion_m280", spin=0, mass=280.0),
-    Sample("SKIM_ggF_Radion_m300", spin=0, mass=300.0),
-    Sample("SKIM_ggF_Radion_m320", spin=0, mass=320.0),
-    Sample("SKIM_ggF_Radion_m350", spin=0, mass=350.0),
-    Sample("SKIM_ggF_Radion_m400", spin=0, mass=400.0),
-    Sample("SKIM_ggF_Radion_m450", spin=0, mass=450.0),
-    Sample("SKIM_ggF_Radion_m500", spin=0, mass=500.0),
-    Sample("SKIM_ggF_Radion_m550", spin=0, mass=550.0),
-    Sample("SKIM_ggF_Radion_m600", spin=0, mass=600.0),
-    Sample("SKIM_ggF_Radion_m650", spin=0, mass=650.0),
-    Sample("SKIM_ggF_Radion_m700", spin=0, mass=700.0),
-    Sample("SKIM_ggF_Radion_m750", spin=0, mass=750.0),
-    Sample("SKIM_ggF_Radion_m800", spin=0, mass=800.0),
-    Sample("SKIM_ggF_Radion_m850", spin=0, mass=850.0),
-    Sample("SKIM_ggF_Radion_m900", spin=0, mass=900.0),
-    Sample("SKIM_ggF_Radion_m1000", spin=0, mass=1000.0),
-    Sample("SKIM_ggF_Radion_m1250", spin=0, mass=1250.0),
-    Sample("SKIM_ggF_Radion_m1500", spin=0, mass=1500.0),
-    Sample("SKIM_ggF_Radion_m1750", spin=0, mass=1750.0),
-    Sample("SKIM_ggF_Radion_m2000", spin=0, mass=2000.0),
-    Sample("SKIM_ggF_Radion_m2500", spin=0, mass=2500.0),
-    Sample("SKIM_ggF_Radion_m3000", spin=0, mass=3000.0),
-    Sample("SKIM_ggF_BulkGraviton_m250", spin=2, mass=250.0),
-    Sample("SKIM_ggF_BulkGraviton_m260", spin=2, mass=260.0),
-    Sample("SKIM_ggF_BulkGraviton_m270", spin=2, mass=270.0),
-    Sample("SKIM_ggF_BulkGraviton_m280", spin=2, mass=280.0),
-    Sample("SKIM_ggF_BulkGraviton_m300", spin=2, mass=300.0),
-    Sample("SKIM_ggF_BulkGraviton_m320", spin=2, mass=320.0),
-    Sample("SKIM_ggF_BulkGraviton_m350", spin=2, mass=350.0),
-    Sample("SKIM_ggF_BulkGraviton_m400", spin=2, mass=400.0),
-    Sample("SKIM_ggF_BulkGraviton_m450", spin=2, mass=450.0),
-    Sample("SKIM_ggF_BulkGraviton_m500", spin=2, mass=500.0),
-    Sample("SKIM_ggF_BulkGraviton_m550", spin=2, mass=550.0),
-    Sample("SKIM_ggF_BulkGraviton_m600", spin=2, mass=600.0),
-    Sample("SKIM_ggF_BulkGraviton_m650", spin=2, mass=650.0),
-    Sample("SKIM_ggF_BulkGraviton_m700", spin=2, mass=700.0),
-    Sample("SKIM_ggF_BulkGraviton_m750", spin=2, mass=750.0),
-    Sample("SKIM_ggF_BulkGraviton_m800", spin=2, mass=800.0),
-    Sample("SKIM_ggF_BulkGraviton_m850", spin=2, mass=850.0),
-    Sample("SKIM_ggF_BulkGraviton_m900", spin=2, mass=900.0),
-    Sample("SKIM_ggF_BulkGraviton_m1000", spin=2, mass=1000.0),
-    Sample("SKIM_ggF_BulkGraviton_m1250", spin=2, mass=1250.0),
-    Sample("SKIM_ggF_BulkGraviton_m1500", spin=2, mass=1500.0),
-    Sample("SKIM_ggF_BulkGraviton_m1750", spin=2, mass=1750.0),
-    Sample("SKIM_ggF_BulkGraviton_m2000", spin=2, mass=2000.0),
-    Sample("SKIM_ggF_BulkGraviton_m2500", spin=2, mass=2500.0),
-    Sample("SKIM_ggF_BulkGraviton_m3000", spin=2, mass=3000.0),
-    Sample("SKIM_DY_amc_incl"),
-    Sample("SKIM_DY_amc_0j"),
-    Sample("SKIM_DY_amc_1j"),
-    Sample("SKIM_DY_amc_2j"),
-    Sample("SKIM_DY_amc_PtZ_0To50"),
-    Sample("SKIM_DY_amc_PtZ_100To250"),
-    Sample("SKIM_DY_amc_PtZ_250To400"),
-    Sample("SKIM_DY_amc_PtZ_400To650"),
-    Sample("SKIM_DY_amc_PtZ_50To100"),
-    Sample("SKIM_DY_amc_PtZ_650ToInf"),
-    Sample("SKIM_TT_fullyLep"),
-    Sample("SKIM_TT_semiLep"),
-    Sample("SKIM_ttHToTauTau"),
+    *[
+        Sample(f"ggF_{res_name}_m{mass}", year=year, spin=spin, mass=float(mass))
+        for year in ["2016APV", "2016"]
+        for spin, res_name in [(0, "Radion"), (2, "Graviton")]
+        for mass in masses
+    ],
+    *[
+        Sample(f"ggF_{res_name}_m{mass}", year=year, spin=spin, mass=float(mass))
+        for year in ["2017", "2018"]
+        for spin, res_name in [(0, "Radion"), (2, "BulkGraviton")]
+        for mass in masses
+    ],
+    *[
+        Sample(f"TT_{tt_channel}Lep", year=year)
+        for year in luminosities.keys()
+        for tt_channel in ["fully", "semi"]
+    ],
+    *[
+        Sample(f"DY_amc_{dy_suffix}", year=year)
+        for year in ["2016APV", "2016"]
+        for dy_suffix in [
+            "incl", "0j", "1j", "2j",
+            "PtZ_0To50", "PtZ_50To100", "PtZ_100To250", "PtZ_250to400", "PtZ_400to650", "PtZ_650toInf",
+        ]
+    ],
+    *[
+        Sample(f"DY_amc_{dy_suffix}", year=year)
+        for year in ["2017", "2018"]
+        for dy_suffix in [
+            "incl", "0j", "1j", "2j",
+            "PtZ_0To50", "PtZ_50To100", "PtZ_100To250", "PtZ_250To400", "PtZ_400To650", "PtZ_650ToInf",
+        ]
+    ],
 ]
 
 
 # helper to get a single sample by name and year
-def get_sample(name: str, year: int) -> Sample:
+def get_sample(skim_name: str, silent: bool = False) -> Sample | None:
     for sample in all_samples:
-        if sample.name == name and sample.year == year:
+        if sample.skim_name == skim_name:
             return sample
-    raise ValueError(f"sample {name} (year {year}) not found")
+    if silent:
+        return None
+    raise ValueError(f"sample with skim_name {skim_name} not found")
 
 
-# helper to select samples
+# helper to select samples with skim_name patterns
 def select_samples(*patterns):
     samples = []
     for pattern in patterns:
-        match = (
-            (lambda name: re.match(pattern, name))
-            if pattern.startswith("^") and pattern.endswith("$")
-            else (lambda name: fnmatch.fnmatch(name, pattern))
-        )
         for sample in all_samples:
-            if match(sample.name) and sample not in samples:
+            if match(sample.skim_name, pattern) and sample not in samples:
                 samples.append(sample)
     return samples
 
 
+# note that graviton samples in 2016APV and 2016 are different from 2017 and 2018
+train_masses_central = "320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750"
+train_masses_all = "250|260|270|280|300|320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750|2000|2500|3000"
 sample_sets = {
-    "default": select_samples(
-        r"^SKIM_ggF_Radion_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
-        r"^SKIM_ggF_BulkGraviton_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
-        "SKIM_DY_amc_incl",
-        r"^SKIM_TT_(fully|semi)Lep$",
-    ),
-    "dyptz": select_samples(
-        r"^SKIM_ggF_Radion_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
-        r"^SKIM_ggF_BulkGraviton_m(320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750)$",
-        r"^SKIM_DY_amc_PtZ_.*$",
-        r"^SKIM_TT_(fully|semi)Lep$",
-    ),
+    "default_2016APV": (samples_default_2016APV := select_samples(
+        rf"^2016APV_ggF_Radion_m({train_masses_all})$",
+        rf"^2016APV_ggF_Graviton_m({train_masses_all})$",
+        r"^2016APV_DY_amc_PtZ_.*$",
+        r"^2016APV_TT_(fully|semi)Lep$",
+    )),
+    "default_2016": (samples_default_2016 := select_samples(
+        rf"^2016_ggF_Radion_m({train_masses_all})$",
+        rf"^2016_ggF_Graviton_m({train_masses_all})$",
+        r"^2016_DY_amc_PtZ_.*$",
+        r"^2016_TT_(fully|semi)Lep$",
+    )),
+    "default_2016all": samples_default_2016APV + samples_default_2016,
+    "default_2017": (samples_default_2017 := select_samples(
+        rf"^2017_ggF_Radion_m({train_masses_all})$",
+        rf"^2017_ggF_BulkGraviton_m({train_masses_all})$",
+        r"^2017_DY_amc_PtZ_.*$",
+        r"^2017_TT_(fully|semi)Lep$",
+    )),
+    "default_2018": (samples_default_2018 := select_samples(
+        rf"^2018_ggF_Radion_m({train_masses_all})$",
+        rf"^2018_ggF_BulkGraviton_m({train_masses_all})$",
+        r"^2018_DY_amc_PtZ_.*$",
+        r"^2018_TT_(fully|semi)Lep$",
+    )),
+    "default": samples_default_2016APV + samples_default_2016 + samples_default_2017 + samples_default_2018,
     "test": select_samples(
-        "SKIM_ggF_BulkGraviton_m500",
-        "SKIM_ggF_BulkGraviton_m550",
-        "SKIM_DY_amc_PtZ_0To50",
-        "SKIM_DY_amc_PtZ_100To250",
-        "SKIM_TT_semiLep",
+        "2017_ggF_BulkGraviton_m500",
+        "2017_ggF_BulkGraviton_m550",
+        "2017_DY_amc_PtZ_0To50",
+        "2017_DY_amc_PtZ_100To250",
+        "2017_TT_semiLep",
     ),
 }
-
 
 label_sets = {
     "binary": {
-        0: {"name": "Signal", "sample_patterns": ["*SKIM_ggF_Radion*", "*SKIM_ggF_BulkGraviton*"]},
-        1: {"name": "Background", "sample_patterns": ["*SKIM_DY*", "*SKIM_TT*"]},
+        0: {"name": "Signal", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        1: {"name": "Background", "sample_patterns": ["201*_DY*", "201*_TT*"]},
     },
     "multi3": {
-        0: {"name": "HH", "sample_patterns": ["*SKIM_ggF_Radion*", "*SKIM_ggF_BulkGraviton*"]},
-        1: {"name": "TT", "sample_patterns": ["*SKIM_TT*"]},
-        2: {"name": "DY", "sample_patterns": ["*SKIM_DY*"]},
+        0: {"name": "HH", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        1: {"name": "TT", "sample_patterns": ["201*_TT*"]},
+        2: {"name": "DY", "sample_patterns": ["201*_DY*"]},
     },
 }
-
 
 cont_feature_sets = {
     "reg": [
@@ -217,12 +278,29 @@ cat_feature_sets = {
     ],
 }
 
-masses = [
-    250, 260, 270, 280, 300, 320, 350, 400, 450, 500, 550, 600, 650,
-    700, 750, 800, 850, 900, 1000, 1250, 1500, 1750, 2000, 2500, 3000,
-]
-
-spins = [0, 2]
+selection_sets = {
+    "baseline": (baseline_selection := [
+        "nbjetscand > 1",
+        "nleps == 0",
+        "isOS == 1",
+        "dau2_deepTauVsJet >= 5",
+        (
+            "((pairType == 0) & (dau1_iso < 0.15) & (isLeptrigger == 1)) | "
+            "((pairType == 1) & (dau1_eleMVAiso == 1) & (isLeptrigger == 1)) | "
+            "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
+        ),
+    ]),
+    "signal": {
+        year: baseline_selection + [
+            (
+                f"(bjet1_bID_deepFlavor > {w['medium']}) | "
+                f"(bjet2_bID_deepFlavor > {w['medium']}) | "
+                f"((isBoosted == 1) & (bjet1_bID_deepFlavor > {w['loose']}) & (bjet2_bID_deepFlavor > {w['loose']}))"
+            ),
+        ]
+        for year, w in btag_wps.items()
+    },
+}
 
 klub_aliases: dict[str, str] = {
     "bjet1_btag_deepFlavor": "bjet1_bID_deepFlavor",
@@ -400,12 +478,13 @@ class RegressionSet:
     model_files: dict[int, str]
     cont_feature_set: str
     cat_feature_set: str
+    parameterize_year: bool = False
     parameterize_spin: bool = True
     parameterize_mass: bool = True
     use_last_layers: bool = False
     fine_tune: bool = False
 
-    def with_attr(self, **attrs) -> RegressionSet:
+    def copy(self, **attrs) -> RegressionSet:
         kwargs = self.__dict__.copy()
         kwargs.update(attrs)
         return self.__class__(**kwargs)
@@ -421,10 +500,11 @@ regression_sets = {
         },
         cont_feature_set="reg2",
         cat_feature_set="reg",
+        parameterize_year=False,
         parameterize_spin=True,
         parameterize_mass=True,
         fine_tune=False,
         use_last_layers=True,
     )),
-    "default_ft": default_reg_set.with_attr(fine_tune=True),
+    "default_ft": default_reg_set.copy(fine_tune=True),
 }

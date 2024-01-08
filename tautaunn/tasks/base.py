@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import glob
-import fnmatch
 import math
 
 import luigi
 import law
+
+import tautaunn.config as cfg
 
 
 law.contrib.load("tasks", "htcondor", "slurm", "git", "root", "tensorflow")
@@ -331,66 +333,73 @@ class SlurmWorkflow(law.slurm.SlurmWorkflow):
         return config
 
 
-class SkimDirTask(Task):
+class SkimTask(Task):
 
-    skim_dir = luigi.Parameter(
-        default="$TN_SKIMS_2017",
-        description="path to the skim directory; default: TN_SKIMS_2017",
+    skim_name = luigi.Parameter(
+        description="the name and year of a skim in the format '<YEAR>_<SAMPLE>'; no default",
     )
 
     @classmethod
-    def resolve_param_values(cls, params: dict) -> dict:
-        params = super().resolve_param_values(params)
-        params["skim_dir"] = os.path.abspath(os.path.expandvars(os.path.expanduser(params["skim_dir"])))
-        return params
-
-
-class SkimTask(SkimDirTask):
-
-    skim_name = luigi.Parameter()
-
-    def store_parts(self) -> law.util.InsertableDict:
-        parts = super().store_parts()
-        parts["skim_name"] = self.skim_name
-        return parts
-
-    def get_skim_file(self, num):
-        return law.LocalFileTarget(os.path.join(self.skim_dir, self.skim_name, f"output_{num}.root"))
-
-
-class MultiSkimTask(SkimDirTask):
-
-    skim_names = law.CSVParameter(
-        default=("SKIM_*",),
-        description="skim name pattern(s); default: SKIM_*",
-    )
-    skip_skim_names = law.CSVParameter(
-        default=(),
-        description="skim name pattern(s) to skip; default: empty",
-    )
-
-    @classmethod
-    def resolve_param_values(cls, params: dict) -> dict:
-        params = super().resolve_param_values(params)
-
-        # expand skim names
-        skim_names = []
-        for pattern in params["skim_names"]:
-            paths = glob.glob(os.path.join(params["skim_dir"], pattern))
-            skim_names.extend(sorted(map(os.path.basename, paths)))
-        params["skim_names"] = tuple(sorted(set(skim_names), key=skim_names.index))
-
-        return params
+    def split_skim_name(cls, skim_name: str) -> tuple[str, str, str, cfg.Sample]:
+        m = re.match(rf"^({'|'.join(cfg.skim_dirs.keys())})_(.+)$", skim_name)
+        if not m:
+            raise ValueError(f"invalid skim name format '{skim_name}'")
+        skim_year = m.group(1)
+        sample_name = m.group(2)
+        return sample_name, skim_year
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # determine selected skim names
-        self.selected_skim_names = [
-            skim_name
+        # get the skim directory and the sample name from the skim_name
+        self.sample_name, self.skim_year = self.split_skim_name(self.skim_name)
+        self.skim_dir = cfg.skim_dirs[self.skim_year]
+
+        # check if the sample is already registered in the config,
+        # and if not, it is likely a background sample, so create it
+        self.sample = cfg.get_sample(self.skim_name, silent=True)
+        if self.sample is None:
+            self.sample = cfg.Sample(self.sample_name, year=self.skim_year)
+
+    def store_parts(self) -> law.util.InsertableDict:
+        parts = super().store_parts()
+        parts["sample_directory"] = self.sample.directory_name
+        parts.insert_after("version", "year", self.sample.year)
+        return parts
+
+    def get_skim_file(self, num):
+        return law.LocalFileTarget(os.path.join(self.skim_dir, self.sample.directory_name, f"output_{num}.root"))
+
+
+class MultiSkimTask(Task):
+
+    skim_names = law.CSVParameter(
+        default=("201*_*",),
+        description="skim name pattern(s); default: 201*_*",
+    )
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # get all corresponding sample objects, creating new ones if they do not exist yet
+        self.samples = [
+            cfg.get_sample(skim_name, silent=True) or cfg.Sample(*SkimTask.split_skim_name(skim_name))
             for skim_name in self.skim_names
-            if not any(fnmatch.fnmatch(skim_name, pattern) for pattern in self.skip_skim_names)
         ]
+
+    @classmethod
+    def resolve_param_values(cls, params: dict) -> dict:
+        params = super().resolve_param_values(params)
+
+        # resolve skim_names based on directories existing on disk
+        resolved_skim_names = []
+        for year, sample_names in cfg.get_all_skim_names().items():
+            for sample_name in sample_names:
+                if law.util.multi_match((skim_name := f"{year}_{sample_name}"), params["skim_names"]):
+                    resolved_skim_names.append(skim_name)
+        params["skim_names"] = tuple(resolved_skim_names)
+
+        return params
 
 
 class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow):
@@ -399,7 +408,7 @@ class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow)
     def skim_nums(self):
         return [
             int(os.path.basename(path)[7:-5])
-            for path in glob.glob(os.path.join(self.skim_dir, self.skim_name, "output_*.root"))
+            for path in glob.glob(os.path.join(self.skim_dir, self.sample.directory_name, "output_*.root"))
         ]
 
     def create_branch_map(self):
