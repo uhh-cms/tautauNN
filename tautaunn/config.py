@@ -493,9 +493,7 @@ class RegressionSet:
 regression_sets = {
     "default": (default_reg_set := RegressionSet(
         model_files={
-            # TODO: update to actual model
-            # fold: "/gpfs/dust/cms/user/riegerma/taunn_data/reg_models/ttnn_para_set_0"
-            fold: "/gpfs/dust/cms/user/riegerma/taunn_data/reg_models/reg_mass_para_class_l2n400_removeMoreVars_addBkgs_addlast_test_set_1"
+            fold: os.path.join(os.getenv("TN_DATA_DIR"), "reg_models/reg_mass_para_class_l2n400_removeMoreVars_addBkgs_addlast_set_1")  # noqa
             for fold in range(10)
         },
         cont_feature_set="reg2",
