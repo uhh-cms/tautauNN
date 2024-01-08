@@ -72,7 +72,7 @@ class TrainingParameters(Task):
     )
     learning_rate_patience = luigi.IntParameter(
         default=8,
-        description="non-improving steps before reducing learning rate; default: 10",
+        description="non-improving steps before reducing learning rate; default: 8",
     )
     learning_rate_reductions = luigi.IntParameter(
         default=6,
@@ -80,7 +80,7 @@ class TrainingParameters(Task):
     )
     early_stopping_patience = luigi.IntParameter(
         default=12,
-        description="non-improving steps before stopping training; default: 10",
+        description="non-improving steps before stopping training; default: 12",
     )
     background_weight = luigi.FloatParameter(
         default=1.0,
