@@ -406,10 +406,10 @@ class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow)
 
     @law.workflow_property(attr="_skim_nums", cache=True)
     def skim_nums(self):
-        return [
+        return sorted(
             int(os.path.basename(path)[7:-5])
             for path in glob.glob(os.path.join(self.skim_dir, self.sample.directory_name, "output_*.root"))
-        ]
+        )
 
     def create_branch_map(self):
         return self.skim_nums

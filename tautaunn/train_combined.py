@@ -18,7 +18,6 @@ import os
 import re
 import json
 import time
-import random
 import shutil
 from collections import defaultdict
 from getpass import getuser
@@ -95,6 +94,7 @@ def train(
     data_dirs: dict[str, str] = data_dirs,
     cache_dir: str | None = cache_dir,
     tensorboard_dir: str | None = tensorboard_dir,
+    tensorboard_version: str | None = None,
     clear_existing_tensorboard: bool = True,
     model_dir: str = model_dir,
     model_fallback_dir: str | None = model_fallback_dir,
@@ -223,8 +223,8 @@ def train(
     n_folds: int = 5,
     # number of the fold to train for
     fold_index: int = 0,
-    # how many of the training folds to use for validation
-    n_validation_folds: int = 1,
+    # fraction of events to use for validation, relative to number of events in the training folds
+    validation_fraction: float = 0.25,
     # seed for random number generators, if None, uses fold_index + 1
     seed: int | None = None,
 ) -> tuple[tf.keras.Model, str] | None:
@@ -238,7 +238,7 @@ def train(
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
     assert 0 <= fold_index < n_folds
-    assert 1 <= n_validation_folds < n_folds - 1
+    assert 0 < validation_fraction < 1
     assert optimizer in ["adam", "adamw"]
     assert len(samples) == len(set(samples))
     assert all(sample.year in data_dirs for sample in samples)
@@ -359,9 +359,6 @@ def train(
 
     # prepare fold indices to use
     train_fold_indices: list[int] = [i for i in range(n_folds) if i != fold_index]
-    valid_fold_indices: list[int] = []
-    while len(valid_fold_indices) < n_validation_folds:
-        valid_fold_indices.append(train_fold_indices.pop(random.randint(0, len(train_fold_indices) - 1)))
 
     # helper to flatten rec arrays
     flatten_rec = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
@@ -399,24 +396,30 @@ def train(
                 spins.add(int(sample.spin))
             cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
 
-        # training and validation mask using event number and fold indices
+        # lookup all number of events used during training using event number and fold indices
         last_digit = rec["EventNumber"] % n_folds
-        train_mask = np.any(last_digit[..., None] == train_fold_indices, axis=1)
-        valid_mask = np.any(last_digit[..., None] == valid_fold_indices, axis=1)
+        all_train_indices = np.where(np.any(last_digit[..., None] == train_fold_indices, axis=1))[0]
+        # randomly split according to validation_fraction into actual training and validation indices
+        valid_indices = np.random.choice(
+            all_train_indices,
+            size=int(len(all_train_indices) * validation_fraction),
+            replace=False,
+        )
+        train_indices = np.setdiff1d(all_train_indices, valid_indices)
 
         # fill dataset lists
-        cont_inputs_train.append(cont_inputs[train_mask])
-        cont_inputs_valid.append(cont_inputs[valid_mask])
+        cont_inputs_train.append(cont_inputs[train_indices])
+        cont_inputs_valid.append(cont_inputs[valid_indices])
 
-        cat_inputs_train.append(cat_inputs[train_mask])
-        cat_inputs_valid.append(cat_inputs[valid_mask])
+        cat_inputs_train.append(cat_inputs[train_indices])
+        cat_inputs_valid.append(cat_inputs[valid_indices])
 
-        labels_train.append(labels[train_mask])
-        labels_valid.append(labels[valid_mask])
+        labels_train.append(labels[train_indices])
+        labels_valid.append(labels[valid_indices])
 
         event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
-        event_weights_train.append(event_weights[train_mask][..., None])
-        event_weights_valid.append(event_weights[valid_mask][..., None])
+        event_weights_train.append(event_weights[train_indices][..., None])
+        event_weights_valid.append(event_weights[valid_indices][..., None])
 
         # store the yield factor for later use
         yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
@@ -649,9 +652,13 @@ def train(
                 return True
 
         # prepare the tensorboard dir
-        full_tensorboard_dir = os.path.join(tensorboard_dir, model_name) if tensorboard_dir else None
-        if full_tensorboard_dir and clear_existing_tensorboard and os.path.exists(full_tensorboard_dir):
-            shutil.rmtree(full_tensorboard_dir)
+        full_tensorboard_dir = None
+        if tensorboard_dir:
+            full_tensorboard_dir = os.path.join(tensorboard_dir, model_name)
+            if tensorboard_version:
+                full_tensorboard_dir = os.path.join(full_tensorboard_dir, tensorboard_version)
+            if clear_existing_tensorboard and os.path.exists(full_tensorboard_dir):
+                shutil.rmtree(full_tensorboard_dir)
 
         # callbacks
         fit_callbacks = [
@@ -808,7 +815,7 @@ def train(
                 "n_classes": n_classes,
                 "n_folds": n_folds,
                 "fold_index": fold_index,
-                "n_validation_folds": n_validation_folds,
+                "validation_fraction": validation_fraction,
                 "seed": seed,
                 "architecture": {
                     "units": units,
@@ -921,16 +928,19 @@ def create_model(
         a_cat = tf.gather(a_cat, regression_data["cat_input_indices"], axis=1)
 
         # update continuous input means and vars assuming that regression outputs are in a good range
+        # TODO: maybe still apply a batch norm here?
         cont_input_means = np.append(cont_input_means, [0.0] * n_reg_cont_outputs, axis=0)
         cont_input_vars = np.append(cont_input_vars, [1.0] * n_reg_cont_outputs, axis=0)
 
         # concatenate the regression outputs to the continuous inputs
         reg_concat_layers = [a_cont, reg_out_reg, reg_out_cls]
+        # reg_concat_layers = [a_cont, reg_out_reg * 0.0, reg_out_cls * 0.0]
         if regression_data["use_last_layers"]:
             reg_concat_layers += [reg_out_reg_last, reg_out_cls_last]
         a_cont = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
 
     # normalize continuous inputs
+    # TODO: move this above the regression pre-NN?
     norm_layer = tf.keras.layers.Normalization(mean=cont_input_means, variance=cont_input_vars, name="norm")
     a = norm_layer(a_cont)
 
