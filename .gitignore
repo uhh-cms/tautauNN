@@ -19,6 +19,7 @@
 *.out
 *.law
 *.vscode
+*.ipynb
 __pycache__
 dist
 build
