@@ -220,6 +220,7 @@ class Training(TrainingParameters):
                 if self.skip_tensorboard
                 else os.getenv("TN_TENSORBOARD_DIR", os.path.join(os.environ["TN_DATA_DIR"], "tensorboard"))
             ),
+            tensorboard_version=self.version,
             clear_existing_tensorboard=True,
             model_dir=self.output()["saved_model"].parent.path,
             samples=samples,
@@ -248,7 +249,7 @@ class Training(TrainingParameters):
             regression_set=None if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
             n_folds=self.n_folds,
             fold_index=self.fold,
-            n_validation_folds=1,
+            validation_fraction=0.25,
             seed=self.seed,
         )
 

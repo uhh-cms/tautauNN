@@ -278,6 +278,8 @@ cat_feature_sets = {
     ],
 }
 
+# selection sets can be strings, lists (which will be AND joined) or dictionaries with years mapping to strings or lists
+# (in the latter case, the training script will choose the year automatically based on the sample)
 selection_sets = {
     "baseline": (baseline_selection := [
         "nbjetscand > 1",
