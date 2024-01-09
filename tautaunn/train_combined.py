@@ -895,15 +895,15 @@ def create_model(
     x_cont = tf.keras.Input(n_cont_inputs, dtype=tf.float32, name="cont_input")
     x_cat = tf.keras.Input(n_cat_inputs, dtype=tf.int32, name="cat_input")
 
-    # aliases that might be changed in case of regression pre-NN
-    a_cont = x_cont
-    a_cat = x_cat
+    # layers that define the total input in the DNN that are concatenated
+    dnn_input_layers = []
 
     # regression pre-NN
     if regression_data:
-        # load the model
-        with tf.name_scope("regression_nn"):
-            reg_model = tf.keras.models.load_model(regression_data["model_file"])
+        # load the model and add a postfix to all layer names
+        reg_model = tf.keras.models.load_model(regression_data["model_file"])
+        for layer in reg_model.layers:
+            layer._name = f"regression_nn/{layer.name}"
 
         # add back empty kernel regualizers to all dense layers
         for layer in reg_model.layers:
@@ -914,54 +914,62 @@ def create_model(
         reg_model.trainable = False
 
         # get the pre-NN inputs
-        reg_x_cont = tf.gather(a_cont, regression_data["reg_cont_input_indices"], axis=1)
-        reg_x_cat = tf.gather(a_cat, regression_data["reg_cat_input_indices"], axis=1)
+        reg_cont = tf.gather(x_cont, regression_data["reg_cont_input_indices"], axis=1, name="select_reg_cont_inputs")
+        reg_cat = tf.gather(x_cat, regression_data["reg_cat_input_indices"], axis=1, name="select_reg_cat_inputs")
 
         # run the pre-NN
-        reg_out_reg, _, reg_out_cls, reg_out_reg_last, reg_out_cls_last = reg_model([reg_x_cont, reg_x_cat])
-        n_reg_cont_outputs = int(reg_out_reg.shape[1] + reg_out_cls.shape[1])
-        if regression_data["use_last_layers"]:
-            n_reg_cont_outputs += int(reg_out_reg_last.shape[1] + reg_out_cls_last.shape[1])
+        reg_out_reg, _, reg_out_cls, reg_out_reg_last, reg_out_cls_last = reg_model([reg_cont, reg_cat])
 
-        # update original inputs
-        a_cont = tf.gather(a_cont, regression_data["cont_input_indices"], axis=1)
-        a_cat = tf.gather(a_cat, regression_data["cat_input_indices"], axis=1)
-
-        # update continuous input means and vars assuming that regression outputs are in a good range
-        # TODO: maybe still apply a batch norm here?
-        cont_input_means = np.append(cont_input_means, [0.0] * n_reg_cont_outputs, axis=0)
-        cont_input_vars = np.append(cont_input_vars, [1.0] * n_reg_cont_outputs, axis=0)
-
-        # concatenate the regression outputs to the continuous inputs
-        reg_concat_layers = [a_cont, reg_out_reg, reg_out_cls]
-        # reg_concat_layers = [a_cont, reg_out_reg * 0.0, reg_out_cls * 0.0]
+        # concatenate all regression outputs
+        reg_concat_layers = [reg_out_reg, reg_out_cls]
         if regression_data["use_last_layers"]:
             reg_concat_layers += [reg_out_reg_last, reg_out_cls_last]
-        a_cont = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
+        reg_out = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
 
-    # normalize continuous inputs
-    # TODO: move this above the regression pre-NN?
-    norm_layer = tf.keras.layers.Normalization(mean=cont_input_means, variance=cont_input_vars, name="norm")
-    a = norm_layer(a_cont)
+        # batch normalize the regression outputs
+        reg_out = tf.keras.layers.BatchNormalization(name="reg_batchnorm")(reg_out)
+
+        # define as input
+        dnn_input_layers.append(reg_out)
+
+        # update original inputs
+        dnn_cont = tf.gather(x_cont, regression_data["cont_input_indices"], axis=1, name="select_dnn_cont_inputs")
+        dnn_cat = tf.gather(x_cat, regression_data["cat_input_indices"], axis=1, name="select_dnn_cat_inputs")
+
+    else:
+        # no regression as pre-nn, use all inputs as dnn inputs
+        dnn_cont = x_cont
+        dnn_cat = x_cat
 
     # embedding layer
     if n_cat_inputs > 0:
         # encode categorical inputs to indices
-        b = EmbeddingEncoder(embedding_expected_inputs, name="cat_encoder")(a_cat)
+        dnn_cat_encoded = EmbeddingEncoder(embedding_expected_inputs, name="cat_encoder")(dnn_cat)
 
         # actual embedding
-        b = tf.keras.layers.Embedding(
+        dnn_cat_embedded = tf.keras.layers.Embedding(
             input_dim=sum(map(len, embedding_expected_inputs)),
             output_dim=embedding_output_dim,
             input_length=n_cat_inputs,
             name="cat_embedded",
-        )(b)
+        )(dnn_cat_encoded)
 
         # flatten
-        b = tf.keras.layers.Flatten(name="cat_flat")(b)
+        dnn_cat_embedded_flat = tf.keras.layers.Flatten(name="cat_flat")(dnn_cat_embedded)
 
-        # combine with continuous inputs
-        a = tf.keras.layers.Concatenate(name="input_concat")([a, b])
+        # define as input
+        dnn_input_layers.insert(0, dnn_cat_embedded_flat)
+
+    # normalize continuous inputs and define as input
+    dnn_cont_norm = tf.keras.layers.Normalization(
+        mean=cont_input_means,
+        variance=cont_input_vars,
+        name="dnn_input_norm",
+    )(dnn_cont)
+    dnn_input_layers.insert(0, dnn_cont_norm)
+
+    # concatenate all inputs
+    a = tf.keras.layers.Concatenate(name="input_concat")(dnn_input_layers)
 
     # previous resnet layer for pairwise addition
     res_prev: tf.keras.layers.Layer | None = None
@@ -981,7 +989,7 @@ def create_model(
         a = dense_layer(a)
 
         # batch norm before activation if requested
-        batchnorm_layer = tf.keras.layers.BatchNormalization(dtype=tf.float32, name=f"norm_{i}")
+        batchnorm_layer = tf.keras.layers.BatchNormalization(dtype=tf.float32, name=f"batchnorm_{i}")
         batch_norm_before, batch_norm_after = act_settings.batch_norm
         if batch_norm and batch_norm_before:
             a = batchnorm_layer(a)
