@@ -17,6 +17,7 @@
 *.pb
 *.txt
 *.out
+*.env
 *.law
 *.vscode
 *.ipynb
