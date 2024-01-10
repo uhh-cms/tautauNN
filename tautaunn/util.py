@@ -19,6 +19,7 @@ import numpy as np
 import numpy.lib.recfunctions as rfn
 import uproot
 import awkward as ak
+import vector
 import tensorflow as tf
 import matplotlib
 matplotlib.use("Agg")
@@ -29,6 +30,25 @@ from law.util import human_duration
 epsilon = 1e-6
 
 
+def calc_top_masses(l_1, l_2, b_1, b_2, met):
+    # build all possible combinations of l,b and met
+    vector_mass_top = np.array([
+        ((l_1 + b_1 + met).mass, (l_2 + b_2).mass),
+        ((l_1 + b_2 + met).mass, (l_2 + b_1).mass),
+        ((l_1 + b_1).mass, (l_2 + b_2 + met).mass),
+        ((l_1 + b_2).mass, (l_2 + b_1 + met).mass)
+    ])
+    # calculate distance to top mass
+    distance = np.array([(mass[0] - 172.5) ** 2 + (mass[1] - 172.5) ** 2 for mass in vector_mass_top])
+    # get index (0-3) of object comb. which was closest
+    min_dis = np.argmin(distance, axis=0)
+    # get the corresponding object comb. from vector_mass_top
+    top_masses = [(vector_mass_top[m][0][i], vector_mass_top[m][1][i]) for i,m in enumerate(min_dis)]
+    # sort them such that the one with the largest mass is always first
+    top_masses = [sorted(m, reverse=True) for m in top_masses]
+    return top_masses, min_dis
+
+
 def _load_root_file_impl(file_name: str, features: list[str], selections: str) -> tuple[np.recarray, float, str] | str:
     from tautaunn.config import klub_aliases
 
@@ -37,6 +57,20 @@ def _load_root_file_impl(file_name: str, features: list[str], selections: str) -
             return file_name
         tree = f["HTauTauTree"]
         ak_array = tree.arrays(features, cut=selections, aliases=klub_aliases, library="ak")
+        dau1 = vector.array({"pt": ak_array.dau1_pt, "eta": ak_array.dau1_eta,
+                            "phi": ak_array.dau1_phi, "e": ak_array.dau1_e,})
+        dau2 = vector.array({"pt": ak_array.dau2_pt, "eta": ak_array.dau2_eta,
+                            "phi": ak_array.dau2_phi, "e": ak_array.dau2_e,})
+        b_1 = vector.array({"pt": ak_array.bjet1_pt, "eta": ak_array.bjet1_eta,
+                            "phi": ak_array.bjet1_phi, "e": ak_array.bjet1_e,})
+        b_2 = vector.array({"pt": ak_array.bjet2_pt, "eta": ak_array.bjet2_eta,
+                                "phi": ak_array.bjet2_phi, "e": ak_array.bjet2_e,})
+        met = vector.array({"pt": ak_array.met_et, "eta": np.zeros(len(ak_array)),
+                "phi": ak_array.met_phi, "mass": np.zeros(len(ak_array)), })
+        top_masses, top_mass_idx = calc_top_masses(l_1=dau1, l_2=dau2, b_1=b_1, b_2=b_2, met=met)
+        ak_array['top_1_mass'] = np.array([i[0] for i in top_masses], dtype='float32')
+        ak_array['top_2_mass'] = np.array([i[1] for i in top_masses], dtype='float32')
+        ak_array['top_mass_idx'] = np.asarray(top_mass_idx, dtype="int32")
         ak_array = ak.with_field(ak_array, 1.0, "sum_weights")
         rec = ak_array.to_numpy()
         return rec, f["h_eff"].values()[0], file_name
