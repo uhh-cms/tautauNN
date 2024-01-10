@@ -406,6 +406,10 @@ dynamic_columns = {
         ("dau1_eta", "dau2_eta"),
         (lambda a, b: np.abs(a - b)),
     ),
+    "ditau_deltaR": (
+        ("ditau_deltaphi", "ditau_deltaeta"),
+        (lambda a, b: np.sqrt(a**2 + b**2)),
+    ),
     "genNu1_px": (
         ("genNu1_pt", "genNu1_dphi"),
         (lambda a, b: a * np.cos(b)),
@@ -461,6 +465,10 @@ dynamic_columns = {
     "bjet2_pz": (
         ("bjet2_pt", "bjet2_eta"),
         (lambda a, b: a * np.sinh(b)),
+    ),
+    "dibjet_deltaR": (
+        ("bjet1_phi", "bjet2_phi, bjet1_eta, bjet2_eta"),
+        (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
     ),
 }
 
