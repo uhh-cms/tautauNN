@@ -467,7 +467,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "dibjet_deltaR": (
-        ("bjet1_phi", "bjet2_phi, bjet1_eta, bjet2_eta"),
+        ("bjet1_phi", "bjet2_phi", "bjet1_eta", "bjet2_eta"),
         (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
     ),
 }
