@@ -183,6 +183,7 @@ EOF
             "flake8-quotes" \
             "cmsml" \
             "hist" \
+            "vector" \
             "git+https://github.com/riga/law.git@master" \
             || return "$?"
     fi
