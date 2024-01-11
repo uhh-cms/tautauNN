@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from tautaunn.util import phi_mpi_to_pi, match
+from tautaunn.util import phi_mpi_to_pi, top_info, match
 
 
 @dataclass
@@ -474,6 +474,22 @@ dynamic_columns = {
     "dibjet_deltaR": (
         ("bjet1_phi", "bjet2_phi", "bjet1_eta", "bjet2_eta"),
         (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
+    ),
+    "top1_mass": (
+        top_info_fields := (
+            "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e",
+            "bjet1_pt", "bjet1_eta", "bjet1_phi", "bjet1_e", "bjet2_pt", "bjet2_eta", "bjet2_phi", "bjet2_e",
+            "met_et", "met_phi",
+        ),
+        (lambda *args: functools.partial(top_info, kind="top1_mass")(*args)),
+    ),
+    "top2_mass": (
+        top_info_fields,
+        (lambda *args: functools.partial(top_info, kind="top2_mass")(*args)),
+    ),
+    "top_mass_idx": (
+        top_info_fields,
+        (lambda *args: functools.partial(top_info, kind="indices")(*args)),
     ),
 }
 
