@@ -322,6 +322,10 @@ klub_index_columns = [
     "lumi",
 ]
 
+static_columns = ['isBoosted',
+                  *[f"tauH_SVFIT_{i}" for i in ('pt', 'eta', 'phi', 'mass')],
+                  'has_vbf_pair']
+
 dynamic_columns = {
     "DeepMET_ResolutionTune_phi": (
         ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"),
@@ -481,16 +485,20 @@ dynamic_columns = {
             "bjet1_pt", "bjet1_eta", "bjet1_phi", "bjet1_e", "bjet2_pt", "bjet2_eta", "bjet2_phi", "bjet2_e",
             "met_et", "met_phi",
         ),
-        (lambda *args: functools.partial(top_info, kind="top1_mass")(*args)),
+        (lambda *args: top_info(*args, kind="top1_mass")),
     ),
     "top2_mass": (
         top_info_fields,
-        (lambda *args: functools.partial(top_info, kind="top2_mass")(*args)),
+        (lambda *args: top_info(*args, kind="top2_mass")),
     ),
     "top_mass_idx": (
         top_info_fields,
-        (lambda *args: functools.partial(top_info, kind="indices")(*args)),
+        (lambda *args: top_info(*args, kind="indices")),
     ),
+    #"ditau_deltaR_x_sv_pt":(
+        #("ditau_deltaR", "tauH_SVFIT_pt"),
+        #(lambda a, b: a*b)
+    #)
 }
 
 embedding_expected_inputs = {
@@ -501,6 +509,8 @@ embedding_expected_inputs = {
     "dau2_charge": [-1, 1],
     "spin": [0, 2],
     "year": [2016, 2017, 2018],
+    "isBoosted": [0, 1],
+    "top_mass_idx": [0,1,2,3]
 }
 
 

@@ -150,7 +150,7 @@ def train(
     ],
     # categorical input features for the network
     cat_input_names: list[str] = [
-        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge",
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx"
     ],
     # continuous input features to the network
     cont_input_names: list[str] = [
@@ -170,6 +170,7 @@ def train(
                 "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef", "HHbtag",
             ]
         ],
+        'tauH_SVFIT_mass', 'tauH_SVFIT_pt', 'top1_mass', 'top2_mass'
     ],
     # number of layers and units
     units: list[int] = [128] * 5,

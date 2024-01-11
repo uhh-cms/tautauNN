@@ -224,12 +224,12 @@ def calc_top_masses(l_1, l_2, b_1, b_2, met):
 
 
 def top_info(
-    kind: str,
     dau1_pt, dau1_eta, dau1_phi, dau1_e,
     dau2_pt, dau2_eta, dau2_phi, dau2_e,
     bjet1_pt, bjet1_eta, bjet1_phi, bjet1_e,
     bjet2_pt, bjet2_eta, bjet2_phi, bjet2_e,
     met_et, met_phi,
+    kind: str,
 ):
     dau1 = vector.array({"pt": dau1_pt, "eta": dau1_eta, "phi": dau1_phi, "e": dau1_e})
     dau2 = vector.array({"pt": dau2_pt, "eta": dau2_eta, "phi": dau2_phi, "e": dau2_e})
