@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import functools
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -107,7 +108,11 @@ class Sample:
     mass: float = -1.0
 
     def __hash__(self) -> int:
-        return hash(self.skim_name)
+        return hash(self.hash_values)
+
+    @property
+    def hash_values(self) -> tuple[Any]:
+        return (self.skim_name, self.year, self.label, self.loss_weight, self.spin, self.mass)
 
     @property
     def skim_name(self) -> str:

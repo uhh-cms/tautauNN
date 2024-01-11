@@ -1,24 +1,14 @@
 # coding: utf-8
 
-"""
-Physics / optimization TODOs:
-- binary or multi-class
-- year weights
-- finalize input features
-- hyper-opt (including symmetric CCE with group weights)
-- prepend tauNN
-- increased background weights
-- influence of ensembling on limits
-- include low-mass signals again?
-"""
-
 from __future__ import annotations
 
 import os
 import re
 import json
 import time
+import pickle
 import shutil
+import hashlib
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
@@ -34,7 +24,7 @@ from tautaunn.tf_util import (
     get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStopAndRepeat, EmbeddingEncoder,
     LivePlotWriter,
 )
-from tautaunn.util import load_sample_root, calc_new_columns, create_model_name
+from tautaunn.util import load_sample_root, calc_new_columns, create_model_name, transform_data_dir_cache
 from tautaunn.config import (
     Sample, activation_settings, dynamic_columns, embedding_expected_inputs, regression_sets, cont_feature_sets,
     cat_feature_sets,
@@ -182,7 +172,7 @@ def train(
         ],
     ],
     # number of layers and units
-    units: list[int] = [125] * 5,
+    units: list[int] = [128] * 5,
     # connection type, "fcn", "res", or "dense"
     connection_type: str = "fcn",
     # dimension of the embedding layer output will be embedding_output_dim x len(cat_input_names)
@@ -339,17 +329,12 @@ def train(
     dyn_names = sorted(dyn_names, key=all_dyn_names.index)
 
     # get lists of embedded feature values
-    possible_cont_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
+    possible_cat_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
 
     # scan samples and their labels to construct relative weights such that each class starts with equal importance
     labels_to_samples: dict[int, list[str]] = defaultdict(list)
     for sample in samples:
         labels_to_samples[sample.label].append(sample.name)
-
-    # keep track of spins, masses, and yield factors
-    spins: set[int] = set()
-    masses: set[float] = set()
-    yield_factors: dict[str, float] = {}
 
     # lists for collection data to be forwarded into the MultiDataset
     cont_inputs_train, cont_inputs_valid = [], []
@@ -357,72 +342,130 @@ def train(
     labels_train, labels_valid = [], []
     event_weights_train, event_weights_valid = [], []
 
+    # keep track of yield factors
+    yield_factors: dict[str, float] = {}
+
     # prepare fold indices to use
     train_fold_indices: list[int] = [i for i in range(n_folds) if i != fold_index]
 
     # helper to flatten rec arrays
     flatten_rec = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
 
-    # loop through samples
-    for sample in samples:
-        rec = load_sample_root(
-            data_dirs[sample.year],
-            sample,
-            list(columns_to_read),
-            selections[sample.year],
-            # max_events=10000,
-            cache_dir=cache_dir,
-        )
-        n_events = len(rec)
+    data_is_cached = False
+    if cache_dir:
+        cache_key = [
+            tuple(sample.hash_values for sample in samples),
+            tuple(transform_data_dir_cache(data_dirs[year]) for year in sorted(years)),
+            tuple(sorted(selections[year]) for year in sorted(years)),
+            sorted(columns_to_read),
+            combined_cont_input_names,
+            combined_cat_input_names,
+            n_classes,
+            parameterize_year,
+            parameterize_mass,
+            parameterize_spin,
+            regression_set,
+            n_folds,
+            fold_index,
+            validation_fraction,
+            seed,
+        ]
+        cache_hash = hashlib.sha256(str(cache_key).encode("utf-8")).hexdigest()[:10]
+        cache_file = os.path.join(cache_dir, f"alldata_{cache_hash}.pkl")
+        data_is_cached = os.path.exists(cache_file)
 
-        # add dynamic columns
-        rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
+    if data_is_cached:
+        # read data from cache
+        print(f"loading all data from {cache_file}")
+        with open(cache_file, "rb") as f:
+            (
+                cont_inputs_train,
+                cont_inputs_valid,
+                cat_inputs_train,
+                cat_inputs_valid,
+                labels_train,
+                labels_valid,
+                event_weights_train,
+                event_weights_valid,
+                yield_factors,
+            ) = pickle.load(f)
 
-        # prepare arrays
-        cont_inputs = flatten_rec(rec[combined_cont_input_names], np.float32)
-        cat_inputs = flatten_rec(rec[combined_cat_input_names], np.int32)
-        labels = np.zeros((n_events, n_classes), dtype=np.float32)
-        labels[:, sample.label] = 1
+    else:
+        # loop through samples
+        for sample in samples:
+            rec = load_sample_root(
+                data_dirs[sample.year],
+                sample,
+                list(columns_to_read),
+                selections[sample.year],
+                cache_dir=cache_dir,
+            )
+            n_events = len(rec)
 
-        # add year, spin and mass if given
-        if parameterize_year or (regression_cfg and regression_cfg.parameterize_year):
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
-        if parameterize_mass or (regression_cfg and regression_cfg.parameterize_mass):
-            if sample.mass > -1:
-                masses.add(float(sample.mass))
-            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
-        if parameterize_spin or (regression_cfg and regression_cfg.parameterize_spin):
-            if sample.spin > -1:
-                spins.add(int(sample.spin))
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
+            # add dynamic columns
+            rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
 
-        # lookup all number of events used during training using event number and fold indices
-        last_digit = rec["EventNumber"] % n_folds
-        all_train_indices = np.where(np.any(last_digit[..., None] == train_fold_indices, axis=1))[0]
-        # randomly split according to validation_fraction into actual training and validation indices
-        valid_indices = np.random.choice(
-            all_train_indices,
-            size=int(len(all_train_indices) * validation_fraction),
-            replace=False,
-        )
-        train_indices = np.setdiff1d(all_train_indices, valid_indices)
+            # prepare arrays
+            cont_inputs = flatten_rec(rec[combined_cont_input_names], np.float32)
+            cat_inputs = flatten_rec(rec[combined_cat_input_names], np.int32)
+            labels = np.zeros((n_events, n_classes), dtype=np.float32)
+            labels[:, sample.label] = 1
 
-        # fill dataset lists
-        cont_inputs_train.append(cont_inputs[train_indices])
-        cont_inputs_valid.append(cont_inputs[valid_indices])
+            # add year, spin and mass if given
+            if parameterize_year or (regression_cfg and regression_cfg.parameterize_year):
+                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
+            if parameterize_mass or (regression_cfg and regression_cfg.parameterize_mass):
+                cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
+            if parameterize_spin or (regression_cfg and regression_cfg.parameterize_spin):
+                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
 
-        cat_inputs_train.append(cat_inputs[train_indices])
-        cat_inputs_valid.append(cat_inputs[valid_indices])
+            # lookup all number of events used during training using event number and fold indices
+            last_digit = rec["EventNumber"] % n_folds
+            all_train_indices = np.where(np.any(last_digit[..., None] == train_fold_indices, axis=1))[0]
+            # randomly split according to validation_fraction into actual training and validation indices
+            valid_indices = np.random.choice(
+                all_train_indices,
+                size=int(len(all_train_indices) * validation_fraction),
+                replace=False,
+            )
+            train_indices = np.setdiff1d(all_train_indices, valid_indices)
 
-        labels_train.append(labels[train_indices])
-        labels_valid.append(labels[valid_indices])
+            # fill dataset lists
+            cont_inputs_train.append(cont_inputs[train_indices])
+            cont_inputs_valid.append(cont_inputs[valid_indices])
 
-        event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
-        event_weights_train.append(event_weights[train_indices][..., None])
-        event_weights_valid.append(event_weights[valid_indices][..., None])
+            cat_inputs_train.append(cat_inputs[train_indices])
+            cat_inputs_valid.append(cat_inputs[valid_indices])
 
-        # store the yield factor for later use
-        yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
+            labels_train.append(labels[train_indices])
+            labels_valid.append(labels[valid_indices])
+
+            event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
+            event_weights_train.append(event_weights[train_indices][..., None])
+            event_weights_valid.append(event_weights[valid_indices][..., None])
+
+            # store the yield factor for later use
+            yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
+
+        if cache_dir:
+            # cache data
+            print(f"caching all data to {cache_file}")
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, "wb") as f:
+                pickle.dump(
+                    (
+                        cont_inputs_train,
+                        cont_inputs_valid,
+                        cat_inputs_train,
+                        cat_inputs_valid,
+                        labels_train,
+                        labels_valid,
+                        event_weights_train,
+                        event_weights_valid,
+                        yield_factors,
+                    ),
+                    f,
+                )
 
     # compute batch weights that ensures that each class is equally represented in each batch
     # and that samples within a class are weighted according to their yield
@@ -449,8 +492,8 @@ def train(
     for i in range(len(event_weights_valid)):
         event_weights_valid[i] = event_weights_valid[i] * composition_weights_valid[i]
 
-    # count number of training and validation samples per class
-    samples_per_class = {
+    # count number of training and validation events per class
+    events_per_class = {
         label: (
             int(sum(sum(labels[:, label]) for labels in labels_train)),
             int(sum(sum(labels[:, label]) for labels in labels_valid)),
@@ -479,10 +522,10 @@ def train(
     if add_year:
         combined_cat_input_names.append("year")
         # add to possible embedding values
-        possible_cont_input_values.append(embedding_expected_inputs["year"])
+        possible_cat_input_values.append(embedding_expected_inputs["year"])
 
     # handle masses
-    masses = sorted(masses)
+    masses = sorted(float(sample.mass) for sample in samples if sample.mass >= 0)
     add_mass = False
     if parameterize_mass:
         cont_input_names.append("mass")
@@ -498,7 +541,7 @@ def train(
         cont_input_vars[-1] = np.var(masses)
 
     # handle spins
-    spins = sorted(spins)
+    spins = sorted(int(sample.spin) for sample in samples if sample.spin >= 0)
     add_spin = False
     if parameterize_spin:
         cat_input_names.append("spin")
@@ -510,7 +553,7 @@ def train(
         assert len(spins) > 0
         combined_cat_input_names.append("spin")
         # add to possible embedding values
-        possible_cont_input_values.append(embedding_expected_inputs["spin"])
+        possible_cat_input_values.append(embedding_expected_inputs["spin"])
 
     with device:
         # live transformation of inputs to inject spin and mass for backgrounds
@@ -559,7 +602,7 @@ def train(
             n_cat_inputs=len(combined_cat_input_names),
             regression_data=regression_data,
             n_classes=n_classes,
-            embedding_expected_inputs=possible_cont_input_values,
+            embedding_expected_inputs=possible_cat_input_values,
             embedding_output_dim=embedding_output_dim,
             cont_input_means=cont_input_means,
             cont_input_vars=cont_input_vars,
@@ -602,6 +645,7 @@ def train(
         )
 
         # callback to repeat the lr and es scheduler once to enable fine-tuning of the regression pre-nn if set
+        # see https://keras.io/guides/transfer_learning/#finetuning
         lres_repeat = None
         if regression_cfg and regression_cfg.fine_tune:
             def lres_repeat(lres_callback: ReduceLRAndStopAndRepeat, logs: dict[str, Any]) -> bool:  # noqa
@@ -646,6 +690,7 @@ def train(
                     jit_compile=jit_compile,
                     run_eagerly=eager_mode,
                 )
+                # opt.iterations.assign(opt1.iterations)
                 # 4. optionally update lr and es patiences, lr factor and reductions
                 pass  # to be seen
                 print(f"\nenabled fine-tuning of {reg_model.name} layers")
@@ -692,7 +737,7 @@ def train(
         model.summary()
         header = ["Class (label)", "Total", "train", "valid"]
         rows = []
-        for (label, (n_train, n_valid)), class_name in zip(samples_per_class.items(), class_names.values()):
+        for (label, (n_train, n_valid)), class_name in zip(events_per_class.items(), class_names.values()):
             rows.append([f"{class_name} ({label})", n_train + n_valid, n_train, n_valid])
         rows.append(["Total", len(dataset_train) + len(dataset_valid), len(dataset_train), len(dataset_valid)])
         print("")
@@ -713,45 +758,6 @@ def train(
                 callbacks=list(filter(None, fit_callbacks)),
             )
             # model.load_weights("/gpfs/dust/cms/user/riegerma/taunn_data/store/Training/dev_weights/hbtres_LSbinary_FSreg-reg_ED5_LU5x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_LR3.0e-03_SPINy_MASSy_FI0_SD1")  # noqa
-
-            # # fine-tuning (aka. unfreeze pre-NN weights and re-fit)
-            # # see https://keras.io/guides/transfer_learning/#finetuning
-            # print("start fine-tuning")
-            # # make everything trainable
-            # for layer in model.layers:
-            #     if isinstance(layer, tf.keras.layers.Dense):
-            #         layer.trainable = True
-            # # re-compile (likely with larger l2 on pre-nn and smaller lr)
-            # model.compile(
-            #     loss="categorical_crossentropy",
-            #     optimizer=tf.keras.optimizers.Adam(
-            #         learning_rate=learning_rate,
-            #         jit_compile=jit_compile,
-            #     ),
-            #     metrics=[
-            #         tf.keras.metrics.CategoricalCrossentropy(name="ce"),
-            #         L2Metric(model, name="l2"),
-            #         tf.keras.metrics.CategoricalAccuracy(name="acc"),
-            #     ],
-            #     jit_compile=jit_compile,
-            #     run_eagerly=eager_mode,
-            # )
-            # # opt2.iterations.assign(opt1.iterations)
-            # # reset callback states
-            # lr_callback._reset()
-            # es_callback._reset()
-            # # re-fit
-            # model.fit(
-            #     x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
-            #     validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-            #     shuffle=False,  # already shuffled
-            #     initial_epoch=10,
-            #     epochs=20,  # max_epochs,
-            #     steps_per_epoch=validate_every,
-            #     validation_freq=1,
-            #     validation_steps=dataset_valid.batches_per_cycle,
-            #     callbacks=list(filter(None, fit_callbacks)),
-            # )
 
             t_end = time.perf_counter()
         except KeyboardInterrupt:
@@ -900,10 +906,8 @@ def create_model(
 
     # regression pre-NN
     if regression_data:
-        # load the model and add a postfix to all layer names
+        # load the model
         reg_model = tf.keras.models.load_model(regression_data["model_file"])
-        for layer in reg_model.layers:
-            layer._name = f"regression_nn/{layer.name}"
 
         # add back empty kernel regualizers to all dense layers
         for layer in reg_model.layers:
@@ -969,6 +973,8 @@ def create_model(
     dnn_input_layers.insert(0, dnn_cont_norm)
 
     # concatenate all inputs
+    shape_elems = (f"{layer.name}({i})->{layer.shape[1]}" for i, layer in enumerate(dnn_input_layers))
+    print(f"using {len(dnn_input_layers)} DNN inputs with shapes {', '.join(shape_elems)}")
     a = tf.keras.layers.Concatenate(name="input_concat")(dnn_input_layers)
 
     # previous resnet layer for pairwise addition
@@ -1021,15 +1027,14 @@ def create_model(
             dense_prev = a
 
     # add the output layer
-    output_layer = tf.keras.layers.Dense(
+    a = tf.keras.layers.Dense(
         n_classes,
-        activation="softmax",
         use_bias=True,
         kernel_initializer=activation_settings["softmax"].weight_init,
         kernel_regularizer=tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None,
-        name="output",
-    )
-    y = output_layer(a)
+        name=f"dense_{i + 1}",
+    )(a)
+    y = tf.keras.layers.Activation("softmax", name="output")(a)
 
     # build the model
     log_live_plots = False

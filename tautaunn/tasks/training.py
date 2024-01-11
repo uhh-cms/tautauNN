@@ -256,7 +256,7 @@ class Training(TrainingParameters):
         # run the training
         ret = train(**train_kwargs)
         if ret is None:
-            raise Exception("training did not provide a model")
+            raise Exception("training did not provide a model, probably due to manual stop (ctrl+c)")
 
 
 class MultiSeedParameters(TrainingParameters):
