@@ -159,7 +159,7 @@ class MultiDataset(object):
             yield transform_data(self, *data)
             self.batches_seen += 1
 
-    def create_keras_generator(self, input_names: list[str] | None = None):
+    def create_keras_generator(self, input_names: list[str] | None = None, target_names: list[str] | None = None):
         # this assumes that at least three arrays are yielded by the __iter__ method: inputs, targets, weights
         # when input_names are given, the inputs array is split into a dictionary with the given names
         # when there is more than one input array, input_names are mandatory
@@ -167,18 +167,19 @@ class MultiDataset(object):
             raise ValueError("input_names must be given when there is more than one output to be yielded")
 
         # start generating
-        n_names = len(input_names or [])
+        n_input_names = len(input_names or [])
+        n_target_names = len(target_names or [])
         for arrays in self:
             n_arrays = len(arrays)
             if n_arrays == 1:
-                assert n_names in [0, 1]
+                assert n_input_names in [0, 1]
                 yield {input_names[0]: arrays[0]} if input_names else arrays[0]
             elif n_arrays == 2:
-                assert n_names in [0, 1]
+                assert n_input_names in [0, 1]
                 yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), arrays[1]
             elif n_arrays == 3:
-                assert n_names in [0, 1]
+                assert n_input_names in [0, 1]
                 yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), *arrays[1:]
             else:
-                assert n_arrays - 2 == n_names
-                yield dict(zip(input_names, arrays[:n_names])), *arrays[n_names:]
+                assert n_arrays - 1 == n_input_names + n_target_names
+                yield dict(zip(input_names, arrays[:n_input_names])), dict(zip(target_names, arrays[n_input_names:n_input_names + n_target_names])), *arrays[n_input_names + n_target_names:]
