@@ -170,7 +170,7 @@ def train(
                 "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef", "HHbtag",
             ]
         ],
-        'tauH_SVFIT_mass', 'tauH_SVFIT_pt', 'top1_mass', 'top2_mass'
+        'tauH_SVFIT_mass', 'tauH_SVFIT_pt', 'top1_mass', 'top2_mass', "W_distance", "Z_distance", "H_distance"
     ],
     # number of layers and units
     units: list[int] = [128] * 5,

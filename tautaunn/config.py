@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from tautaunn.util import phi_mpi_to_pi, top_info, match
+from tautaunn.util import phi_mpi_to_pi, top_info, boson_info, match
 
 
 @dataclass
@@ -495,6 +495,18 @@ dynamic_columns = {
         top_info_fields,
         (lambda *args: top_info(*args, kind="indices")),
     ),
+    "W_distance": (
+        top_info_fields,
+        (lambda *args: boson_info(*args, kind="W"))
+    ),
+    "Z_distance": (
+        top_info_fields,
+        (lambda *args: boson_info(*args, kind="Z"))
+    ),
+    "H_distance": (
+        top_info_fields,
+        (lambda *args: boson_info(*args, kind="H"))
+    )
     #"ditau_deltaR_x_sv_pt":(
         #("ditau_deltaR", "tauH_SVFIT_pt"),
         #(lambda a, b: a*b)

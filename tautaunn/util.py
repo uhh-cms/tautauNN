@@ -249,6 +249,32 @@ def top_info(
     raise ValueError(f"unknown top_info kind {kind}")
 
 
+def boson_info(
+    dau1_pt, dau1_eta, dau1_phi, dau1_e,
+    dau2_pt, dau2_eta, dau2_phi, dau2_e,
+    bjet1_pt, bjet1_eta, bjet1_phi, bjet1_e,
+    bjet2_pt, bjet2_eta, bjet2_phi, bjet2_e,
+    met_et, met_phi, kind: str
+):
+    dau1 = vector.array({"pt": dau1_pt, "eta": dau1_eta, "phi": dau1_phi, "e": dau1_e})
+    dau2 = vector.array({"pt": dau2_pt, "eta": dau2_eta, "phi": dau2_phi, "e": dau2_e})
+    bjet1 = vector.array({"pt": bjet1_pt, "eta": bjet1_eta, "phi": bjet1_phi, "e": bjet1_e})
+    bjet2 = vector.array({"pt": bjet2_pt, "eta": bjet2_eta, "phi": bjet2_phi, "e": bjet2_e})
+    met = vector.array({"pt": met_et, "eta": np.zeros_like(dau1_pt), "phi": met_phi, "mass": np.zeros_like(dau1_pt)})
+
+    W_distance = ((dau1 + dau2 + met).m - 80)**2 + ((bjet1 + bjet2).m - 80)**2
+    Z_distance = ((dau1 + dau2 + met).m - 91)**2 + ((bjet1 + bjet2).m - 91)**2
+    H_distance = ((dau1 + dau2 + met).m - 125)**2 + ((bjet1 + bjet2).m - 125)**2
+    # return what is requested
+    if kind == "W":
+        return W_distance 
+    if kind == "Z":
+        return Z_distance 
+    if kind == "H":
+        return H_distance 
+    raise ValueError(f"unknown top_info kind {kind}")
+
+
 def create_tensorboard_callbacks(log_dir):
     add = flush = lambda *args, **kwargs: None
     if log_dir:
