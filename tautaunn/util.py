@@ -179,7 +179,8 @@ def calc_energy(pt, eta, phi, m):
     pz = pt * np.sinh(eta)
 
     energy = np.sqrt(m**2 + px**2 + py**2 + pz**2)
-
+    # added in case sv-fit mass didn't coverge
+    energy[m<0] = -1*np.ones_like(np.sum(m<0))
     return energy
 
 
@@ -203,6 +204,72 @@ def phi_mpi_to_pi(phi):
         larger_pi = phi > math.pi
         smaller_pi = phi < -math.pi
     return phi
+
+
+def calc_mt(v1_pt, v1_eta, v1_phi, v1_e,
+            v2_pt, v2_eta, v2_phi, v2_e) -> np.array:
+    v1 = vector.array({"pt": v1_pt, "eta": v1_eta, "phi": v1_phi, "e": v1_e})
+    v2 = vector.array({"pt": v2_pt, "eta": v2_eta, "phi": v2_phi, "e": v2_e})
+    radicand = 2*v1.pt*v2.pt * (1-np.cos(v1.deltaphi(v2)))
+    # suppress warning
+    radicand[radicand<0] = np.zeros(np.sum(radicand<0))
+    mt = np.sqrt(radicand)
+    # set non-finite (probably due to kinfit or svift non-convergence) to -1
+    mt[radicand<0] = -1*np.ones(np.sum(radicand<0))
+    mt[~np.isfinite(mt)] = -1*np.ones(np.sum(~np.isfinite(mt)))
+    return mt
+
+
+def hh(l1_pt, l1_eta, l1_phi, l1_e,
+       l2_pt, l2_eta, l2_phi, l2_e,
+       b1_pt, b1_eta, b1_phi, b1_e,
+       b2_pt, b2_eta, b2_phi, b2_e,
+       met_et, met_phi,
+       svfit_pt, svfit_eta, svfit_phi, svfit_mass,
+       HHKin_mass_raw, HHKin_mass_raw_chi2,
+       kind: str):
+    sv_fit = vector.array({"pt": svfit_pt, "eta": svfit_eta,
+                            "phi": svfit_phi, "mass": svfit_mass,}).to_rhophietatau()
+    l_1 = vector.array({"pt": l1_pt, "eta": l1_eta,
+                        "phi": l1_phi, "e": l1_e,}).to_rhophietatau()
+    l_2 = vector.array({"pt": l2_pt, "eta": l2_eta,
+                        "phi": l2_phi, "e": l2_e,}).to_rhophietatau()
+    b_1 = vector.array({"pt": b1_pt, "eta": b1_eta,
+                        "phi": b1_phi, "e": b1_e,}).to_rhophietatau()
+    b_2 = vector.array({"pt": b2_pt, "eta": b2_eta,
+                            "phi": b2_phi, "e": b2_e,}).to_rhophietatau()
+    met = vector.array({"pt": met_et, "eta": np.zeros_like(met_et),
+            "phi": met_phi, "mass": np.zeros_like(met_et)}).to_rhophietatau()
+    h_bb = b_1+b_2
+    h_tt_vis = l_1+l_2
+    h_tt_met = h_tt_vis+met
+
+    hh = vector.array({"px": h_bb.px+sv_fit.px, "py": h_bb.py+sv_fit.py,
+                    "pz": h_bb.pz+sv_fit.pz, "mass": HHKin_mass_raw,}).to_rhophietatau()
+
+    h_bb_tt_met_kinfit = vector.array({"px": h_bb.px+h_tt_met.px, "py": h_bb.py+h_tt_met.py,
+                                "pz": h_bb.pz+h_tt_met.pz, "mass": HHKin_mass_raw}).to_rhophietatau()
+    inf_mask = (HHKin_mass_raw_chi2 == np.inf) | (HHKin_mass_raw_chi2 == -np.inf)
+    HHKin_mass_raw_chi2[inf_mask] = -1*np.ones(ak.sum(inf_mask)) 
+    hh_kinfit_conv = HHKin_mass_raw_chi2>0
+    HHKin_mass_raw_chi2[~hh_kinfit_conv] = -1*np.ones(ak.sum(~hh_kinfit_conv)) 
+    sv_fit_conv = svfit_mass>0
+    hh[np.logical_and(~hh_kinfit_conv, sv_fit_conv)] = (h_bb+sv_fit)[np.logical_and(~hh_kinfit_conv, sv_fit_conv)]
+    hh[np.logical_and(~hh_kinfit_conv, ~sv_fit_conv)] = (h_bb+h_tt_met)[np.logical_and(~hh_kinfit_conv, ~sv_fit_conv)]
+    hh[np.logical_and(hh_kinfit_conv, ~sv_fit_conv)] = h_bb_tt_met_kinfit[np.logical_and(hh_kinfit_conv, ~sv_fit_conv)] 
+
+    if kind == "h_bb_mass":
+        return h_bb.m
+    if kind == "hh_pt":
+        return hh.pt
+    if kind == "diH_mass_met":
+        return (h_bb+h_tt_met).M
+    if kind == "deta_hbb_httvis":
+        return np.abs(h_bb.deltaeta(h_tt_vis))
+    if kind == "dphi_hbb_met":
+        return np.abs(h_bb.deltaphi(met))
+
+    raise ValueError(f"unknown top_info kind {kind}")
 
 
 def calc_top_masses(l_1, l_2, b_1, b_2, met):
