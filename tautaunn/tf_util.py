@@ -98,6 +98,28 @@ class ClassificationModelWithValidationBuffers(tf.keras.Model):
         return self.compute_metrics(x, y, y_pred, sample_weight)
 
 
+class FadeInLayer(tf.keras.layers.Layer):
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        self.factor = None
+
+    def build(self, input_shape):
+        self.factor = self.add_weight(
+            shape=(),
+            dtype=tf.float32,
+            initializer=tf.keras.initializers.Constant(0.0),
+            name="fadein_factor",
+            trainable=False,
+        )
+
+        return super().build(input_shape)
+
+    def call(self, inputs):
+        return inputs * self.factor
+
+
 class L2Metric(tf.keras.metrics.Metric):
 
     def __init__(

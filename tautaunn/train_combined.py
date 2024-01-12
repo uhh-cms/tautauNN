@@ -22,7 +22,7 @@ from tabulate import tabulate
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
     get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStopAndRepeat, EmbeddingEncoder,
-    LivePlotWriter,
+    LivePlotWriter, FadeInLayer,
 )
 from tautaunn.util import load_sample_root, calc_new_columns, create_model_name, transform_data_dir_cache
 from tautaunn.config import (
@@ -588,7 +588,7 @@ def train(
                 return tf.constant(list(map(combined_names.index, names)), dtype=tf.int32)
             regression_data = {
                 "model_file": regression_cfg.model_files[fold_index],
-                "use_last_layers": regression_cfg.use_last_layers,
+                "regression_cfg": regression_cfg,
                 "cont_input_indices": get_indices(combined_cont_input_names, cont_input_names),
                 "cat_input_indices": get_indices(combined_cat_input_names, cat_input_names),
                 "reg_cont_input_indices": get_indices(combined_cont_input_names, reg_cont_input_names),
@@ -704,6 +704,56 @@ def train(
             if clear_existing_tensorboard and os.path.exists(full_tensorboard_dir):
                 shutil.rmtree(full_tensorboard_dir)
 
+        class RegressionFader(tf.keras.callbacks.Callback):
+
+            def __init__(
+                self,
+                model: tf.keras.Model,
+                fade_in: tuple[int, int],
+                name="regression_fader",
+                **kwargs,
+            ) -> None:
+                super().__init__(**kwargs)
+
+                # get fade-in layer and first dense layer
+                self.fadein_layer = next(layer for layer in model.layers if "reg_fade_in" in layer.name)
+                self.dense_layer = next(layer for layer in model.layers if "dense_1" in layer.name)
+
+                # reference to the fade-in factor
+                self.fadein_factor = self.fadein_layer.factor
+
+                # store initial weights of first dense layer that connect to the regression network
+                self.n_last_dense_weights = self.fadein_layer.output_shape[1]
+                self.dense_weights_reg = self.dense_layer.kernel[-self.n_last_dense_weights:]
+
+                # fade-in range
+                assert fade_in[0] > 0
+                assert fade_in[1] > 0
+                self.fade_in = fade_in
+
+                # state
+                self.name = name
+                self.counter: int = 0
+
+            def on_test_end(self, logs: dict[str, Any] | None = None) -> None:
+                self.counter += 1
+
+                # inject initial weights
+                if self.counter == self.fade_in[0]:
+                    self.dense_layer.kernel[-self.n_last_dense_weights:].assign(self.dense_weights_reg)
+                    print(f"\n{self.name}: injected initial weights")
+
+                if self.fade_in[0] <= self.counter < self.fade_in[0] + self.fade_in[1]:
+                    # ramp up factor
+                    f = (self.counter - self.fade_in[0]) / self.fade_in[1]
+                    self.fadein_factor.assign(f)
+                    print(f"\n{self.name}: set fade-in factor to {f:.3f}")
+
+                elif self.counter == self.fade_in[0] + self.fade_in[1]:
+                    # fix factor at 1
+                    self.fadein_factor.assign(1.0)
+                    print(f"\n{self.name}: fix fade-in factor at 1.0")
+
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
@@ -729,6 +779,11 @@ def train(
                 class_names=list(class_names.values()),
                 validate_every=validate_every,
             ) if full_tensorboard_dir else None,
+            # regression fader
+            RegressionFader(
+                model=model,
+                fade_in=regression_cfg.fade_in,
+            ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
         ]
 
         # some logs
@@ -904,6 +959,8 @@ def create_model(
 
     # regression pre-NN
     if regression_data:
+        regression_cfg = regression_data["regression_cfg"]
+
         # load the model
         reg_model = tf.keras.models.load_model(regression_data["model_file"])
 
@@ -912,8 +969,11 @@ def create_model(
             if isinstance(layer, tf.keras.layers.Dense):
                 layer.kernel_regularizer = tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None
 
-        # make layers non-trainable at first
+        # make layers non-trainable at first, except for batch norm layers
         reg_model.trainable = False
+        for layer in reg_model.layers:
+            if isinstance(layer, tf.keras.layers.BatchNormalization):
+                layer.trainable = True
 
         # get the pre-NN inputs
         reg_cont = tf.gather(x_cont, regression_data["reg_cont_input_indices"], axis=1, name="select_reg_cont_inputs")
@@ -923,13 +983,21 @@ def create_model(
         reg_out_reg, _, reg_out_cls, reg_out_reg_last, reg_out_cls_last = reg_model([reg_cont, reg_cat])
 
         # concatenate all regression outputs
-        reg_concat_layers = [reg_out_reg, reg_out_cls]
-        if regression_data["use_last_layers"]:
-            reg_concat_layers += [reg_out_reg_last, reg_out_cls_last]
+        reg_concat_layers = []
+        if regression_cfg.use_reg_outputs:
+            reg_concat_layers.append(reg_out_reg)
+        if regression_cfg.use_cls_outputs:
+            reg_concat_layers.append(reg_out_cls)
+        if regression_cfg.use_reg_last_layer:
+            reg_concat_layers.append(reg_out_reg_last)
+        if regression_cfg.use_cls_last_layer:
+            reg_concat_layers.append(reg_out_cls_last)
+        assert reg_concat_layers, "no regression outputs selected"
         reg_out = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
 
-        # batch normalize the regression outputs
-        reg_out = tf.keras.layers.BatchNormalization(name="reg_batchnorm")(reg_out)
+        # modulate through fade-in layer
+        if regression_cfg.fade_in[0] > 0:
+            reg_out = FadeInLayer(name="reg_fade_in")(reg_out)
 
         # define as input
         dnn_input_layers.append(reg_out)

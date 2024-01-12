@@ -520,6 +520,7 @@ embedding_expected_inputs = {
     "dau1_charge": [-1, 1],
     "dau2_charge": [-1, 1],
     "spin": [0, 2],
+    # TODO: encode 2016APV somehow? -> maybe check first if we need to parametrize the year at all
     "year": [2016, 2017, 2018],
     "isBoosted": [0, 1],
     "top_mass_idx": [0,1,2,3]
@@ -534,7 +535,11 @@ class RegressionSet:
     parameterize_year: bool = False
     parameterize_spin: bool = True
     parameterize_mass: bool = True
-    use_last_layers: bool = False
+    use_reg_outputs: bool = True
+    use_reg_last_layer: bool = True
+    use_cls_outputs: bool = True
+    use_cls_last_layer: bool = True
+    fade_in: tuple[int, int] = (0, 0)
     fine_tune: bool = False
 
     def copy(self, **attrs) -> RegressionSet:
@@ -546,7 +551,7 @@ class RegressionSet:
 regression_sets = {
     "default": (default_reg_set := RegressionSet(
         model_files={
-            fold: os.path.join(os.getenv("TN_DATA_DIR"), "reg_models/reg_mass_para_class_l2n400_removeMoreVars_addBkgs_addlast_set_1")  # noqa
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR"), "reg_mass_para_class_l2n400_removeMoreVars_addBkgs_addlast_set_1")  # noqa
             for fold in range(10)
         },
         cont_feature_set="reg2",
@@ -554,8 +559,12 @@ regression_sets = {
         parameterize_year=False,
         parameterize_spin=True,
         parameterize_mass=True,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        fade_in=(150, 20),
         fine_tune=False,
-        use_last_layers=True,
     )),
     "default_ft": default_reg_set.copy(fine_tune=True),
 }
