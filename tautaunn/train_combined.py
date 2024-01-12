@@ -194,8 +194,6 @@ def train(
     learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
     learning_rate_patience: int = 8,
-    # how even the learning rate is halfed before training is stopped
-    learning_rate_reductions: int = 6,
     # stop training if the validation loss hasn't improved since this many validation steps
     early_stopping_patience: int = 10,
     # maximum number of epochs to even cap early stopping
@@ -714,7 +712,6 @@ def train(
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
-                lr_reductions=learning_rate_reductions,
                 es_patience=early_stopping_patience,
                 repeat_func=lres_repeat,
                 verbose=1,
@@ -987,13 +984,13 @@ def create_model(
     # add layers programatically
     for i, n_units in enumerate(units, 1):
         # dense
-        dense_layer = tf.keras.layers.Dense(
+        a = tf.keras.layers.Dense(
             n_units,
             use_bias=True,
             kernel_initializer=act_settings.weight_init,
             kernel_regularizer=tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None,
-            name=f"dense_{i}")
-        a = dense_layer(a)
+            name=f"dense_{i}",
+        )(a)
 
         # batch norm before activation if requested
         batchnorm_layer = tf.keras.layers.BatchNormalization(dtype=tf.float32, name=f"batchnorm_{i}")
@@ -1069,7 +1066,7 @@ def create_model(
         ))
         # compute the scaled l2 norm
         l2_norm_scaled = l2_norm / n_weights_main
-        print(f"scaled l2 norm from {l2_norm:.1f} to {l2_norm_scaled:5f} based in {n_weights_main} weights")
+        print(f"scaled l2 norm from {l2_norm:.1f} to {l2_norm_scaled:5f} based on {n_weights_main} weights")
         # update regularizers
         for layer in l2_layers["main"]:
             layer.kernel_regularizer.l2[...] = l2_norm_scaled

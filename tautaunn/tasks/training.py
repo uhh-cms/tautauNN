@@ -73,10 +73,6 @@ class TrainingParameters(Task):
         default=10,
         description="non-improving steps before reducing learning rate; default: 10",
     )
-    learning_rate_reductions = luigi.IntParameter(
-        default=8,
-        description="number of possible learning rate reductions; default: 8",
-    )
     early_stopping_patience = luigi.IntParameter(
         default=15,
         description="non-improving steps before stopping training; default: 15",
@@ -239,7 +235,6 @@ class Training(TrainingParameters):
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             learning_rate_patience=self.learning_rate_patience,
-            learning_rate_reductions=self.learning_rate_reductions,
             early_stopping_patience=self.early_stopping_patience,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,

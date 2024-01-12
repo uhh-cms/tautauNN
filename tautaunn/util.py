@@ -65,11 +65,12 @@ def load_sample_root(data_dir, sample, features, selections, max_events=-1, cach
         file_names = glob.glob(f"{data_dir}/{sample.directory_name}/output_*.root")
 
         # load files in parallel
-        n_files_seen = len(file_names)
+        n_files_seen = 0
         pool_args = [(file_name, features, selections) for file_name in file_names]
         t0 = time.perf_counter()
         with Pool(n_threads) as pool:
             for result in pool.imap(_load_root_file_impl_mp, pool_args):
+                n_files_seen += 1
                 if isinstance(result, str):
                     broken_files.append(result)
                     continue
