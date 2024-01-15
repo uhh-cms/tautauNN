@@ -41,6 +41,7 @@ action() {
         # maxwell
         export TN_DATA_DIR="/gpfs/dust/cms/user/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_maxwell"
+        export TN_REG_MODEL_DIR="/gpfs/dust/cms/user/riegerma/taunn_data/reg_models"
         export TN_SKIMS_2016APV="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16APV"
         export TN_SKIMS_2016="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16"
         export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v5_16Oct23"
@@ -52,6 +53,7 @@ action() {
         # naf
         export TN_DATA_DIR="/nfs/dust/cms/user/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_naf"
+        export TN_REG_MODEL_DIR="/nfs/dust/cms/user/riegerma/taunn_data/reg_models"
         export TN_SKIMS_2016APV="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16APV"
         export TN_SKIMS_2016="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16"
         export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_uhh_2017_v5_16Oct23"
@@ -183,6 +185,8 @@ EOF
             "flake8-quotes" \
             "cmsml" \
             "hist" \
+            "vector" \
+            "shap" \
             "git+https://github.com/riga/law.git@master" \
             || return "$?"
     fi

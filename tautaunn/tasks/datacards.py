@@ -62,6 +62,11 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         columns_to_read = set()
         columns_to_read |= set(cfg.cont_feature_sets[self.cont_feature_set])
         columns_to_read |= set(cfg.cat_feature_sets[self.cat_feature_set])
+        if self.regression_cfg is not None:
+            columns_to_read |= set(cfg.cont_feature_sets[self.regression_cfg.cont_feature_set])
+            columns_to_read |= set(cfg.cat_feature_sets[self.regression_cfg.cat_feature_set])
+        if self.lbn_cfg is not None:
+            columns_to_read |= set(self.lbn_cfg.input_features) - {None}
         columns_to_read |= set(cfg.klub_index_columns)
         # expand dynamic columns, keeping track of those that are needed
         all_dyn_names = set(cfg.dynamic_columns)
@@ -90,6 +95,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 for name in cfg.cat_feature_sets[self.regression_cfg.cat_feature_set]:
                     if name not in cat_input_names:
                         cat_input_names.append(name)
+            if self.lbn_cfg is not None:
+                for name in self.lbn_cfg.input_features:
+                    if name and name not in cont_input_names:
+                        cont_input_names.append(name)
 
             # prepare model inputs
             cont_inputs = flatten(rec[cont_input_names], np.float32)
@@ -99,26 +108,26 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             y = self.sample.year_int
             cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
 
-            # reserve columns for spin and mass
-            cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+            # reserve column for mass
             cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
 
-            # determine the fold index to use per event
+            # reserve column for spin (must be behind year!)
+            cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+
+            # determine the fold index per event
             fold = rec["EventNumber"] % self.n_folds
 
         # create a mask to only select events whose categorical features were seen during training
         cat_mask = np.ones(len(rec), dtype=bool)
-        for i, name in enumerate(cfg.cat_feature_sets[self.cat_feature_set]):
+        for i, name in enumerate(cat_input_names):
             cat_mask &= np.isin(cat_inputs[:, i], np.unique(cfg.embedding_expected_inputs[name]))
+        self.publish_message(f"events passing cat_mask: {cat_mask.mean() * 100:.2f}%")
 
         # get class names
         class_names = {label: data["name"].lower() for label, data in cfg.label_sets[self.label_set].items()}
 
         # prepare the output tree structure
-        out_tree = {
-            c: rec[c]
-            for c in cfg.klub_index_columns
-        }
+        out_tree = {c: rec[c] for c in cfg.klub_index_columns}
         for spin in self.spins:
             for mass in self.masses:
                 for class_name in class_names.values():
@@ -157,7 +166,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             out_tree[col_name(mass, spin, class_name)][eval_mask] = predictions[:, i]
 
         # save the output tree
-        with self.output().dump(formatter="uproot", mode="create") as f:
+        with self.output().dump(formatter="uproot", mode="recreate") as f:
             f["evaluation"] = out_tree
 
 

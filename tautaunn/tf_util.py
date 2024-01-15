@@ -98,6 +98,28 @@ class ClassificationModelWithValidationBuffers(tf.keras.Model):
         return self.compute_metrics(x, y, y_pred, sample_weight)
 
 
+class FadeInLayer(tf.keras.layers.Layer):
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        self.factor = None
+
+    def build(self, input_shape):
+        self.factor = self.add_weight(
+            shape=(),
+            dtype=tf.float32,
+            initializer=tf.keras.initializers.Constant(0.0),
+            name="fadein_factor",
+            trainable=False,
+        )
+
+        return super().build(input_shape)
+
+    def call(self, inputs):
+        return inputs * self.factor
+
+
 class L2Metric(tf.keras.metrics.Metric):
 
     def __init__(
@@ -136,19 +158,19 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
-class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
+class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
     def __init__(
         self,
         monitor: str = "val_loss",
         min_delta: float = 1.0e-5,
         mode: str = "min",
+        lr_start_epoch: int = 0,
         lr_patience: int = 10,
         lr_factor: float = 0.1,
-        lr_reductions: int = 1,
+        es_start_epoch: int = 0,
         es_patience: int = 1,
-        start_from_epoch: int = 0,
-        repeat_func: Callable[[ReduceLRAndStopAndRepeat, dict[str, Any]], None] | None = None,
+        repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
         verbose: int = 0,
         **kwargs,
     ):
@@ -161,8 +183,6 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
             raise ValueError(f"{self.__class__.__name__} received lr_patience < 0 ({lr_patience})")
         if lr_factor >= 1.0:
             raise ValueError(f"{self.__class__.__name__} received lr_factor >= 1 ({lr_factor})")
-        if lr_reductions < 1:
-            raise ValueError(f"{self.__class__.__name__} received lr_reductions < 1 ({lr_reductions})")
         if es_patience < 0:
             raise ValueError(f"{self.__class__.__name__} received es_patience < 0 ({es_patience})")
 
@@ -170,20 +190,22 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         self.monitor = monitor
         self.min_delta = abs(float(min_delta))
         self.mode = mode
+        self.lr_start_epoch = int(lr_start_epoch)
         self.lr_patience = int(lr_patience)
         self.lr_factor = float(lr_factor)
-        self.lr_reductions = int(lr_reductions)
+        self.es_start_epoch = int(es_start_epoch)
         self.es_patience = int(es_patience)
-        self.start_from_epoch = int(start_from_epoch)
         self.repeat_func = repeat_func
         self.verbose = int(verbose)
 
         # state
         self.wait: int = 0
         self.lr_counter: int = 0
+        self.skip_lr_monitoring: bool = False
         self.best_epoch: int = -1
         self.best_weights: tuple[tf.Tensor, ...] | None = None
         self.best_metric: float = np.nan
+        self.best_metric_with_previous_lr: float = np.nan
         self.monitor_op: Callable[[float, float], bool] | None = None
         self.repeat_counter: int = 0
 
@@ -192,15 +214,18 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
     def _reset(self) -> None:
         self.wait = 0
         self.lr_counter = 0
+        self.skip_lr_monitoring = False
         self.best_epoch = -1
         self.best_weights = None
         self.repeat_counter = 0
 
         if self.mode == "min":
             self.best_metric = np.inf
+            self.best_metric_with_previous_lr = np.inf
             self.monitor_op = lambda cur, best: (best - cur) > self.min_delta
         else:  # "max"
             self.best_metric = -np.inf
+            self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
 
     def _reset_before_repeat(self) -> None:
@@ -214,10 +239,6 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         # add the current learning rate to the logs
         logs = logs or {}
         logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
-
-        # do nothing if configured to skip epochs
-        if epoch < self.start_from_epoch:
-            return
 
         # do nothing when no metric is available yet
         value = self.get_monitor_value(logs)
@@ -236,51 +257,84 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
             self.wait = 0
             if self.verbose >= 2:
                 print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+            logs["last_best"] = 0
+            return
+        logs["last_best"] = int(epoch - self.best_epoch)
+
+        # no improvement, increase wait counter
+        self.wait += 1
+
+        #
+        # lr monitoring
+        #
+
+        # do nothing if lr is not yet to be monitored
+        if epoch < self.lr_start_epoch:
+            self.wait = 0
             return
 
-        self.wait += 1
-        if self.verbose >= 2:
-            print_msg(
-                f"{nl()}{self.__class__.__name__}: wait counter set to {self.wait} "
-                f"(LR patience: {self.lr_patience}, ES patience {self.es_patience})",
-            )
-
-        # drop learning rate?
-        if self.lr_counter < self.lr_reductions:
-            # drop
-            if self.wait > self.lr_patience:
-                # reduce
+        if not self.skip_lr_monitoring:
+            # within patience?
+            if self.wait <= self.lr_patience:
+                return
+            # drop?
+            if (
+                self.best_metric_with_previous_lr is None or
+                self.monitor_op(self.best_metric, self.best_metric_with_previous_lr)
+            ):
+                # yes, drop
                 logs["lr"] *= self.lr_factor
                 tf.keras.backend.set_value(self.model.optimizer.lr, logs["lr"])
                 self.lr_counter += 1
                 self.wait = 0
                 if self.verbose >= 1:
-                    print_msg(
+                    msg = (
                         f"{nl()}{self.__class__.__name__}: reducing learning rate to {logs['lr']:.2e} "
-                        f"({self.lr_counter} / {self.lr_reductions}), best metric is {self.best_metric:.5f}",
+                        f"(reduction {self.lr_counter}), best metric is {self.best_metric:.5f}"
                     )
-                    if self.lr_counter == self.lr_reductions:
-                        print_msg(
-                            f"{nl()}{self.__class__.__name__}: learning rate reductions exhausted, "
-                            f"from now on checking early stopping with patience {self.es_patience}",
-                        )
+                    if self.best_metric_with_previous_lr not in (None, np.inf, -np.inf):
+                        msg += f", was {self.best_metric_with_previous_lr:.5f} with previous learning rate"
+                    print_msg(msg)
+                self.best_metric_with_previous_lr = self.best_metric
+            else:
+                # last drop had already no effect, stop monitoring for lr drops
+                self.skip_lr_monitoring = True
+                self.wait = 0
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: last learning rate reduction had no effect, "
+                        f"from now on checking early stopping with patience {self.es_patience}",
+                    )
             return
 
-        # stop training or even repeat?
-        if self.wait > self.es_patience:
-            if callable(self.repeat_func) and self.repeat_func(self, logs):
-                # repeat
-                self.repeat_counter += 1
-                self._reset_before_repeat()
-                if self.verbose >= 1:
-                    print_msg(
-                        f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
-                    )
-            else:
-                # stop
-                self.model.stop_training = True
-                if self.verbose >= 1:
-                    print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+        #
+        # early stopping monitoring
+        #
+
+        # do nothing if es is not yet to be monitored
+        if epoch < self.es_start_epoch:
+            self.wait = 0
+            return
+
+        # within patience?
+        if self.wait <= self.es_patience:
+            return
+
+        # repeat cycling?
+        if callable(self.repeat_func) and self.repeat_func(self, logs):
+            # yes, repeat
+            self.repeat_counter += 1
+            self._reset_before_repeat()
+            if self.verbose >= 1:
+                print_msg(
+                    f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
+                )
+            return
+
+        # stop training completely
+        self.model.stop_training = True
+        if self.verbose >= 1:
+            print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_train_end(self, logs: dict[str, Any] | None = None) -> None:
         self.restore_best_weights()

@@ -47,7 +47,6 @@ class Ensemble(tf.keras.layers.Layer):
         )
 
         # ensembling (via mixture of experts)
-        # TODO: is it really?
         output = tf.reduce_mean(output, axis=1)
 
         return output

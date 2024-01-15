@@ -73,10 +73,6 @@ class TrainingParameters(Task):
         default=10,
         description="non-improving steps before reducing learning rate; default: 10",
     )
-    learning_rate_reductions = luigi.IntParameter(
-        default=8,
-        description="number of possible learning rate reductions; default: 8",
-    )
     early_stopping_patience = luigi.IntParameter(
         default=15,
         description="non-improving steps before stopping training; default: 15",
@@ -133,6 +129,11 @@ class TrainingParameters(Task):
         choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
         description="name of a regression set to use; default: empty",
     )
+    lbn_set = luigi.ChoiceParameter(
+        default=law.NO_STR,
+        choices=[law.NO_STR] + list(cfg.lbn_sets.keys()),
+        description="name of a LBN set to use; default: empty",
+    )
     skip_tensorboard = luigi.BoolParameter(
         default=False,
         significant=False,
@@ -146,6 +147,10 @@ class TrainingParameters(Task):
         self.regression_cfg = None
         if self.regression_set not in (None, "", law.NO_STR):
             self.regression_cfg = cfg.regression_sets[self.regression_set]
+
+        self.lbn_cfg = None
+        if self.lbn_set not in (None, "", law.NO_STR):
+            self.lbn_cfg = cfg.lbn_sets[self.lbn_set]
 
     def get_model_name_kwargs(self) -> dict[str, Any]:
         kwargs = dict(
@@ -175,6 +180,8 @@ class TrainingParameters(Task):
         )
 
         # optionals
+        if self.lbn_set not in (None, "", law.NO_STR):
+            kwargs["lbn_set"] = self.lbn_set
         if self.background_weight != 1.0:
             kwargs["background_weight"] = self.background_weight
 
@@ -239,7 +246,6 @@ class Training(TrainingParameters):
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             learning_rate_patience=self.learning_rate_patience,
-            learning_rate_reductions=self.learning_rate_reductions,
             early_stopping_patience=self.early_stopping_patience,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,
@@ -247,6 +253,7 @@ class Training(TrainingParameters):
             parameterize_spin=True,
             parameterize_mass=True,
             regression_set=None if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
+            lbn_set=None if self.lbn_set in (None, "", law.NO_STR) else self.lbn_set,
             n_folds=self.n_folds,
             fold_index=self.fold,
             validation_fraction=0.25,
@@ -256,7 +263,7 @@ class Training(TrainingParameters):
         # run the training
         ret = train(**train_kwargs)
         if ret is None:
-            raise Exception("training did not provide a model")
+            raise Exception("training did not provide a model, probably due to manual stop (ctrl+c)")
 
 
 class MultiSeedParameters(TrainingParameters):
@@ -303,6 +310,8 @@ class ExportEnsemble(MultiSeedParameters):
         if self.regression_cfg is not None:
             cont_input_names |= set(cfg.cont_feature_sets[self.regression_cfg.cont_feature_set])
             cat_input_names |= set(cfg.cat_feature_sets[self.regression_cfg.cat_feature_set])
+        if self.lbn_cfg is not None:
+            cont_input_names |= set(self.lbn_cfg.input_features) - {None}
 
         # define arguments
         export_kwargs = dict(
