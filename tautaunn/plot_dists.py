@@ -24,8 +24,8 @@ luminosities = {  # in /fb
 
 def make_parser():
     parser = argparse.ArgumentParser(description="Plot the shapes that are fed into combine.")
-    parser.add_argument("-m", "--model_name",
-                        type=str, help='model name i.e. baseline_nonparam')
+    parser.add_argument("-l", "--limits_file",
+                        type=str, help='/full/path/to/reslimits.npz file')
     parser.add_argument("-i", "--input_dir",
                         type=str, help='directory, where the datacards & shapes are stored')
     parser.add_argument("-o", "--output_dir",
@@ -113,6 +113,7 @@ def plot_double_dist(mc_stack, sig, lim, exclusion_idx, title, savename):
     plt.savefig(savename, bbox_extra_artists=(lgd,), bbox_inches='tight', pad_inches=0.8)
     plt.close()
 
+
 def plot_single_dist(mc_stack, sig, lim, title, savename):
     mc_stack.plot(stack=True, histtype='fill')
     sig = sig/sig.sum().value
@@ -127,7 +128,7 @@ def plot_single_dist(mc_stack, sig, lim, title, savename):
     plt.close()
 
 
-def main(model_name, input_dir, output_dir):
+def make_plots(limits_file, input_dir, output_dir):
     if output_dir == "":
         output_dir = f"./{Path(input_dir).parent.stem}"
     if not os.path.exists(output_dir):
@@ -145,9 +146,8 @@ def main(model_name, input_dir, output_dir):
         dirname = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_hbbhtt"
         stack, sig = load_hists(filename, dirname, signal_name)
-        limits_file= f'./reslimits_{model_name}_{year}.npz'
         lim = load_reslim(limits_file, mass)
-        title = f"{model_name.replace('_', '-')}, cat: {cat}, spin: {spin} mass: {mass}"
+        title = f"cat: {cat}, spin: {spin} mass: {mass}"
         widths = stack.axes.widths[0]
         exclusion_idx = get_exclusion_idx(widths)
         if exclusion_idx == -1:
@@ -158,10 +158,14 @@ def main(model_name, input_dir, output_dir):
                              title, f"{output_dir}/{filename.stem}.png")
 
 
+def main() -> None:
+    make_plots()
+
+
 if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
-    main(model_name=args.model_name,
+    main(limits_file=args.limits_file,
          input_dir=args.input_dir,
          output_dir=args.output_dir)
 
