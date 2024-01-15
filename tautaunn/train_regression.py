@@ -478,6 +478,9 @@ def train(
         sum(batch_weights)
     ) - target_means**2)**0.5
 
+    targets_train = [(x - target_means) / target_stds for x in targets_train]
+    targets_valid = [(x - target_means) / target_stds for x in targets_valid]
+
     # handle year
     if parameterize_year:
         cat_input_names.append("year")
@@ -546,7 +549,6 @@ def train(
             dropout_rate=dropout_rate,
             n_reg_outputs=len(regression_target_names),
             n_classes=n_classes,
-
         )
 
         # compile
@@ -554,18 +556,17 @@ def train(
             "adam": tf.keras.optimizers.Adam,
             "adamw": tf.keras.optimizers.AdamW,
         }[optimizer]
+
         model.compile(
-            loss={"regression_output": "mse", "classification_output_softmax": "categorical_crossentropy"},
+            loss={"regression_output": tf.keras.losses.mean_squared_error, "classification_output_softmax": tf.keras.losses.categorical_crossentropy},
             loss_weights={"regression_output": 1.0, "classification_output_softmax": classifier_weight},
             optimizer=opt_cls(
                 learning_rate=learning_rate,
                 jit_compile=jit_compile,
             ),
-            weighted_metrics=[
-                "mse",
-                "categorical_crossentropy",
-            ],
-            metrics=["l2"],
+            metrics={
+                "regression_output": L2Metric(model),
+            },
             jit_compile=jit_compile,
             run_eagerly=eager_mode,
         )
@@ -583,7 +584,7 @@ def train(
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
             lres_callback := ReduceLRAndStopAndRepeat(
-                monitor="val_ce",
+                monitor="val_loss",
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
@@ -658,7 +659,7 @@ def train(
         # perform one final validation round for verification of the best model
         print("performing final round of validation")
         results_valid = model.evaluate(
-            x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+            x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"], target_names=["regression_output", "classification_output_softmax"]),
             steps=1,
             return_dict=True,
         )
@@ -801,7 +802,7 @@ def create_model(
     cont_norm = tf.keras.layers.Normalization(
         mean=cont_input_means,
         variance=cont_input_vars,
-        name="dnn_input_norm",
+        name="cont_input_norm",
     )(x_cont)
     input_layers.append(cont_norm)
 
@@ -1000,7 +1001,6 @@ def create_model(
             layer for layer in model.layers
             if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
         ]
-        model.l2_layers = l2_layers
         # compute number of weights in the main network
         n_weights_main = sum(map(
             tf.keras.backend.count_params,
@@ -1010,6 +1010,8 @@ def create_model(
         l2_norm_scaled = l2_norm / n_weights_main
         for layer in l2_layers:
             layer.kernel_regularizer.l2[...] = l2_norm_scaled
+
+        model.l2_layers = l2_layers
 
     return model
 
