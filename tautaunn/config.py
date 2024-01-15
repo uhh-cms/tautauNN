@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from tautaunn.util import phi_mpi_to_pi, top_info, boson_info, match
+from tautaunn.util import phi_mpi_to_pi, top_info, boson_info, match, calc_mass, calc_energy, calc_mt, hh
 
 
 @dataclass
@@ -306,6 +306,24 @@ cont_feature_sets = {
     ]),
     "full_svfit": cont_features_full + ["tauH_SVFIT_mass", "tauH_SVFIT_pt"],
     "reg_svfit": cont_features_reg + ["tauH_SVFIT_mass", "tauH_SVFIT_pt"],
+    "class": [
+        "bjet1_bID_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_HHbtag",
+        "bjet2_bID_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_HHbtag",
+        "dibjet_deltaR",
+        "dau1_mt",
+        "dau2_pt",
+        "ditau_mt", "ditau_deltaR", "ditau_deltaeta",
+        "tauH_SVFIT_E", "tauH_SVFIT_mt", "tauH_SVFIT_mass",
+        "met_et",
+        "top1_mass",
+        "h_bb_mass",
+        "hh_pt",
+        "HHKin_mass_raw_chi2",
+        "dphi_hbb_met",
+        "deta_hbb_httvis",
+        "HHKin_mass_raw",
+        "diH_mass_met",
+    ],
 }
 
 cat_feature_sets = {
@@ -319,6 +337,9 @@ cat_feature_sets = {
     "full": (cat_features_full := [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx",
     ]),
+    "class": [
+        "isBoosted", "pairType", "has_vbf_pair",
+    ],
 }
 
 # selection sets can be strings, lists (which will be AND joined) or dictionaries with years mapping to strings or lists
@@ -425,6 +446,10 @@ dynamic_columns = {
         ("dau1_px", "dau1_py", "dau1_pz", "dau1_e"),
         (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2))),
     ),
+    "dau1_mt": (
+        ("dau1_px", "dau1_py", "dau1_pz", "dau1_e", "met_et", "met_phi"),
+        (lambda a, b, c, d, e, f: calc_mt(a, b, c, d, e, np.zeros_like(a), f, np.zeros_like(a))),
+    ),
     "dau2_px": (
         ("dau2_pt", "dau2_dphi"),
         (lambda a, b: a * np.cos(b)),
@@ -513,6 +538,14 @@ dynamic_columns = {
         ("bjet1_phi", "bjet2_phi", "bjet1_eta", "bjet2_eta"),
         (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
     ),
+    "ditau_mt": (
+        ("dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e"),
+        (lambda a, b, c, d, e, f, g, h: calc_mt(a, b, c, d, e, f, g, h)),
+    ),
+    "h_bb_mass": (
+        ("bjet1_pt", "bjet1_eta", "bjet1_phi", "bjet1_e", "bjet2_pt", "bjet2_eta", "bjet2_phi", "bjet2_e"),
+        (lambda a, b, c, d, e, f, g, h: calc_mass(a, b, c, d) + calc_mass(e, f, g, h)),
+    ),
     "top1_mass": (
         top_info_fields := (
             "dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e",
@@ -593,6 +626,37 @@ dynamic_columns = {
         ("tauH_pz", "bH_pz"),
         (lambda a, b: a + b),
     ),
+    "tauH_SVFIT_E": (
+        ("tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_SVFIT_mass"),
+        (lambda a, b, c, d: calc_energy(a, b, c, d)),
+    ),
+    "tauH_SVFIT_mt": (
+        ("tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_SVFIT_mass"),
+        (lambda a, b, c, d: calc_energy(a, b, c, d)),
+    ),
+    "hh_pt": (
+        hh_args := ("dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e",
+        "bjet1_pt", "bjet1_eta", "bjet1_phi", "bjet1_e", "bjet2_pt", "bjet2_eta", "bjet2_phi", "bjet2_e",
+        "met_et", "met_phi", "tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_SVFIT_mass",
+        "HHKin_mass_raw", "HHKin_mass_raw_chi2"),
+        (lambda *args: hh(*args, kind="hh_pt")),
+    ),
+    "deta_hbb_httvis": (
+        hh_args,
+        (lambda *args: hh(*args, kind="deta_hbb_httvis")),
+    ),
+    "dphi_hbb_met": (
+        hh_args,
+        (lambda *args: hh(*args, kind="dphi_hbb_met")),
+    ),
+    "diH_mass_met": (
+        hh_args,
+        (lambda *args: hh(*args, kind="dphi_hbb_met")),
+    ),
+    # "ditau_deltaR_x_sv_pt":(
+    #     ("ditau_deltaR", "tauH_SVFIT_pt"),
+    #     (lambda a, b: a*b)
+    # )
 }
 
 embedding_expected_inputs = {
