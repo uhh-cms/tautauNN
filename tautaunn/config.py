@@ -14,6 +14,7 @@ from tautaunn.util import phi_mpi_to_pi, top_info, boson_info, match
 
 @dataclass
 class ActivationSetting:
+
     # name of the activation as understood by tf.keras.layers.Activation
     name: str
     # name of the kernel initializer as understood by tf.keras.layers.Dense
@@ -248,9 +249,21 @@ label_sets = {
     },
 }
 
+
+def with_features(original, *, add=None, remove=None):
+    features = list(original)
+    if remove:
+        remove = remove if isinstance(remove, list) else [remove]
+        features = [f for f in features if not any(match(f, p) for p in remove)]
+    if add:
+        features += add if isinstance(add, list) else [add]
+    return features
+
+
 cont_feature_sets = {
-    "reg": [
-        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "met_cov00", "met_cov01", "met_cov11",
+    "reg": (cont_features_reg := [
+        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
+        "met_cov00", "met_cov01", "met_cov11",
         "ditau_deltaphi", "ditau_deltaeta",
         *[
             f"dau{i}_{feat}"
@@ -261,12 +274,14 @@ cont_feature_sets = {
             f"bjet{i}_{feat}"
             for i in [1, 2]
             for feat in [
-                "px", "py", "pz", "e", "btag_deepFlavor", "cID_deepFlavor", "pnet_bb", "pnet_cc", "pnet_b", "pnet_c",
-                "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef", "HHbtag",
+                "px", "py", "pz", "e", "btag_deepFlavor", "cID_deepFlavor",
+                "pnet_bb", "pnet_cc", "pnet_b", "pnet_c", "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef",
+                "HHbtag",
             ]
         ],
-    ],
-    "reg2": [
+    ]),
+    "reg2": (cont_features_reg2 := [
+        # order is important here since it is used as is for the tauNN
         "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px",
         "ditau_deltaphi", "ditau_deltaeta",
         "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_iso",
@@ -274,13 +289,36 @@ cont_feature_sets = {
         "met_cov00", "met_cov01", "met_cov11",
         "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor",
         "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor",
-    ],
+    ]),
+    "reg_nopnet": with_features(cont_features_reg, remove=["bjet*_pnet_*"]),
+    "reg_nohhbtag": with_features(cont_features_reg, remove=["bjet*_HHbtag"]),
+    "reg_nodf": with_features(cont_features_reg, remove=["bjet*_deepFlavor"]),
+    "reg_nohl": with_features(cont_features_reg, remove=["ditau_*"]),
+    "reg_nodau2iso": with_features(cont_features_reg, remove=["dau2_iso"]),
+    "reg_nodaudxyz": with_features(cont_features_reg, remove=["dau*_dxy", "dau*_dz"]),
+    "reg_nohhbtag_nohl": with_features(cont_features_reg, remove=["bjet*_HHbtag", "ditau_*"]),
+    "full": (cont_features_full := cont_features_reg + [
+        "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+        "bH_e", "bH_px", "bH_py", "bH_pz",
+        "HH_e", "HH_px", "HH_py", "HH_pz",
+        "HHKin_mass",
+        "top1_mass", "top2_mass", "W_distance", "Z_distance", "H_distance",
+    ]),
+    "full_svfit": cont_features_full + ["tauH_SVFIT_mass", "tauH_SVFIT_pt"],
+    "reg_svfit": cont_features_reg + ["tauH_SVFIT_mass", "tauH_SVFIT_pt"],
 }
 
 cat_feature_sets = {
     "reg": [
+        # order is important here since it is used as is for the tauNN
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge",
     ],
+    "test": [
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
+    ],
+    "full": (cat_features_full := [
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx",
+    ]),
 }
 
 # selection sets can be strings, lists (which will be AND joined) or dictionaries with years mapping to strings or lists
@@ -321,10 +359,6 @@ klub_index_columns = [
     "RunNumber",
     "lumi",
 ]
-
-static_columns = ['isBoosted',
-                  *[f"tauH_SVFIT_{i}" for i in ('pt', 'eta', 'phi', 'mass')],
-                  'has_vbf_pair']
 
 dynamic_columns = {
     "DeepMET_ResolutionTune_phi": (
@@ -497,20 +531,68 @@ dynamic_columns = {
     ),
     "W_distance": (
         top_info_fields,
-        (lambda *args: boson_info(*args, kind="W"))
+        (lambda *args: boson_info(*args, kind="W")),
     ),
     "Z_distance": (
         top_info_fields,
-        (lambda *args: boson_info(*args, kind="Z"))
+        (lambda *args: boson_info(*args, kind="Z")),
     ),
     "H_distance": (
         top_info_fields,
-        (lambda *args: boson_info(*args, kind="H"))
-    )
-    #"ditau_deltaR_x_sv_pt":(
-        #("ditau_deltaR", "tauH_SVFIT_pt"),
-        #(lambda a, b: a*b)
-    #)
+        (lambda *args: boson_info(*args, kind="H")),
+    ),
+    # "ditau_deltaR_x_sv_pt":(
+    #     ("ditau_deltaR", "tauH_SVFIT_pt"),
+    #     (lambda a, b: a*b)
+    # )
+    "tauH_dphi": (
+        ("tauH_phi", "DeepMET_ResolutionTune_phi"),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
+    "tauH_px": (
+        ("tauH_pt", "tauH_dphi"),
+        (lambda a, b: a * np.cos(b)),
+    ),
+    "tauH_py": (
+        ("tauH_pt", "tauH_dphi"),
+        (lambda a, b: a * np.sin(b)),
+    ),
+    "tauH_pz": (
+        ("tauH_pt", "tauH_eta"),
+        (lambda a, b: a * np.sinh(b)),
+    ),
+    "bH_dphi": (
+        ("bH_phi", "DeepMET_ResolutionTune_phi"),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
+    "bH_px": (
+        ("bH_pt", "bH_dphi"),
+        (lambda a, b: a * np.cos(b)),
+    ),
+    "bH_py": (
+        ("bH_pt", "bH_dphi"),
+        (lambda a, b: a * np.sin(b)),
+    ),
+    "bH_pz": (
+        ("bH_pt", "bH_eta"),
+        (lambda a, b: a * np.sinh(b)),
+    ),
+    "HH_e": (
+        ("tauH_e", "bH_e"),
+        (lambda a, b: a + b),
+    ),
+    "HH_px": (
+        ("tauH_px", "bH_px"),
+        (lambda a, b: a + b),
+    ),
+    "HH_py": (
+        ("tauH_py", "bH_py"),
+        (lambda a, b: a + b),
+    ),
+    "HH_pz": (
+        ("tauH_pz", "bH_pz"),
+        (lambda a, b: a + b),
+    ),
 }
 
 embedding_expected_inputs = {
@@ -523,12 +605,13 @@ embedding_expected_inputs = {
     # TODO: encode 2016APV somehow? -> maybe check first if we need to parametrize the year at all
     "year": [2016, 2017, 2018],
     "isBoosted": [0, 1],
-    "top_mass_idx": [0,1,2,3]
+    "top_mass_idx": [0, 1, 2, 3],
 }
 
 
 @dataclass
 class RegressionSet:
+
     model_files: dict[int, str]
     cont_feature_set: str
     cat_feature_set: str
@@ -567,4 +650,68 @@ regression_sets = {
         fine_tune=False,
     )),
     "default_ft": default_reg_set.copy(fine_tune=True),
+}
+
+
+@dataclass
+class LBNSet:
+
+    input_features: list[str | None]
+    output_features: list[str]
+    boost_mode: str
+    n_particles: int
+    n_restframes: int | None = None
+
+    def copy(self, **attrs) -> LBNSet:
+        kwargs = self.__dict__.copy()
+        kwargs.update(attrs)
+        return self.__class__(**kwargs)
+
+
+lbn_sets = {
+    "test": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            None, "met_px", "met_py", None,
+            None, "dmet_resp_px", "dmet_resp_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=7,
+    ),
+    "test2": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            None, "met_px", "met_py", None,
+            None, "dmet_resp_px", "dmet_resp_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=7,
+    ),
+    "test3": (lbn_test3 := LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_px", "met_py", None,
+            None, "dmet_resp_px", "dmet_resp_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=7,
+    )),
+    "test4": lbn_test3.copy(boost_mode="product", n_restframes=4),
 }

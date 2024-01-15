@@ -158,18 +158,19 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
-class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
+class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
     def __init__(
         self,
         monitor: str = "val_loss",
         min_delta: float = 1.0e-5,
         mode: str = "min",
+        lr_start_epoch: int = 0,
         lr_patience: int = 10,
         lr_factor: float = 0.1,
+        es_start_epoch: int = 0,
         es_patience: int = 1,
-        start_from_epoch: int = 0,
-        repeat_func: Callable[[ReduceLRAndStopAndRepeat, dict[str, Any]], None] | None = None,
+        repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
         verbose: int = 0,
         **kwargs,
     ):
@@ -189,10 +190,11 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         self.monitor = monitor
         self.min_delta = abs(float(min_delta))
         self.mode = mode
+        self.lr_start_epoch = int(lr_start_epoch)
         self.lr_patience = int(lr_patience)
         self.lr_factor = float(lr_factor)
+        self.es_start_epoch = int(es_start_epoch)
         self.es_patience = int(es_patience)
-        self.start_from_epoch = int(start_from_epoch)
         self.repeat_func = repeat_func
         self.verbose = int(verbose)
 
@@ -238,10 +240,6 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         logs = logs or {}
         logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-        # do nothing if configured to skip epochs
-        if epoch < self.start_from_epoch:
-            return
-
         # do nothing when no metric is available yet
         value = self.get_monitor_value(logs)
         if value is None:
@@ -259,23 +257,21 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
             self.wait = 0
             if self.verbose >= 2:
                 print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
-            logs["lres_wait"] = 0
+            logs["last_best"] = 0
             return
+        logs["last_best"] = int(epoch - self.best_epoch)
 
         # no improvement, increase wait counter
         self.wait += 1
-        logs["lres_wait"] = int(epoch - self.best_epoch)
-
-        # logging
-        if self.verbose >= 2:
-            print_msg(
-                f"{nl()}{self.__class__.__name__}: wait counter set to {self.wait} "
-                f"(LR patience: {self.lr_patience}, ES patience {self.es_patience})",
-            )
 
         #
         # lr monitoring
         #
+
+        # do nothing if lr is not yet to be monitored
+        if epoch < self.lr_start_epoch:
+            self.wait = 0
+            return
 
         if not self.skip_lr_monitoring:
             # within patience?
@@ -314,6 +310,11 @@ class ReduceLRAndStopAndRepeat(tf.keras.callbacks.Callback):
         #
         # early stopping monitoring
         #
+
+        # do nothing if es is not yet to be monitored
+        if epoch < self.es_start_epoch:
+            self.wait = 0
+            return
 
         # within patience?
         if self.wait <= self.es_patience:

@@ -186,6 +186,7 @@ EOF
             "cmsml" \
             "hist" \
             "vector" \
+            "shap" \
             "git+https://github.com/riga/law.git@master" \
             || return "$?"
     fi

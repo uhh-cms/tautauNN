@@ -255,7 +255,8 @@ def boson_info(
     dau2_pt, dau2_eta, dau2_phi, dau2_e,
     bjet1_pt, bjet1_eta, bjet1_phi, bjet1_e,
     bjet2_pt, bjet2_eta, bjet2_phi, bjet2_e,
-    met_et, met_phi, kind: str
+    met_et, met_phi,
+    kind: str,
 ):
     dau1 = vector.array({"pt": dau1_pt, "eta": dau1_eta, "phi": dau1_phi, "e": dau1_e})
     dau2 = vector.array({"pt": dau2_pt, "eta": dau2_eta, "phi": dau2_phi, "e": dau2_e})
@@ -266,13 +267,15 @@ def boson_info(
     W_distance = ((dau1 + dau2 + met).m - 80)**2 + ((bjet1 + bjet2).m - 80)**2
     Z_distance = ((dau1 + dau2 + met).m - 91)**2 + ((bjet1 + bjet2).m - 91)**2
     H_distance = ((dau1 + dau2 + met).m - 125)**2 + ((bjet1 + bjet2).m - 125)**2
+
     # return what is requested
     if kind == "W":
-        return W_distance 
+        return W_distance
     if kind == "Z":
-        return Z_distance 
+        return Z_distance
     if kind == "H":
-        return H_distance 
+        return H_distance
+
     raise ValueError(f"unknown top_info kind {kind}")
 
 
@@ -286,6 +289,15 @@ def create_tensorboard_callbacks(log_dir):
             with writer.as_default():
                 getattr(tf.summary, attr)(*args, **kwargs)
     return add, flush
+
+
+def get_indices(values, subset, allow_none=False):
+    # helper to get indices of names in a list
+    indices = []
+    for value in subset:
+        assert value is not None or allow_none
+        indices.append(-1 if value is None else values.index(value))
+    return indices
 
 
 def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, **params):
@@ -317,6 +329,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
         add("spin", "parameterize_spin")
         add("mass", "parameterize_mass")
         add("rs", "regression_set")
+        add("lb", "lbn_set")
         add("bw", "background_weight")
         add("fi", "fold_index")
         add("fi", "fold_indices")
