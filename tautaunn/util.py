@@ -269,7 +269,7 @@ def hh(l1_pt, l1_eta, l1_phi, l1_e,
     if kind == "dphi_hbb_met":
         return np.abs(h_bb.deltaphi(met))
 
-    raise ValueError(f"unknown top_info kind {kind}")
+    raise ValueError(f"unknown hh_info kind {kind}")
 
 
 def calc_top_masses(l_1, l_2, b_1, b_2, met):
