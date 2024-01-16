@@ -444,7 +444,7 @@ def train(
 
             # add year, spin and mass if given
             if parameterize_year_any:
-                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
+                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_flag)[:, None], axis=1)
             if parameterize_mass_any:
                 cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
             if parameterize_spin_any:
