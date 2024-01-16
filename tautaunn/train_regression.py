@@ -7,6 +7,8 @@ import re
 import json
 import time
 import shutil
+import hashlib
+import pickle
 from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
@@ -19,10 +21,10 @@ from tabulate import tabulate
 
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
-    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStopAndRepeat, EmbeddingEncoder,
+    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
     LivePlotWriter,
 )
-from tautaunn.util import load_sample_root, calc_new_columns, create_model_name
+from tautaunn.util import load_sample_root, calc_new_columns, create_model_name, transform_data_dir_cache
 from tautaunn.config import Sample, activation_settings, dynamic_columns, embedding_expected_inputs
 from tautaunn.output_scaling_layer import CustomOutputScalingLayer
 
@@ -86,6 +88,7 @@ def train(
     model_fallback_dir: str | None = model_fallback_dir,
     samples: list[Sample] = [
         Sample("ggF_Radion_m250", year="2017", label=0, spin=0, mass=250.0),
+        Sample("ggF_Radion_m260", year="2017", label=0, spin=0, mass=260.0),
         Sample("ggF_Radion_m270", year="2017", label=0, spin=0, mass=270.0),
         Sample("ggF_Radion_m280", year="2017", label=0, spin=0, mass=280.0),
         Sample("ggF_Radion_m300", year="2017", label=0, spin=0, mass=300.0),
@@ -110,6 +113,7 @@ def train(
         Sample("ggF_Radion_m2500", year="2017", label=0, spin=0, mass=2500.0),
         Sample("ggF_Radion_m3000", year="2017", label=0, spin=0, mass=3000.0),
         Sample("ggF_BulkGraviton_m250", year="2017", label=0, spin=2, mass=250.0),
+        Sample("ggF_BulkGraviton_m260", year="2017", label=0, spin=2, mass=260.0),
         Sample("ggF_BulkGraviton_m270", year="2017", label=0, spin=2, mass=270.0),
         Sample("ggF_BulkGraviton_m280", year="2017", label=0, spin=2, mass=280.0),
         Sample("ggF_BulkGraviton_m300", year="2017", label=0, spin=2, mass=300.0),
@@ -214,8 +218,6 @@ def train(
     learning_rate: float = 3e-3,
     # half the learning rate if the validation loss hasn't improved in this many validation steps
     learning_rate_patience: int = 8,
-    # how even the learning rate is halfed before training is stopped
-    learning_rate_reductions: int = 6,
     # stop training if the validation loss hasn't improved since this many validation steps
     early_stopping_patience: int = 10,
     # maximum number of epochs to even cap early stopping
@@ -249,6 +251,7 @@ def train(
     assert all(label in class_names for label in unique_labels)
     assert "spin" not in cat_input_names
     assert "mass" not in cont_input_names
+    assert "year" not in cont_input_names
     assert 0 <= fold_index < n_folds
     assert 0 < validation_fraction < 1
     assert optimizer in ["adam", "adamw"]
@@ -341,17 +344,16 @@ def train(
     for sample in samples:
         labels_to_samples[sample.label].append(sample.name)
 
-    # keep track of spins, masses, and yield factors
-    spins: set[int] = set()
-    masses: set[float] = set()
-    yield_factors: dict[str, float] = {}
-
     # lists for collection data to be forwarded into the MultiDataset
     cont_inputs_train, cont_inputs_valid = [], []
     cat_inputs_train, cat_inputs_valid = [], []
     targets_train, targets_valid = [], []
+    target_means, target_stds = [], []
     labels_train, labels_valid = [], []
     event_weights_train, event_weights_valid = [], []
+
+    # keep track of yield factors
+    yield_factors: dict[str, float] = {}
 
     # prepare fold indices to use
     train_fold_indices: list[int] = [i for i in range(n_folds) if i != fold_index]
@@ -359,70 +361,132 @@ def train(
     # helper to flatten rec arrays
     flatten_rec = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
 
-    # loop through samples
-    for sample in samples:
-        rec = load_sample_root(
-            data_dirs[sample.year],
-            sample,
-            list(columns_to_read),
-            selections[sample.year],
-            max_events=100,
-            cache_dir=cache_dir,
-        )
-        n_events = len(rec)
+    # check if data is cached
+    data_is_cached = False
+    if cache_dir:
+        cache_key = [
+            tuple(sample.hash_values for sample in samples),
+            tuple(transform_data_dir_cache(data_dirs[year]) for year in sorted(years)),
+            tuple(sorted(selections[year]) for year in sorted(years)),
+            sorted(columns_to_read),
+            cont_input_names,
+            cat_input_names,
+            regression_target_names,
+            n_classes,
+            parameterize_year,
+            parameterize_mass,
+            parameterize_spin,
+            n_folds,
+            fold_index,
+            validation_fraction,
+            seed,
+        ]
+        cache_hash = hashlib.sha256(str(cache_key).encode("utf-8")).hexdigest()[:10]
+        cache_file = os.path.join(cache_dir, f"alldata_{cache_hash}.pkl")
+        data_is_cached = os.path.exists(cache_file)
 
-        # add dynamic columns
-        rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
+    if data_is_cached:
+        # read data from cache
+        print(f"loading all data from {cache_file}")
+        with open(cache_file, "rb") as f:
+            (
+                cont_inputs_train,
+                cont_inputs_valid,
+                cat_inputs_train,
+                cat_inputs_valid,
+                targets_train,
+                targets_valid,
+                labels_train,
+                labels_valid,
+                event_weights_train,
+                event_weights_valid,
+                yield_factors,
+            ) = pickle.load(f)
 
-        # prepare arrays
-        cont_inputs = flatten_rec(rec[cont_input_names], np.float32)
-        cat_inputs = flatten_rec(rec[cat_input_names], np.int32)
-        targets = flatten_rec(rec[regression_target_names], np.float32)
-        labels = np.zeros((n_events, n_classes), dtype=np.float32)
-        labels[:, sample.label] = 1
+    else:
+        # loop through samples
+        for sample in samples:
+            rec = load_sample_root(
+                data_dirs[sample.year],
+                sample,
+                list(columns_to_read),
+                selections[sample.year],
+                # max_events=100,
+                cache_dir=cache_dir,
+            )
+            n_events = len(rec)
 
-        # add year, spin and mass if given
-        if parameterize_year:
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
-        if parameterize_mass:
-            if sample.mass > -1:
-                masses.add(float(sample.mass))
-            cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
-        if parameterize_spin:
-            if sample.spin > -1:
-                spins.add(int(sample.spin))
-            cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
+            # add dynamic columns
+            rec = calc_new_columns(rec, {name: dynamic_columns[name] for name in dyn_names})
 
-        # lookup all number of events used during training using event number and fold indices
-        last_digit = rec["EventNumber"] % n_folds
-        all_train_indices = np.where(np.any(last_digit[..., None] == train_fold_indices, axis=1))[0]
-        # randomly split according to validation_fraction into actual training and validation indices
-        valid_indices = np.random.choice(
-            all_train_indices,
-            size=int(len(all_train_indices) * validation_fraction),
-            replace=False,
-        )
-        train_indices = np.setdiff1d(all_train_indices, valid_indices)
+            # prepare arrays
+            cont_inputs = flatten_rec(rec[cont_input_names], np.float32)
+            cat_inputs = flatten_rec(rec[cat_input_names], np.int32)
+            targets = flatten_rec(rec[regression_target_names], np.float32)
+            labels = np.zeros((n_events, n_classes), dtype=np.float32)
+            labels[:, sample.label] = 1
 
-        # fill dataset lists
-        cont_inputs_train.append(cont_inputs[train_indices])
-        cont_inputs_valid.append(cont_inputs[valid_indices])
+            # add year, spin and mass if given
+            if parameterize_year:
+                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_int)[:, None], axis=1)
+            if parameterize_mass:
+                cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
+            if parameterize_spin:
+                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
 
-        cat_inputs_train.append(cat_inputs[train_indices])
-        cat_inputs_valid.append(cat_inputs[valid_indices])
+            # lookup all number of events used during training using event number and fold indices
+            last_digit = rec["EventNumber"] % n_folds
+            all_train_indices = np.where(np.any(last_digit[..., None] == train_fold_indices, axis=1))[0]
+            # randomly split according to validation_fraction into actual training and validation indices
+            valid_indices = np.random.choice(
+                all_train_indices,
+                size=int(len(all_train_indices) * validation_fraction),
+                replace=False,
+            )
+            train_indices = np.setdiff1d(all_train_indices, valid_indices)
 
-        targets_train.append(targets[train_indices])
-        targets_valid.append(targets[valid_indices])
+            # fill dataset lists
+            cont_inputs_train.append(cont_inputs[train_indices])
+            cont_inputs_valid.append(cont_inputs[valid_indices])
 
-        labels_train.append(labels[train_indices])
-        labels_valid.append(labels[valid_indices])
+            cat_inputs_train.append(cat_inputs[train_indices])
+            cat_inputs_valid.append(cat_inputs[valid_indices])
 
-        event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
-        event_weights_train.append(event_weights[train_indices][..., None])
-        event_weights_valid.append(event_weights[valid_indices][..., None])
+            targets_train.append(targets[train_indices])
+            targets_valid.append(targets[valid_indices])
 
-        # store the yield factor for later use
-        yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
+            target_means.append(np.mean(targets[train_indices], axis=0))
+            target_stds.append(np.std(targets[train_indices], axis=0))
+
+            labels_train.append(labels[train_indices])
+            labels_valid.append(labels[valid_indices])
+
+            event_weights = np.array([sample.loss_weight] * len(rec), dtype="float32")
+            event_weights_train.append(event_weights[train_indices][..., None])
+            event_weights_valid.append(event_weights[valid_indices][..., None])
+
+            # store the yield factor for later use
+            yield_factors[sample.name] = (rec["PUReweight"] * rec["MC_weight"] / rec["sum_weights"]).sum()
+
+        if cache_dir:
+            # cache data
+            print(f"caching all data to {cache_file}")
+            cache_data = (
+                cont_inputs_train,
+                cont_inputs_valid,
+                cat_inputs_train,
+                cat_inputs_valid,
+                targets_train,
+                targets_valid,
+                labels_train,
+                labels_valid,
+                event_weights_train,
+                event_weights_valid,
+                yield_factors,
+            )
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, "wb") as f:
+                pickle.dump(cache_data, f)
 
     # compute batch weights that ensures that each class is equally represented in each batch
     # and that samples within a class are weighted according to their yield
@@ -449,8 +513,8 @@ def train(
     for i in range(len(event_weights_valid)):
         event_weights_valid[i] = event_weights_valid[i] * composition_weights_valid[i]
 
-    # count number of training and validation samples per class
-    samples_per_class = {
+    # count number of training and validation events per class
+    events_per_class = {
         label: (
             int(sum(sum(labels[:, label]) for labels in labels_train)),
             int(sum(sum(labels[:, label]) for labels in labels_valid)),
@@ -468,19 +532,11 @@ def train(
         sum(batch_weights)
     ) - cont_input_means**2
 
-    # determine regression target means and stds
-    target_means = (
-        np.sum(np.concatenate([t * bw / len(t) for t, bw in zip(targets_train, batch_weights)]), axis=0) /
-        sum(batch_weights)
-    )
-    target_stds = ((
-        np.sum(np.concatenate([t**2 * bw / len(t) for t, bw in zip(targets_train, batch_weights)]), axis=0) /
-        sum(batch_weights)
-    ) - target_means**2)**0.5
+    target_means = np.mean([np.mean(t, axis=0) for t in targets_train], axis=0)
+    target_stds = np.mean([np.std(t, axis=0) for t in targets_train], axis=0)
 
     targets_train = [(x - target_means) / target_stds for x in targets_train]
     targets_valid = [(x - target_means) / target_stds for x in targets_valid]
-
     # handle year
     if parameterize_year:
         cat_input_names.append("year")
@@ -488,7 +544,7 @@ def train(
         possible_cat_input_values.append(embedding_expected_inputs["year"])
 
     # handle masses
-    masses = sorted(masses)
+    masses = sorted(float(sample.mass) for sample in samples if sample.mass >= 0)
     if parameterize_mass:
         assert len(masses) > 0
         cont_input_names.append("mass")
@@ -497,7 +553,7 @@ def train(
         cont_input_vars[-1] = np.var(masses)
 
     # handle spins
-    spins = sorted(spins)
+    spins = sorted(int(sample.spin) for sample in samples if sample.spin >= 0)
     if parameterize_spin:
         assert len(spins) > 0
         cat_input_names.append("spin")
@@ -583,12 +639,11 @@ def train(
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
-            lres_callback := ReduceLRAndStopAndRepeat(
+            lres_callback := ReduceLRAndStop(
                 monitor="val_loss",
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
-                lr_reductions=learning_rate_reductions,
                 es_patience=early_stopping_patience,
                 verbose=1,
             ),
@@ -611,7 +666,7 @@ def train(
         model.summary()
         header = ["Class (label)", "Total", "train", "valid"]
         rows = []
-        for (label, (n_train, n_valid)), class_name in zip(samples_per_class.items(), class_names.values()):
+        for (label, (n_train, n_valid)), class_name in zip(events_per_class.items(), class_names.values()):
             rows.append([f"{class_name} ({label})", n_train + n_valid, n_train, n_valid])
         rows.append(["Total", len(dataset_train) + len(dataset_valid), len(dataset_train), len(dataset_valid)])
         print("")
@@ -642,18 +697,21 @@ def train(
             t_end = time.perf_counter()
         except KeyboardInterrupt:
             t_end = time.perf_counter()
-            print("\n\ndetected manual interrupt!\n")
-            print("type 's' to gracefully stop training and save the model,")
+            print("\n\ndetected manual interrupt!")
             try:
-                inp = input("or any other key to terminate directly without saving: ")
+                while True:
+                    print("\ntype 's' to gracefully stop training and save the model,")
+                    inp = input("or any other key to terminate directly without saving: ")
+                    if inp.strip():
+                        break
             except KeyboardInterrupt:
                 inp = ""
-            if inp != "s":
+            if inp.lower() != "s":
                 print("model not saved")
                 return
             print("")
-            # manually restore best weights
-            lres_callback.restore_best_weights()
+        # manually restore best weights
+        lres_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
 
         # perform one final validation round for verification of the best model
