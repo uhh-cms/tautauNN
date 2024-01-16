@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import functools
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -97,6 +97,7 @@ class Sample:
     - directory_name: "SKIM_ggF_Radion_m350"
     - year: "2016APV"  (this is more like a "campaign")
     - year_int: 2016
+    - year_flag: 0
     - spin: 0
     - mass: 350.0
     """
@@ -107,6 +108,13 @@ class Sample:
     loss_weight: float = 1.0
     spin: int = -1
     mass: float = -1.0
+
+    YEAR_FLAGS: ClassVar[dict[str, int]] = {
+        "2016APV": 0,
+        "2016": 1,
+        "2017": 2,
+        "2018": 3,
+    }
 
     def __hash__(self) -> int:
         return hash(self.hash_values)
@@ -126,6 +134,10 @@ class Sample:
     @property
     def year_int(self) -> int:
         return int(self.year[:4])
+
+    @property
+    def year_flag(self) -> int:
+        return self.YEAR_FLAGS[self.year]
 
     def with_label_and_loss_weight(self, label: int | None, loss_weight: float = 1.0) -> Sample:
         return self.__class__(
@@ -312,6 +324,7 @@ cont_feature_sets = {
     "reg_nodau2iso": with_features(cont_features_reg, remove=["dau2_iso"]),
     "reg_nodaudxyz": with_features(cont_features_reg, remove=["dau*_dxy", "dau*_dz"]),
     "reg_nohhbtag_nohl": with_features(cont_features_reg, remove=["bjet*_HHbtag", "ditau_*"]),
+    "post_meeting161": with_features(cont_features_reg, remove=["ditau_*", "dau*_iso", "dmet_*"]),
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -681,8 +694,7 @@ embedding_expected_inputs = {
     "dau1_charge": [-1, 1],
     "dau2_charge": [-1, 1],
     "spin": [0, 2],
-    # TODO: encode 2016APV somehow? -> maybe check first if we need to parametrize the year at all
-    "year": [2016, 2017, 2018],
+    "year": [0, 1, 2, 3],
     "isBoosted": [0, 1],
     "top_mass_idx": [0, 1, 2, 3],
 }

@@ -105,7 +105,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             cat_inputs = flatten(rec[cat_input_names], np.int32)
 
             # add year
-            y = self.sample.year_int
+            y = self.sample.year_flag
             cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
 
             # reserve column for mass
