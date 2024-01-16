@@ -175,6 +175,10 @@ all_samples = [
             "PtZ_0To50", "PtZ_50To100", "PtZ_100To250", "PtZ_250To400", "PtZ_400To650", "PtZ_650ToInf",
         ]
     ],
+    *[
+        Sample("ttHToTauTau", year=year)
+        for year in luminosities.keys()
+    ],
 ]
 
 
@@ -207,12 +211,14 @@ sample_sets = {
         rf"^2016APV_ggF_Graviton_m({train_masses_all})$",
         r"^2016APV_DY_amc_PtZ_.*$",
         r"^2016APV_TT_(fully|semi)Lep$",
+        r"^2016APV_ttHToTauTau*$",
     )),
     "default_2016": (samples_default_2016 := select_samples(
         rf"^2016_ggF_Radion_m({train_masses_all})$",
         rf"^2016_ggF_Graviton_m({train_masses_all})$",
         r"^2016_DY_amc_PtZ_.*$",
         r"^2016_TT_(fully|semi)Lep$",
+        r"^2016_ttHToTauTau*$",
     )),
     "default_2016all": samples_default_2016APV + samples_default_2016,
     "default_2017": (samples_default_2017 := select_samples(
@@ -220,12 +226,14 @@ sample_sets = {
         rf"^2017_ggF_BulkGraviton_m({train_masses_all})$",
         r"^2017_DY_amc_PtZ_.*$",
         r"^2017_TT_(fully|semi)Lep$",
+        r"^2017_ttHToTauTau*$",
     )),
     "default_2018": (samples_default_2018 := select_samples(
         rf"^2018_ggF_Radion_m({train_masses_all})$",
         rf"^2018_ggF_BulkGraviton_m({train_masses_all})$",
         r"^2018_DY_amc_PtZ_.*$",
         r"^2018_TT_(fully|semi)Lep$",
+        r"^2018_ttHToTauTau*$",
     )),
     "default": samples_default_2016APV + samples_default_2016 + samples_default_2017 + samples_default_2018,
     "test": select_samples(
@@ -247,6 +255,13 @@ label_sets = {
         1: {"name": "TT", "sample_patterns": ["201*_TT*"]},
         2: {"name": "DY", "sample_patterns": ["201*_DY*"]},
     },
+    "multi4": {
+        0: {"name": "HH", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        1: {"name": "DY", "sample_patterns": ["201*_DY*"]},
+        2: {"name": "TT", "sample_patterns": ["201*_TT*"]},
+        3: {"name": "TTH", "sample_patterns": ["201*_ttHToTauTau*"]},
+    },
+
 }
 
 
