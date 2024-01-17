@@ -2,15 +2,15 @@
 import luigi
 import law
 
-from tautaunn.tasks.datacards import WriteDatacards
+from tautaunn.tasks.datacards import WriteDatacards, EvaluationParameters
+from tautaunn.tasks.base import MultiSkimTask
 
 
-class MakeFinalDistPlots(WriteDatacards):
+class MakeFinalDistPlots(MultiSkimTask, EvaluationParameters):
 
     limits_file = luigi.Parameter(
-        default="",
-        # TODO: This location should already be determined by the WriteDatacards tasks
-        # Can I retrieve the location from WriteDatacards somehow?
+        default="", 
+        # This should come from PlotResonantLimits somehow.. no idea how to do that
         description="limits will be read from this /path/to/limits_file.npz> "
     )
     input_dir = luigi.Parameter(
@@ -23,9 +23,16 @@ class MakeFinalDistPlots(WriteDatacards):
         default="",
         description="full path to dir, where plot files will be stored."
     )
+    output_suffix = luigi.Parameter(
+        default=law.NO_STR,
+        description="suffix to append to the output directory; default: ''",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    def requires(self):
+        return WriteDatacards.req(self)
 
     def output(self):
         # prepare the output directory
@@ -43,7 +50,7 @@ class MakeFinalDistPlots(WriteDatacards):
         # inp = self.input()
         # sample_names = list(inp)
 
-        # create the cards
+        # create the plots
         make_plots(
             limits_file=self.limits_file,
             input_dir=self.input_dir,
