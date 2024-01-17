@@ -378,12 +378,20 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
                 assert key not in name_parts
                 name_parts[key] = fmt(params.pop(name))
 
+        def fmt_list(values: list[int]) -> str:
+            return f"{len(values)}x{values[0]}"
+
+        def fmt_lists(values: tuple[list[int]] | list[int]) -> str:
+            if isinstance(values, list):
+                return fmt_list(values)
+            return "+".join(map(fmt_list, values))
+
         add("ps", "selection_set")
         add("ls", "label_set")
         add("ss", "sample_set")
         add("fs", "feature_set")
         add("ed", "embedding_output_dim")
-        add("lu", "units", lambda x: f"{len(x)}x{x[0]}")
+        add("lu", "units", fmt_lists)
         add("ct", "connection_type")
         add("act", "activation")
         add("bn", "batch_norm")
