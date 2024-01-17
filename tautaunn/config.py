@@ -809,5 +809,20 @@ lbn_sets = {
         boost_mode="pairs",
         n_particles=7,
     )),
-    "test4": lbn_test3.copy(boost_mode="product", n_restframes=4),
+    "test4": (lbn_test4 := LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_px", "met_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos", "pair_dr"],
+        boost_mode="pairs",
+        n_particles=7,
+    )),
+    "test5": lbn_test4.copy(boost_mode="product", n_restframes=4),
 }
