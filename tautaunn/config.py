@@ -325,6 +325,19 @@ cont_feature_sets = {
     "reg_nodaudxyz": with_features(cont_features_reg, remove=["dau*_dxy", "dau*_dz"]),
     "reg_nohhbtag_nohl": with_features(cont_features_reg, remove=["bjet*_HHbtag", "ditau_*"]),
     "post_meeting161": with_features(cont_features_reg, remove=["ditau_*", "dau*_iso", "dmet_*"]),
+    "reg_reduced": (cont_features_reg_reduced := [
+        "met_et", "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "btag_deepFlavor", "cID_deepFlavor", "HHbtag"]
+        ],
+    ]),
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -410,52 +423,44 @@ klub_index_columns = [
 ]
 
 dynamic_columns = {
-    "DeepMET_ResolutionTune_phi": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py"),
-        (lambda x, y: np.arctan2(y, x)),
-    ),
-    "met_dphi": (
-        ("met_phi", "DeepMET_ResolutionTune_phi"),
-        (lambda a, b: phi_mpi_to_pi(a - b)),
-    ),
     "dmet_resp_px": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_resp_py": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "DeepMET_ResolutionTune_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "dmet_reso_px": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "DeepMET_ResolutionTune_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_reso_py": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "DeepMET_ResolutionTune_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "met_px": (
-        ("met_et", "met_dphi"),
+        ("met_et", "met_phi"),
         (lambda a, b: a * np.cos(b)),
     ),
     "met_py": (
-        ("met_et", "met_dphi"),
+        ("met_et", "met_phi"),
         (lambda a, b: a * np.sin(b)),
     ),
     "dau1_dphi": (
-        ("dau1_phi", "DeepMET_ResolutionTune_phi"),
+        ("dau1_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau2_dphi": (
-        ("dau2_phi", "DeepMET_ResolutionTune_phi"),
+        ("dau2_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu1_dphi": (
-        ("genNu1_phi", "DeepMET_ResolutionTune_phi"),
+        ("genNu1_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu2_dphi": (
-        ("genNu2_phi", "DeepMET_ResolutionTune_phi"),
+        ("genNu2_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau1_px": (
@@ -531,7 +536,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet1_dphi": (
-        ("bjet1_phi", "DeepMET_ResolutionTune_phi"),
+        ("bjet1_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet1_px": (
@@ -547,7 +552,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet2_dphi": (
-        ("bjet2_phi", "DeepMET_ResolutionTune_phi"),
+        ("bjet2_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet2_px": (
@@ -607,7 +612,7 @@ dynamic_columns = {
     #     (lambda a, b: a*b)
     # )
     "tauH_dphi": (
-        ("tauH_phi", "DeepMET_ResolutionTune_phi"),
+        ("tauH_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "tauH_px": (
@@ -623,7 +628,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bH_dphi": (
-        ("bH_phi", "DeepMET_ResolutionTune_phi"),
+        ("bH_phi", "met_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bH_px": (
