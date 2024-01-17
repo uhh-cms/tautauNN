@@ -372,7 +372,7 @@ cat_feature_sets = {
         # order is important here since it is used as is for the tauNN
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge",
     ],
-    "test": [
+    "reg_reduced": [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
     ],
     "full": (cat_features_full := [

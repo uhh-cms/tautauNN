@@ -26,8 +26,8 @@ class TrainingParameters(Task):
         description="custom model suffix",
     )
     embedding_output_dim = luigi.IntParameter(
-        default=5,
-        description="dimension of the categorical embedding; default: 5",
+        default=10,
+        description="dimension of the categorical embedding; default: 10",
     )
     units = law.CSVParameter(
         cls=luigi.IntParameter,
