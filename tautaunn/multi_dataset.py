@@ -168,7 +168,7 @@ class MultiDataset(object):
 
         # start generating
         n_input_names = len(input_names or [])
-        n_target_names = len(target_names or [])
+        n_target_names = len(target_names) if target_names else 1
         for arrays in self:
             n_arrays = len(arrays)
             if n_arrays == 1:
@@ -182,4 +182,15 @@ class MultiDataset(object):
                 yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), *arrays[1:]
             else:
                 assert n_arrays - 1 == n_input_names + n_target_names
-                yield dict(zip(input_names, arrays[:n_input_names])), dict(zip(target_names, arrays[n_input_names:n_input_names + n_target_names])), *arrays[n_input_names + n_target_names:]
+                x, arrays = (
+                    (dict(zip(input_names, arrays[:n_input_names])), arrays[n_input_names:])
+                    if n_input_names
+                    else (arrays[0], arrays[1:])
+                )
+                y, arrays = (
+                    (dict(zip(target_names, arrays[:n_target_names])), arrays[n_target_names:])
+                    if n_target_names
+                    else (arrays[0], arrays[1:])
+                )
+                w = arrays[0]
+                yield x, y, w
