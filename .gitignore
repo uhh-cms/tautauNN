@@ -21,7 +21,7 @@
 *.law
 *.vscode
 *.ipynb
-./tautaunn/tf_mnist_example.py
+tautaunn/tf_mnist_example.py
 __pycache__
 dist
 build
