@@ -166,9 +166,15 @@ class MultiDataset(object):
         if self.tuple_length > 3 and not input_names:
             raise ValueError("input_names must be given when there is more than one output to be yielded")
 
+        # default names
+        if not input_names:
+            input_names = []
+        if not target_names:
+            target_names = []
+
         # start generating
-        n_input_names = len(input_names or [])
-        n_target_names = len(target_names) if target_names else 1
+        n_input_names = len(input_names)
+        n_target_names = len(target_names)
         for arrays in self:
             n_arrays = len(arrays)
             if n_arrays == 1:
@@ -181,7 +187,7 @@ class MultiDataset(object):
                 assert n_input_names in [0, 1]
                 yield ({input_names[0]: arrays[0]} if input_names else arrays[0]), *arrays[1:]
             else:
-                assert n_arrays - 1 == n_input_names + n_target_names
+                assert n_arrays == max(n_input_names, 1) + max(n_target_names, 1) + 1
                 x, arrays = (
                     (dict(zip(input_names, arrays[:n_input_names])), arrays[n_input_names:])
                     if n_input_names
