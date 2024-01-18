@@ -439,12 +439,16 @@ dynamic_columns = {
         ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
+    "met_dphi": (
+        ("met_phi", "met_phi"),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
     "met_px": (
-        ("met_et", "met_phi"),
+        ("met_et", "met_dphi"),
         (lambda a, b: a * np.cos(b)),
     ),
     "met_py": (
-        ("met_et", "met_phi"),
+        ("met_et", "met_dphi"),
         (lambda a, b: a * np.sin(b)),
     ),
     "dau1_dphi": (
