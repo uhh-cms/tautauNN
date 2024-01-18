@@ -273,7 +273,6 @@ label_sets = {
         2: {"name": "TT", "sample_patterns": ["201*_TT*"]},
         3: {"name": "TTH", "sample_patterns": ["201*_ttHToTauTau*"]},
     },
-
 }
 
 
@@ -336,6 +335,29 @@ cont_feature_sets = {
             f"bjet{i}_{feat}"
             for i in [1, 2]
             for feat in ["px", "py", "pz", "e", "btag_deepFlavor", "cID_deepFlavor", "HHbtag"]
+        ],
+    ]),
+    "reg_reduced_cid": (cont_features_reg_reduced_cid := with_features(
+        cont_features_reg_reduced,
+        remove=["bjet*_cID_deepFlavor"],
+        add=["bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"],
+    )),
+    "reg_reduced_cid_pnet": (cont_features_reg_reduced := [
+        "met_et", "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "CvsB", "CvsL",
+                "pnet_bb", "pnet_cc", "pnet_b", "pnet_c", "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef",
+                "HHbtag",
+            ]
         ],
     ]),
     "full": (cont_features_full := cont_features_reg + [
@@ -828,5 +850,20 @@ lbn_sets = {
         boost_mode="pairs",
         n_particles=7,
     )),
+    "test4_metfix": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_et", None, None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos", "pair_dr"],
+        boost_mode="pairs",
+        n_particles=7,
+    ),
     "test5": lbn_test4.copy(boost_mode="product", n_restframes=4),
 }

@@ -27,13 +27,19 @@ def get_device(device: str = "cpu", num_device: int = 0) -> tf.device:
     if device == "gpu":
         gpus = tf.config.experimental.list_physical_devices("GPU")
         if gpus:
-            try:
-                tf.config.experimental.set_memory_growth(gpus[num_device], True)
-                return tf.device(f"/device:GPU:{num_device}")
-            except RuntimeError as e:
-                print(e)
-        else:
-            print("no gpu found, falling back to cpu")
+            selected_gpu = None
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, False)
+                if gpu.name.endswith(f":{num_device}"):
+                    # tf.config.set_logical_device_configuration(
+                    #     gpu,
+                    #     [tf.config.LogicalDeviceConfiguration(memory_limit=1024 * 45)],  # unit is MB
+                    # )
+                    selected_gpu = tf.device(f"/device:GPU:{num_device}")
+            if selected_gpu is not None:
+                return selected_gpu
+        print(f"no gpu with the requested number {num_device} found, falling back to cpu:0")
+        num_device = 0
 
     return tf.device(f"/device:CPU:{num_device}")
 
