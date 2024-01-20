@@ -13,6 +13,8 @@ from collections import defaultdict
 from getpass import getuser
 from copy import deepcopy
 from typing import Any
+import matplotlib.pyplot as plt
+import shap
 
 import numpy as np
 import tensorflow as tf
@@ -996,6 +998,23 @@ def train(
                 raise e
             print(f"saving at default path failed: {e}")
             model_path = save_model(os.path.join(model_fallback_dir, model_name))
+
+    # create shap plot
+    # this only takes the first batch for now since that already takes soo long
+    X_val = np.hstack([cont_inputs_valid[0], cat_inputs_valid[0]])
+    feature_names = cont_input_names + cat_input_names
+
+    def caller(X, model=model, n_cont=len(cont_input_names)):
+        X_cont, X_cat = X[:, :n_cont], X[:, n_cont:]
+        return model([X_cont, X_cat], training=False)
+
+    explainer = shap.explainers.Permutation(caller, X_val, feature_names=feature_names)
+    shap_values = explainer(X_val)
+
+    # only plot for first class
+
+    shap.plots.bar(shap_values[:, :, 0], show=False)
+    plt.savefig(os.path.join(model_path, "shap_feat_importances.pdf"))
 
     return model, model_path
 
