@@ -57,10 +57,6 @@ class MultiDataset(object):
         if self.tuple_length < 3:
             raise Exception("per dataset, at least three arrays must be given: inputs, targets, weights")
 
-        # when used for validation, set the batch size to the total number of events
-        if self.kind == "valid":
-            self.batch_size = sum(self.counts)
-
         # transform batch weights to relative probabilities
         sum_batch_weights = sum(self.batch_weights)
         self.probs = [w / sum_batch_weights for w in self.batch_weights]

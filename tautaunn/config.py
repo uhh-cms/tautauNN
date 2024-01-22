@@ -360,6 +360,24 @@ cont_feature_sets = {
             ]
         ],
     ]),
+    "default_metrot": (cont_features_reg_reduced := [
+        "met_et", "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "pnet_bb", "pnet_cc", "pnet_b", "pnet_c", "pnet_g", "pnet_uds", "pnet_pu", "pnet_undef",
+                "HHbtag",
+            ]
+        ],
+    ]),
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -394,7 +412,7 @@ cat_feature_sets = {
         # order is important here since it is used as is for the tauNN
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge",
     ],
-    "reg_reduced": [
+    "default": [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
     ],
     "full": (cat_features_full := [
@@ -850,7 +868,7 @@ lbn_sets = {
         boost_mode="pairs",
         n_particles=7,
     )),
-    "test4_metfix": LBNSet(
+    "test4_metfix": (lbn_test4_metfix := LBNSet(
         input_features=[
             "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
             "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
@@ -864,6 +882,21 @@ lbn_sets = {
         output_features=["E", "pt", "eta", "m", "pair_cos", "pair_dr"],
         boost_mode="pairs",
         n_particles=7,
+    )),
+    "test5": lbn_test4_metfix.copy(boost_mode="product", n_restframes=4),
+    "default_metrot": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_et", None, None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=8,
     ),
-    "test5": lbn_test4.copy(boost_mode="product", n_restframes=4),
 }

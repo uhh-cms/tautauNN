@@ -639,6 +639,7 @@ def train(
         )
         dataset_valid = MultiDataset(
             data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
+            batch_size=batch_size,
             kind="valid",
             yield_valid_rest=True,
             transform_data=transform,
@@ -886,7 +887,7 @@ def train(
                 epochs=max_epochs,
                 steps_per_epoch=validate_every,
                 validation_freq=1,
-                validation_steps=1,
+                validation_steps=dataset_valid.batches_per_cycle,
                 callbacks=list(filter(None, fit_callbacks)),
             )
             # model.load_weights("/gpfs/dust/cms/user/riegerma/taunn_data/store/Training/dev_weights/hbtres_LSbinary_FSreg-reg_ED5_LU5x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_LR3.0e-03_SPINy_MASSy_FI0_SD1")  # noqa
@@ -915,7 +916,7 @@ def train(
         print("performing final round of validation")
         results_valid = model.evaluate(
             x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-            steps=1,
+            steps=dataset_valid.batches_per_cycle,
             return_dict=True,
         )
 

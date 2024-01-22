@@ -29,7 +29,7 @@ def get_device(device: str = "cpu", num_device: int = 0) -> tf.device:
         if gpus:
             selected_gpu = None
             for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, False)
+                tf.config.experimental.set_memory_growth(gpu, True)
                 if gpu.name.endswith(f":{num_device}"):
                     # tf.config.set_logical_device_configuration(
                     #     gpu,
