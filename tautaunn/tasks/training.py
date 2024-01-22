@@ -258,6 +258,7 @@ class Training(TrainingParameters):
             fold_index=self.fold,
             validation_fraction=0.25,
             seed=self.seed,
+            skip_shap_plots=True,
         )
 
         # run the training
