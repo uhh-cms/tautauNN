@@ -164,6 +164,78 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
+class CycleLr(tf.keras.callbacks.Callback):
+    def __init__(
+            self,
+            monitor: str = "val_ce",
+            mode: str = "min",
+            lr_range: list = [1e-6, 3e-3],
+            half_life: int = 15,
+            es_patience: int = 10,
+            verbose: int = 0,
+            **kwargs
+    ):
+        super().__init__(**kwargs)
+        # some checks
+        if mode not in ["min", "max"]:
+            raise ValueError(f"{self.__class__.__name__} received unknown mode ({mode})")
+        if es_patience < 0:
+            raise ValueError(f"{self.__class__.__name__} received es_patience < 0 ({es_patience})")
+
+        # set attributes
+        self.lr_range = lr_range
+        self.monitor = monitor
+        self.mode = mode
+        self.half_life = half_life
+        # start monitoring for early stopping only after at least one cycle finished
+        self.es_start_epoch = int(2*half_life)
+        self.es_patience = int(es_patience)
+        self.verbose = int(verbose)
+
+        # state
+        self.wait: int = 0
+        self.best_epoch: int = -1
+        self.best_weights: tuple[tf.Tensor, ...] | None = None
+        self.best_metric: float = np.nan
+        self.monitor_op: Callable[[float, float], bool] | None = None
+        self.repeat_counter: int = 0
+        self.cycle_step: int = 0
+
+        self._reset()
+
+    def _reset(self) -> None:
+        self.wait = 0
+        self.skip_lr_monitoring = False
+        self.best_epoch = -1
+        self.best_weights = None
+        self.repeat_counter = 0
+        self.cycle_step = 0
+
+        if self.mode == "min":
+            self.best_metric = np.inf
+            self.best_metric_with_previous_lr = np.inf
+            self.monitor_op = lambda cur, best: (best - cur) > self.min_delta
+        else:  # "max"
+            self.best_metric = -np.inf
+            self.best_metric_with_previous_lr = -np.inf
+            self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
+
+    def calc_lr(self):
+        self.cycle_width = self.lr_range[1] - self.lr_range[0]
+        self.step_size = self.cycle_width / self.half_life
+        if self.cycle_step < self.half_life:
+            return self.lr_range[0]+(self.cycle_step*self.step_size)
+        else:
+            return self.lr_range[-1]-((self.cycle_step-self.half_life)*self.step_size)
+
+
+    def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
+        self._reset()
+    
+    def on_epoch_begin(self, epoch, logs):
+        lr = self.calc_lr
+        tf.keras.backend.set_value(self.model.optimizer.lr, lr)
+
 class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
     def __init__(
