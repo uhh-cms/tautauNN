@@ -463,24 +463,28 @@ klub_index_columns = [
 ]
 
 dynamic_columns = {
+    "dau_phi": (
+        ("dau1_px", "dau1_py", "dau2_px", "dau2_py"),
+        (lambda x1, y1, x2, y2: np.arctan2(y1 + y2, x1 + x2)),
+    ),
     "dmet_resp_px": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "dau_phi"),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_resp_py": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "dau_phi"),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "dmet_reso_px": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "dau_phi"),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_reso_py": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "dau_phi"),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "met_dphi": (
-        ("met_phi", "met_phi"),
+        ("met_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "met_px": (
@@ -492,19 +496,19 @@ dynamic_columns = {
         (lambda a, b: a * np.sin(b)),
     ),
     "dau1_dphi": (
-        ("dau1_phi", "met_phi"),
+        ("dau1_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau2_dphi": (
-        ("dau2_phi", "met_phi"),
+        ("dau2_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu1_dphi": (
-        ("genNu1_phi", "met_phi"),
+        ("genNu1_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu2_dphi": (
-        ("genNu2_phi", "met_phi"),
+        ("genNu2_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau1_px": (
@@ -524,7 +528,7 @@ dynamic_columns = {
         (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2))),
     ),
     "dau1_mt": (
-        ("dau1_px", "dau1_py", "dau1_pz", "dau1_e", "met_et", "met_phi"),
+        ("dau1_px", "dau1_py", "dau1_pz", "dau1_e", "met_et", "met_dphi"),
         (lambda a, b, c, d, e, f: calc_mt(a, b, c, d, e, np.zeros_like(a), f, np.zeros_like(a))),
     ),
     "dau2_px": (
@@ -580,7 +584,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet1_dphi": (
-        ("bjet1_phi", "met_phi"),
+        ("bjet1_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet1_px": (
@@ -596,7 +600,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet2_dphi": (
-        ("bjet2_phi", "met_phi"),
+        ("bjet2_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet2_px": (
@@ -656,7 +660,7 @@ dynamic_columns = {
     #     (lambda a, b: a*b)
     # )
     "tauH_dphi": (
-        ("tauH_phi", "met_phi"),
+        ("tauH_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "tauH_px": (
@@ -672,7 +676,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bH_dphi": (
-        ("bH_phi", "met_phi"),
+        ("bH_phi", "dau_phi"),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bH_px": (
