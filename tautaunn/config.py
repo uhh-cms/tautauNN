@@ -342,7 +342,7 @@ cont_feature_sets = {
         remove=["bjet*_cID_deepFlavor"],
         add=["bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"],
     )),
-    "reg_reduced_cid_pnet": (cont_features_reg_reduced := [
+    "reg_reduced_cid_pnet": [
         "met_et", "met_cov00", "met_cov01", "met_cov11",
         *[
             f"dau{i}_{feat}"
@@ -359,8 +359,8 @@ cont_feature_sets = {
                 "HHbtag",
             ]
         ],
-    ]),
-    "default_metrot": (cont_features_reg_reduced := [
+    ],
+    "default_metrot": [
         "met_et", "met_cov00", "met_cov01", "met_cov11",
         *[
             f"dau{i}_{feat}"
@@ -377,7 +377,25 @@ cont_feature_sets = {
                 "HHbtag",
             ]
         ],
-    ]),
+    ],
+    "default_daurot": [
+        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py",
+        "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "HHbtag",
+            ]
+        ],
+    ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -902,5 +920,22 @@ lbn_sets = {
         output_features=["E", "pt", "eta", "m", "pair_cos"],
         boost_mode="pairs",
         n_particles=8,
+    ),
+    "default_daurot": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_px", "met_py", None,
+            None, "dmet_resp_px", "dmet_resp_py", None,
+            None, "dmet_reso_px", "dmet_reso_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=10,
     ),
 }
