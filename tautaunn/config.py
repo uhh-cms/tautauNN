@@ -482,25 +482,12 @@ klub_index_columns = [
 
 dynamic_columns = {
     # columns needed for rotation
-    "dau1_px_orig": (
-        ("dau1_pt", "dau1_phi"),
-        (lambda a, b: a * np.cos(b)),
-    ),
-    "dau1_py_orig": (
-        ("dau1_pt", "dau1_phi"),
-        (lambda a, b: a * np.sin(b)),
-    ),
-    "dau2_px_orig": (
-        ("dau2_pt", "dau2_phi"),
-        (lambda a, b: a * np.cos(b)),
-    ),
-    "dau2_py_orig": (
-        ("dau2_pt", "dau2_phi"),
-        (lambda a, b: a * np.sin(b)),
-    ),
     (rot_phi := "dau_phi"): (
-        ("dau1_px_orig", "dau1_py_orig", "dau2_px_orig", "dau2_py_orig"),
-        (lambda x1, y1, x2, y2: np.arctan2(y1 + y2, x1 + x2)),
+        ("dau1_pt", "dau1_phi", "dau2_pt", "dau2_phi"),
+        (lambda pt1, phi1, pt2, phi2: np.arctan2(
+            pt1 * np.sin(phi1) + pt2 * np.sin(phi2),
+            pt1 * np.cos(phi1) + pt2 * np.cos(phi2),
+        )),
     ),
     # actual columns
     "dmet_resp_px": (
