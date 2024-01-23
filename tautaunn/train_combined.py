@@ -1016,8 +1016,30 @@ def train(
         shap_values = explainer(X_val)
 
         # only plot for first class
-        shap.plots.bar(shap_values[:, :, 0], show=False)
-        plt.savefig(os.path.join(model_path, "shap_feat_importances.pdf"))
+        shap.plots.bar(shap_values[:, :, 0], show=False, max_display=15)
+        plt.tight_layout()
+        plt.savefig(os.path.join(model_path, "shap_feat_hh_importances.pdf"))
+
+        #shap.plots.bar(shap_values[:, :, 1], show=False, max_display=15)
+        #plt.tight_layout()
+        #plt.savefig(os.path.join(model_path, "shap_feat_dy_importances.pdf"))
+
+        #shap.plots.bar(shap_values[:, :, 2], show=False, max_display=15)
+        #plt.tight_layout()
+        #plt.savefig(os.path.join(model_path, "shap_feat_tt_importances.pdf"))
+
+        plt.clf()
+        shap.plots.bar(shap_values[:, :, 0], show=False, max_display=150)
+        plt.tight_layout()
+        plt.savefig(os.path.join(model_path, "shap_feat_hh_importances_all.pdf"))
+
+        #shap.plots.bar(shap_values[:, :, 1], show=False, max_display=150)
+        #plt.tight_layout()
+        #plt.savefig(os.path.join(model_path, "shap_feat_dy_importances_all.pdf"))
+
+        #shap.plots.bar(shap_values[:, :, 2], show=False, max_display=150)
+        #plt.tight_layout()
+        #plt.savefig(os.path.join(model_path, "shap_feat_tt_importances_all.pdf"))
 
     return model, model_path
 
