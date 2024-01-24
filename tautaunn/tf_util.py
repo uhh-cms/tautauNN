@@ -164,7 +164,8 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
-class CycleLr(tf.keras.callbacks.Callback):
+class CycleLR(tf.keras.callbacks.Callback):
+    # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
     def __init__(
             self,
             steps_per_epoch: int,
@@ -174,11 +175,14 @@ class CycleLr(tf.keras.callbacks.Callback):
             monitor: str = "val_ce",
             mode: str = "min",
             es_patience: int = 10,
+            repeat_func: Callable[[CycleLR, dict[str, Any]], None] | None = None,
             verbose: int = 0,
             **kwargs
     ):
         super().__init__(**kwargs)
         # some checks
+        if policy not in ["triangular", "triangular2"]:
+            raise ValueError(f"{self.__class__.__name__} received unknown policy ({policy})")
         if mode not in ["min", "max"]:
             raise ValueError(f"{self.__class__.__name__} received unknown mode ({mode})")
         if es_patience < 0:
@@ -187,6 +191,7 @@ class CycleLr(tf.keras.callbacks.Callback):
         # set attributes
         self.lr_range = lr_range
         self.monitor = monitor
+        self.policy = policy
         self.mode = mode
         self.es_patience = int(es_patience)
         self.verbose = int(verbose)
@@ -260,10 +265,6 @@ class CycleLr(tf.keras.callbacks.Callback):
             self.lr_range[-1] /= 2.
 
 
-    def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
-        self._reset()
-    
-
     def on_epoch_end(self, epoch, logs):
 
         if self.cycle_step == int(2*self.half_life):
@@ -318,6 +319,207 @@ class CycleLr(tf.keras.callbacks.Callback):
         self.model.stop_training = True
         if self.verbose >= 1:
             print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+
+
+class LRFinder(tf.keras.callbacks.Callback):
+    # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
+    def __init__(self,
+                 batch_size,
+                 num_samples,
+                 num_val_batches,
+                 lr_scale: str = 'exp',
+                 lr_bounds = (1e-5, 1e-2),
+                 save_dir = None,
+                 **kwargs):
+        super().__init__(**kwargs)
+
+        self.lr_bounds = lr_bounds
+        self.batch_size = batch_size
+        self.num_samples = num_samples
+        self.num_val_batches = num_val_batches
+        self.save_dir = save_dir
+
+        self.num_batches_ = num_samples // batch_size
+        self.current_lr = self.lr_bounds[0]
+
+        if lr_scale == 'exp':
+            self.lr_multiplier_ = (lr_bounds[-1] / float(lr_bounds[0])) ** (
+                1. / float(self.num_batches_))
+        else:
+            extra_batch = int((num_samples % batch_size) != 0)
+            self.lr_multiplier_ = np.linspace(
+                self.lr_bounds[0], self.lr_bounds[-1], num=self.num_batches_ + extra_batch)
+
+
+        self.current_batch_ = 0
+        self.current_epoch_ = 0
+        self.best_loss_ = 1e6
+        self.running_loss = 0.
+        self.history = {}
+
+    def on_train_begin(self, logs):
+        self.current_epoch_ = 1
+        tf.keras.backend.set_value(self.model.optimizer.lr, self.lr_bounds[0])
+
+    def on_batch_begin(self, batch, logs):
+        self.current_batch_ +=1
+                 
+    def on_batch_end(self, batch, logs):
+
+        # we're only training for one epoch so the magic happens here
+
+        if self.current_epoch_ > 1:
+            return 
+        X, Y = self.validation_data[0], self.validation_data[1]
+
+        num_samples = self.batch_size * self.num_val_batches
+        if num_samples > X.shape[0]:
+            num_samples = X.shape[0]
+        
+        idx = np.random.choice(X.shape[0], num_samples, replace=False)
+        x, y = X[idx], Y[idx]
+        values = self.model.evaluate(x,y, batch_size=self.batch_size, verbose=False)
+        running_loss = values[0]
+
+        if running_loss < self.best_loss_ or self.current_batch_ == 1:
+            self.best_loss_ = running_loss
+        
+        current_lr = tf.keras.backend.get_value(self.model.optimzer.lr)
+
+        self.history.setdefault('running_loss_', []).append(running_loss)
+        if self.lr_scale == 'exp':
+            self.history.setdefault('log_lrs', []).append(np.log10(current_lr))
+        else:
+            self.history.setdefault('log_lrs', []).append(current_lr)
+
+        # compute the lr for the next batch and update the optimizer lr
+        if self.lr_scale == 'exp':
+            current_lr *= self.lr_multiplier_
+        else:
+            current_lr = self.lr_multiplier_[self.current_batch_ - 1]
+
+        tf.keras.backend.set_value(self.model.optimizer.lr, current_lr)
+
+        # save the other metrics as well
+        for k, v in logs.items():
+            self.history.setdefault(k, []).append(v)
+
+        if self.verbose:
+            if self.use_validation_set:
+                print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " %
+                      (values[0], current_lr))
+            else:
+                print(" - LRFinder: lr = %1.8f " % current_lr)
+
+    def on_epoch_end(self, epoch, logs=None):
+        # basically just saves the history
+        if self.save_dir is not None and self.current_epoch_ <= 1:
+            if not os.path.exists(self.save_dir):
+                os.makedirs(self.save_dir)
+
+            losses_path = os.path.join(self.save_dir, 'losses.npy')
+            lrs_path = os.path.join(self.save_dir, 'lrs.npy')
+
+            np.save(losses_path, self.losses)
+            np.save(lrs_path, self.lrs)
+
+            if self.verbose:
+                print("\tLR Finder : Saved the losses and learning rate values in path : {%s}"
+                      % (self.save_dir))
+
+        self.current_epoch_ += 1
+
+    def plot_schedule(self, clip_beginning=None, clip_ending=None):
+        """
+        Plots the schedule from the callback itself.
+
+        # Arguments:
+            clip_beginning: Integer or None. If positive integer, it will
+                remove the specified portion of the loss graph to remove the large
+                loss values in the beginning of the graph.
+            clip_ending: Integer or None. If negative integer, it will
+                remove the specified portion of the ending of the loss graph to
+                remove the sharp increase in the loss values at high learning rates.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            plt.style.use('seaborn-white')
+        except ImportError:
+            print(
+                "Matplotlib not found. Please use `pip install matplotlib` first."
+            )
+            return
+
+        if clip_beginning is not None and clip_beginning < 0:
+            clip_beginning = -clip_beginning
+
+        if clip_ending is not None and clip_ending > 0:
+            clip_ending = -clip_ending
+
+        losses = self.losses
+        lrs = self.lrs
+
+        if clip_beginning:
+            losses = losses[clip_beginning:]
+            lrs = lrs[clip_beginning:]
+
+        if clip_ending:
+            losses = losses[:clip_ending]
+            lrs = lrs[:clip_ending]
+
+        plt.plot(lrs, losses)
+        plt.title('Learning rate vs Loss')
+        plt.xlabel('learning rate')
+        plt.ylabel('loss')
+        plt.show()
+
+    @classmethod
+    def plot_schedule_from_file(cls,
+                                directory,
+                                clip_beginning=None,
+                                clip_endding=None):
+        """
+        Plots the schedule from the saved numpy arrays of the loss and learning
+        rate values in the specified directory.
+
+        # Arguments:
+            directory: String. Path to the directory where the serialized numpy
+                arrays of the loss and learning rates are saved.
+            clip_beginning: Integer or None. If positive integer, it will
+                remove the specified portion of the loss graph to remove the large
+                loss values in the beginning of the graph.
+            clip_endding: Integer or None. If negative integer, it will
+                remove the specified portion of the ending of the loss graph to
+                remove the sharp increase in the loss values at high learning rates.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            plt.style.use('seaborn-white')
+        except ImportError:
+            print("Matplotlib not found. Please use `pip install matplotlib` first.")
+            return
+
+        losses, lrs = cls.restore_schedule_from_dir(
+            directory,
+            clip_beginning=clip_beginning,
+            clip_endding=clip_endding)
+
+        if losses is None or lrs is None:
+            return
+        else:
+            plt.plot(lrs, losses)
+            plt.title('Learning rate vs Loss')
+            plt.xlabel('learning rate')
+            plt.ylabel('loss')
+            plt.show()
+
+    @property
+    def lrs(self):
+        return np.array(self.history['log_lrs'])
+
+    @property
+    def losses(self):
+        return np.array(self.history['running_loss_'])
 
 
 
