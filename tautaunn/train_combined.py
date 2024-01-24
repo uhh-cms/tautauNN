@@ -835,6 +835,16 @@ def train(
                     self.fadein_factor.assign(1.0)
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
+        #from tf_util import LRFinder
+        #lr_callback = LRFinder(batch_size=4096,
+                               #num_samples=len(dataset_train),
+                               #lr_bounds=(1e-6, 1e-2),
+                               #validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+                               #save_dir=os.path.join(model_path, "LRFinder"))
+
+
+        #model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
+        #lr_callback.plot_schedule()
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
