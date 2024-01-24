@@ -168,7 +168,7 @@ class CycleLr(tf.keras.callbacks.Callback):
     def __init__(
             self,
             steps_per_epoch: int,
-            iteration_factor: int = 2,
+            epoch_per_cycle: int = 2,
             policy: str = "triangular",
             lr_range: list = [1e-6, 3e-3],
             monitor: str = "val_ce",
@@ -190,7 +190,8 @@ class CycleLr(tf.keras.callbacks.Callback):
         self.mode = mode
         self.es_patience = int(es_patience)
         self.verbose = int(verbose)
-
+        self.steps_per_epoch = steps_per_epoch
+        self.epoch_per_cycle = epoch_per_cycle
         self.cycle_width = self.lr_range[1] - self.lr_range[0]
 
         # state
@@ -223,9 +224,17 @@ class CycleLr(tf.keras.callbacks.Callback):
             self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
         
+    def calc_lr(self,):
+        self.step_size = self.cycle_width / self.steps
+        if self.cycle_step < self.half_life:
+            return self.lr_range[0]+(self.cycle_step*self.step_size)
+        else:
+            return self.lr_range[-1]-((self.cycle_step-self.half_life)*self.step_size)
+
     def on_train_begin(self, logs={}):
         logs = logs or {}
         self._reset()
+        self.steps = self.steps_per_epoch * self.epoch_per_cycle
         tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
 
     def on_batch_end(self, epoch, logs=None):
@@ -250,25 +259,10 @@ class CycleLr(tf.keras.callbacks.Callback):
             # reduce the top of lr_range to half it's value
             self.lr_range[-1] /= 2.
 
-    def calc_lr(self,):
-        self.step_size = self.cycle_width / self.half_life
-        if self.cycle_step < self.half_life:
-            return self.lr_range[0]+(self.cycle_step*self.step_size)
-        else:
-            return self.lr_range[-1]-((self.cycle_step-self.half_life)*self.step_size)
-
 
     def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
         self._reset()
     
-
-    def on_epoch_begin(self, epoch, logs):
-        # check where cycle step is at
-        lr = self.calc_lr()
-        if self.cycle_step == 0:
-            print(f"Starting CycleLR Callback with lr: {lr}")
-        tf.keras.backend.set_value(self.model.optimizer.lr, lr)
-
 
     def on_epoch_end(self, epoch, logs):
 
