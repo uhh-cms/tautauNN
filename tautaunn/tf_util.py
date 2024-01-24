@@ -167,10 +167,12 @@ class L2Metric(tf.keras.metrics.Metric):
 class CycleLr(tf.keras.callbacks.Callback):
     def __init__(
             self,
+            steps_per_epoch: int,
+            iteration_factor: int = 2,
+            policy: str = "triangular",
+            lr_range: list = [1e-6, 3e-3],
             monitor: str = "val_ce",
             mode: str = "min",
-            lr_range: list = [1e-6, 3e-3],
-            half_life: int = 15,
             es_patience: int = 10,
             verbose: int = 0,
             **kwargs
@@ -186,13 +188,13 @@ class CycleLr(tf.keras.callbacks.Callback):
         self.lr_range = lr_range
         self.monitor = monitor
         self.mode = mode
-        self.half_life = half_life
-        # start monitoring for early stopping only after at least one cycle finished
-        self.es_start_epoch = int(2*half_life)
         self.es_patience = int(es_patience)
         self.verbose = int(verbose)
 
+        self.cycle_width = self.lr_range[1] - self.lr_range[0]
+
         # state
+        self.history = {}
         self.wait: int = 0
         self.best_epoch: int = -1
         self.best_weights: tuple[tf.Tensor, ...] | None = None
@@ -200,6 +202,7 @@ class CycleLr(tf.keras.callbacks.Callback):
         self.monitor_op: Callable[[float, float], bool] | None = None
         self.repeat_counter: int = 0
         self.cycle_step: int = 0
+        self.cycle_count: int = 0
 
         self._reset()
 
@@ -219,9 +222,35 @@ class CycleLr(tf.keras.callbacks.Callback):
             self.best_metric = -np.inf
             self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
+        
+    def on_train_begin(self, logs={}):
+        logs = logs or {}
+        self._reset()
+        tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
 
-    def calc_lr(self):
-        self.cycle_width = self.lr_range[1] - self.lr_range[0]
+    def on_batch_end(self, epoch, logs=None):
+        logs = logs or {}
+
+        self.clr_iterations += 1
+        new_lr = self.calc_lr()
+
+        # setdefault() adds the second argument in case the key doesn't exist
+        # if it does already exist, it does nothing
+        self.history.setdefault('lr', []).append(
+            tf.keras.backend.get_value(self.model.optimizer.lr))
+        tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+        
+        for k, v in logs.items():
+            self.history.setdefault(k, []).append(v)
+
+    def _reset_before_new_cycle(self) -> None:
+        self.cycle_step = 0
+        # for triangular policy, the LR range stays the same so nothing to be done here
+        if self.policy == 'triangular2':
+            # reduce the top of lr_range to half it's value
+            self.lr_range[-1] /= 2.
+
+    def calc_lr(self,):
         self.step_size = self.cycle_width / self.half_life
         if self.cycle_step < self.half_life:
             return self.lr_range[0]+(self.cycle_step*self.step_size)
@@ -232,9 +261,71 @@ class CycleLr(tf.keras.callbacks.Callback):
     def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
         self._reset()
     
+
     def on_epoch_begin(self, epoch, logs):
-        lr = self.calc_lr
+        # check where cycle step is at
+        lr = self.calc_lr()
+        if self.cycle_step == 0:
+            print(f"Starting CycleLR Callback with lr: {lr}")
         tf.keras.backend.set_value(self.model.optimizer.lr, lr)
+
+
+    def on_epoch_end(self, epoch, logs):
+
+        if self.cycle_step == int(2*self.half_life):
+            print(f"Cycle Finished after epoch: {epoch}")
+            self.cycle_count += 1
+            self._reset_before_new_cycle()
+
+        self.cycle_step += 1
+
+        # do nothing when no metric is available yet
+        value = self.get_monitor_value(logs)
+        if value is None:
+            return
+            
+        # helper to get a newline only for the first invocation
+        nls = {"nl": "\n"}
+        nl = lambda: nls.pop("nl", "")
+        # new best value?
+        if self.best_metric is None or self.monitor_op(value, self.best_metric):
+            self.best_metric = value
+            self.best_weights = self.model.get_weights()
+            self.best_epoch = epoch
+            self.wait = 0
+            if self.verbose >= 2:
+                print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+            logs["last_best"] = 0
+            return
+        
+        # no improvement, increase wait counter
+        self.wait += 1
+
+        # run at least one full cycle
+        if self.cycle_count < 1:
+            return
+
+        # within patience?
+        if self.wait <= self.es_patience:
+            return
+
+        # repeat cycling?
+        if callable(self.repeat_func) and self.repeat_func(self, logs):
+            # yes, repeat
+            self.repeat_counter += 1
+            self._reset_before_repeat()
+            if self.verbose >= 1:
+                print_msg(
+                    f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
+                )
+            return
+
+        # stop training completely
+        self.model.stop_training = True
+        if self.verbose >= 1:
+            print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+
+
 
 class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
