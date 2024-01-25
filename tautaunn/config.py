@@ -423,6 +423,14 @@ cont_feature_sets = {
         "HHKin_mass_raw",
         "diH_mass_met",
     ],
+    "reg_v2": [
+        "met_et",
+        "met_cov00", "met_cov01", "met_cov11",
+        "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz",
+        "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz",
+        "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_HHbtag",
+        "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_HHbtag",
+    ],
 }
 
 cat_feature_sets = {
@@ -782,6 +790,8 @@ class RegressionSet:
     model_files: dict[int, str]
     cont_feature_set: str
     cat_feature_set: str
+    # mapping to [reg_nn, reg_hep, cls_logits, cls, reg_last, cls_last]
+    output_indices: tuple[int, int, int, int, int, int]
     parameterize_year: bool = False
     parameterize_spin: bool = True
     parameterize_mass: bool = True
@@ -791,6 +801,7 @@ class RegressionSet:
     use_cls_last_layer: bool = True
     fade_in: tuple[int, int] = (0, 0)
     fine_tune: bool = False
+    feed_lbn: bool = False
 
     def copy(self, **attrs) -> RegressionSet:
         kwargs = self.__dict__.copy()
@@ -806,6 +817,7 @@ regression_sets = {
         },
         cont_feature_set="reg2",
         cat_feature_set="reg",
+        output_indices=(0, 1, -1, 2, 3, 4),
         parameterize_year=False,
         parameterize_spin=True,
         parameterize_mass=True,
@@ -815,8 +827,30 @@ regression_sets = {
         use_cls_last_layer=True,
         fade_in=(150, 20),
         fine_tune=False,
+        feed_lbn=False,
     )),
     "default_ft": default_reg_set.copy(fine_tune=True),
+    "v2": (reg_set_v2 := RegressionSet(
+        model_files={
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR"), "ttreg_ED5_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
+            for fold in range(10)
+        },
+        cont_feature_set="reg_v2",
+        cat_feature_set="default",
+        output_indices=(0, 1, 2, 3, 4, 5),
+        parameterize_year=True,
+        parameterize_spin=True,
+        parameterize_mass=True,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        fade_in=(150, 20),
+        fine_tune=False,
+        feed_lbn=False,
+    )),
+    "v2_lbn": reg_set_v2.copy(feed_lbn=True),
+    "v2_lbn_passall": reg_set_v2.copy(feed_lbn=True, use_reg_outputs=True, use_cls_outputs=True),
 }
 
 

@@ -750,7 +750,7 @@ def train(
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
                 "model_name": model_name,
-                "sample_names": [sample.name for sample in samples],
+                "sample_names": [sample.skim_name for sample in samples],
                 "class_names": class_names,
                 "input_names": {
                     "cont": cont_input_names,
