@@ -342,7 +342,7 @@ cont_feature_sets = {
         remove=["bjet*_cID_deepFlavor"],
         add=["bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"],
     )),
-    "reg_reduced_cid_pnet": (cont_features_reg_reduced := [
+    "reg_reduced_cid_pnet": [
         "met_et", "met_cov00", "met_cov01", "met_cov11",
         *[
             f"dau{i}_{feat}"
@@ -359,8 +359,8 @@ cont_feature_sets = {
                 "HHbtag",
             ]
         ],
-    ]),
-    "default_metrot": (cont_features_reg_reduced := [
+    ],
+    "default_metrot": [
         "met_et", "met_cov00", "met_cov01", "met_cov11",
         *[
             f"dau{i}_{feat}"
@@ -377,7 +377,25 @@ cont_feature_sets = {
                 "HHbtag",
             ]
         ],
-    ]),
+    ],
+    "default_daurot": [
+        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py",
+        "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "HHbtag",
+            ]
+        ],
+    ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -404,6 +422,14 @@ cont_feature_sets = {
         "deta_hbb_httvis",
         "HHKin_mass_raw",
         "diH_mass_met",
+    ],
+    "reg_v2": [
+        "met_et",
+        "met_cov00", "met_cov01", "met_cov11",
+        "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz",
+        "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz",
+        "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_HHbtag",
+        "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_HHbtag",
     ],
 }
 
@@ -463,24 +489,33 @@ klub_index_columns = [
 ]
 
 dynamic_columns = {
+    # columns needed for rotation
+    (rot_phi := "dau_phi"): (
+        ("dau1_pt", "dau1_phi", "dau2_pt", "dau2_phi"),
+        (lambda pt1, phi1, pt2, phi2: np.arctan2(
+            pt1 * np.sin(phi1) + pt2 * np.sin(phi2),
+            pt1 * np.cos(phi1) + pt2 * np.cos(phi2),
+        )),
+    ),
+    # actual columns
     "dmet_resp_px": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", rot_phi),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_resp_py": (
-        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", "met_phi"),
+        ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", rot_phi),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "dmet_reso_px": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", rot_phi),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
     ),
     "dmet_reso_py": (
-        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", "met_phi"),
+        ("DeepMET_ResolutionTune_px", "DeepMET_ResolutionTune_py", rot_phi),
         (lambda x, y, p: np.sin(-p) * x + np.cos(-p) * y),
     ),
     "met_dphi": (
-        ("met_phi", "met_phi"),
+        ("met_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "met_px": (
@@ -492,19 +527,19 @@ dynamic_columns = {
         (lambda a, b: a * np.sin(b)),
     ),
     "dau1_dphi": (
-        ("dau1_phi", "met_phi"),
+        ("dau1_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau2_dphi": (
-        ("dau2_phi", "met_phi"),
+        ("dau2_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu1_dphi": (
-        ("genNu1_phi", "met_phi"),
+        ("genNu1_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "genNu2_dphi": (
-        ("genNu2_phi", "met_phi"),
+        ("genNu2_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "dau1_px": (
@@ -524,7 +559,7 @@ dynamic_columns = {
         (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2))),
     ),
     "dau1_mt": (
-        ("dau1_px", "dau1_py", "dau1_pz", "dau1_e", "met_et", "met_phi"),
+        ("dau1_px", "dau1_py", "dau1_pz", "dau1_e", "met_et", "met_dphi"),
         (lambda a, b, c, d, e, f: calc_mt(a, b, c, d, e, np.zeros_like(a), f, np.zeros_like(a))),
     ),
     "dau2_px": (
@@ -580,7 +615,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet1_dphi": (
-        ("bjet1_phi", "met_phi"),
+        ("bjet1_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet1_px": (
@@ -596,7 +631,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bjet2_dphi": (
-        ("bjet2_phi", "met_phi"),
+        ("bjet2_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bjet2_px": (
@@ -656,7 +691,7 @@ dynamic_columns = {
     #     (lambda a, b: a*b)
     # )
     "tauH_dphi": (
-        ("tauH_phi", "met_phi"),
+        ("tauH_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "tauH_px": (
@@ -672,7 +707,7 @@ dynamic_columns = {
         (lambda a, b: a * np.sinh(b)),
     ),
     "bH_dphi": (
-        ("bH_phi", "met_phi"),
+        ("bH_phi", rot_phi),
         (lambda a, b: phi_mpi_to_pi(a - b)),
     ),
     "bH_px": (
@@ -755,6 +790,8 @@ class RegressionSet:
     model_files: dict[int, str]
     cont_feature_set: str
     cat_feature_set: str
+    # mapping to [reg_nn, reg_hep, cls_logits, cls, reg_last, cls_last]
+    output_indices: tuple[int, int, int, int, int, int]
     parameterize_year: bool = False
     parameterize_spin: bool = True
     parameterize_mass: bool = True
@@ -764,6 +801,7 @@ class RegressionSet:
     use_cls_last_layer: bool = True
     fade_in: tuple[int, int] = (0, 0)
     fine_tune: bool = False
+    feed_lbn: bool = False
 
     def copy(self, **attrs) -> RegressionSet:
         kwargs = self.__dict__.copy()
@@ -779,6 +817,7 @@ regression_sets = {
         },
         cont_feature_set="reg2",
         cat_feature_set="reg",
+        output_indices=(0, 1, -1, 2, 3, 4),
         parameterize_year=False,
         parameterize_spin=True,
         parameterize_mass=True,
@@ -788,8 +827,30 @@ regression_sets = {
         use_cls_last_layer=True,
         fade_in=(150, 20),
         fine_tune=False,
+        feed_lbn=False,
     )),
     "default_ft": default_reg_set.copy(fine_tune=True),
+    "v2": (reg_set_v2 := RegressionSet(
+        model_files={
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR"), "ttreg_ED5_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
+            for fold in range(10)
+        },
+        cont_feature_set="reg_v2",
+        cat_feature_set="default",
+        output_indices=(0, 1, 2, 3, 4, 5),
+        parameterize_year=True,
+        parameterize_spin=True,
+        parameterize_mass=True,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        fade_in=(150, 20),
+        fine_tune=False,
+        feed_lbn=False,
+    )),
+    "v2_lbn": reg_set_v2.copy(feed_lbn=True),
+    "v2_lbn_passall": reg_set_v2.copy(feed_lbn=True, use_reg_outputs=True, use_cls_outputs=True),
 }
 
 
@@ -898,5 +959,22 @@ lbn_sets = {
         output_features=["E", "pt", "eta", "m", "pair_cos"],
         boost_mode="pairs",
         n_particles=8,
+    ),
+    "default_daurot": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_e", "bjet1_px", "bjet1_py", "bjet1_pz",
+            "bjet2_e", "bjet2_px", "bjet2_py", "bjet2_pz",
+            "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
+            "bH_e", "bH_px", "bH_py", "bH_pz",
+            "HH_e", "HH_px", "HH_py", "HH_pz",
+            None, "met_px", "met_py", None,
+            None, "dmet_resp_px", "dmet_resp_py", None,
+            None, "dmet_reso_px", "dmet_reso_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=10,
     ),
 }

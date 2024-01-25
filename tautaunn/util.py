@@ -134,6 +134,14 @@ def match(value: str, pattern: str) -> bool:
     return bool(fnmatch.fnmatch(value, pattern))
 
 
+def add_column_aliases(data, aliases: list[tuple[str, str]]):
+    if not aliases:
+        return data
+    dsts = [dst for _, dst in aliases]
+    src_cols = [data[src] for src, _ in aliases]
+    return rfn.rec_append_fields(data, dsts, src_cols, dtypes=["<f4"] * len(dsts))
+
+
 def calc_new_columns(data, rules):
     columns = []
     column_names = []

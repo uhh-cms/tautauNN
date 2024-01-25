@@ -243,6 +243,7 @@ class Training(TrainingParameters):
             dropout_rate=self.dropout_rate,
             batch_norm=self.batch_norm,
             batch_size=self.batch_size,
+            validation_batch_size=self.batch_size * 16,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
             learning_rate_patience=self.learning_rate_patience,
