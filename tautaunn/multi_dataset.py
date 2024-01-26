@@ -61,17 +61,17 @@ class MultiDataset(object):
         sum_batch_weights = sum(self.batch_weights)
         self.probs = [w / sum_batch_weights for w in self.batch_weights]
 
-        # the number of batches that constitute one iteration cycle through all events
-        # (floating point number, to be ceiled or floored depending on whether rest is used)
-        self._batches_per_cycle: float = len(self) / self.batch_size
-
     def __len__(self):
         return sum(self.counts)
 
     @property
     def batches_per_cycle(self) -> int:
+        # the number of batches that constitute one iteration cycle through all events
+        # (floating point number, to be ceiled or floored depending on whether rest is used)
+        batches_per_cycle = len(self) / self.batch_size
+        # round
         round_func = math.ceil if self.kind == "valid" and self.yield_valid_rest else math.floor
-        return int(round_func(self._batches_per_cycle))
+        return int(round_func(batches_per_cycle))
 
     @property
     def n_datasets(self) -> int:
@@ -208,6 +208,9 @@ class MultiDataset(object):
                 d.append(a)
 
         # concatenate arrays
-        data = [np.concatenate(arrays, axis=0) for arrays in data]
+        data = [
+            arrays[0] if len(arrays) == 1 else np.concatenate(arrays, axis=0)
+            for arrays in data
+        ]
 
         return data
