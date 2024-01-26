@@ -212,6 +212,8 @@ def train(
     batch_norm: bool = True,
     # batch size
     batch_size: int = 4096,
+    # validation batch size
+    validation_batch_size: int = 0,
     # name of the optimizer to use
     optimizer: str = "adam",
     # learning rate to start with
@@ -581,6 +583,7 @@ def train(
         )
         dataset_valid = MultiDataset(
             data=zip(zip(cont_inputs_valid, cat_inputs_valid, targets_valid, labels_valid, event_weights_valid), batch_weights),
+            batch_size=validation_batch_size or batch_size,
             kind="valid",
             yield_valid_rest=True,
             transform_data=transform,
