@@ -201,22 +201,13 @@ class MultiDataset(object):
         if self.kind != "valid":
             raise RuntimeError("get_validation_data() is only available when kind='valid'")
 
-        data = None
+        data = [[] for _ in range(self.tuple_length)]
 
         for arrays in self:
-            # initial step
-            if data is None:
-                n_arrays = len(arrays)
-                data = [[arr] for arr in arrays]
-                continue
-
-            for i in range(n_arrays):
-                data[i].append(arrays[i])
+            for d, a in zip(data, arrays):
+                d.append(a)
 
         # concatenate arrays
-        data = [
-            np.concatenate(arrays, axis=0)
-            for arrays in data
-        ]
+        data = [np.concatenate(arrays, axis=0) for arrays in data]
 
         return data
