@@ -191,6 +191,8 @@ def train(
     batch_norm: bool = True,
     # batch size
     batch_size: int = 4096,
+    # validation batch size, when 0, use the same as batch_size
+    validation_batch_size: int = 0,
     # name of the optimizer to use
     optimizer: str = "adam",
     # learning rate to start with
@@ -641,7 +643,7 @@ def train(
         )
         dataset_valid = MultiDataset(
             data=zip(zip(cont_inputs_valid, cat_inputs_valid, labels_valid, event_weights_valid), batch_weights),
-            batch_size=batch_size,
+            batch_size=validation_batch_size or batch_size,
             kind="valid",
             yield_valid_rest=True,
             transform_data=transform,
@@ -835,16 +837,17 @@ def train(
                     self.fadein_factor.assign(1.0)
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
-        #from tf_util import LRFinder
-        #lr_callback = LRFinder(batch_size=4096,
-                               #num_samples=len(dataset_train),
-                               #lr_bounds=(1e-6, 1e-2),
-                               #validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-                               #save_dir=os.path.join(model_path, "LRFinder"))
+        # from tf_util import LRFinder
+        # lr_callback = LRFinder(
+        #     batch_size=4096,
+        #     num_samples=len(dataset_train),
+        #     lr_bounds=(1e-6, 1e-2),
+        #     validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+        #     save_dir=os.path.join(model_path, "LRFinder"),
+        # )
+        # model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
+        # lr_callback.plot_schedule()
 
-
-        #model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
-        #lr_callback.plot_schedule()
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
@@ -960,7 +963,7 @@ def train(
             # save an accompanying json file with hyper-parameters, input names and other info
             meta = {
                 "model_name": model_name,
-                "sample_names": [sample.name for sample in samples],
+                "sample_names": [sample.skim_name for sample in samples],
                 "class_names": class_names,
                 "input_names": {
                     "cont": combined_cont_input_names,
@@ -1030,26 +1033,26 @@ def train(
         plt.tight_layout()
         plt.savefig(os.path.join(model_path, "shap_feat_hh_importances.pdf"))
 
-        #shap.plots.bar(shap_values[:, :, 1], show=False, max_display=15)
-        #plt.tight_layout()
-        #plt.savefig(os.path.join(model_path, "shap_feat_dy_importances.pdf"))
+        # shap.plots.bar(shap_values[:, :, 1], show=False, max_display=15)
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(model_path, "shap_feat_dy_importances.pdf"))
 
-        #shap.plots.bar(shap_values[:, :, 2], show=False, max_display=15)
-        #plt.tight_layout()
-        #plt.savefig(os.path.join(model_path, "shap_feat_tt_importances.pdf"))
+        # shap.plots.bar(shap_values[:, :, 2], show=False, max_display=15)
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(model_path, "shap_feat_tt_importances.pdf"))
 
         plt.clf()
         shap.plots.bar(shap_values[:, :, 0], show=False, max_display=150)
         plt.tight_layout()
         plt.savefig(os.path.join(model_path, "shap_feat_hh_importances_all.pdf"))
 
-        #shap.plots.bar(shap_values[:, :, 1], show=False, max_display=150)
-        #plt.tight_layout()
-        #plt.savefig(os.path.join(model_path, "shap_feat_dy_importances_all.pdf"))
+        # shap.plots.bar(shap_values[:, :, 1], show=False, max_display=150)
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(model_path, "shap_feat_dy_importances_all.pdf"))
 
-        #shap.plots.bar(shap_values[:, :, 2], show=False, max_display=150)
-        #plt.tight_layout()
-        #plt.savefig(os.path.join(model_path, "shap_feat_tt_importances_all.pdf"))
+        # shap.plots.bar(shap_values[:, :, 2], show=False, max_display=150)
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(model_path, "shap_feat_tt_importances_all.pdf"))
 
     return model, model_path
 

@@ -196,3 +196,27 @@ class MultiDataset(object):
                 )
                 w = arrays[0]
                 yield x, y, w
+
+    def get_validation_data(self):
+        if self.kind != "valid":
+            raise RuntimeError("get_validation_data() is only available when kind='valid'")
+
+        data = None
+
+        for arrays in self:
+            # initial step
+            if data is None:
+                n_arrays = len(arrays)
+                data = [[arr] for arr in arrays]
+                continue
+
+            for i in range(n_arrays):
+                data[i].append(arrays[i])
+
+        # concatenate arrays
+        data = [
+            np.concatenate(arrays, axis=0)
+            for arrays in data
+        ]
+
+        return data
