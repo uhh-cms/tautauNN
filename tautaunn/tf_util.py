@@ -327,6 +327,7 @@ class LRFinder(tf.keras.callbacks.Callback):
                  batch_size,
                  num_samples,
                  num_val_batches,
+                 validation_data,
                  lr_scale: str = 'exp',
                  lr_bounds = (1e-5, 1e-2),
                  save_dir = None,
@@ -337,6 +338,7 @@ class LRFinder(tf.keras.callbacks.Callback):
         self.batch_size = batch_size
         self.num_samples = num_samples
         self.num_val_batches = num_val_batches
+        self.validation_data = validation_data
         self.save_dir = save_dir
 
         self.num_batches_ = num_samples // batch_size
