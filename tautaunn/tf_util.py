@@ -172,10 +172,12 @@ class CycleLR(tf.keras.callbacks.Callback):
             epoch_per_cycle: int = 2,
             policy: str = "triangular",
             lr_range: list = [1e-6, 3e-3],
+            invert = False,
             monitor: str = "val_ce",
             mode: str = "min",
             es_patience: int = 10,
             repeat_func: Callable[[CycleLR, dict[str, Any]], None] | None = None,
+            min_delta: float = 1.0e-5,
             verbose: int = 0,
             **kwargs
     ):
@@ -189,7 +191,16 @@ class CycleLR(tf.keras.callbacks.Callback):
             raise ValueError(f"{self.__class__.__name__} received es_patience < 0 ({es_patience})")
 
         # set attributes
+        self.invert = invert
         self.lr_range = lr_range
+        if not self.lr_range[-1] > self.lr_range[0]:
+            raise ValueError(
+                f"{self.__class__.__name__}: Upper bound of LR Range must be larger than lower."
+                " If inverted policy is desired, set inverted to True")
+        if self.invert:
+            self.lr_range = self.lr_range[::-1]
+            print(f"LR Range: {self.lr_range}")
+
         self.monitor = monitor
         self.policy = policy
         self.mode = mode
@@ -198,6 +209,10 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.steps_per_epoch = steps_per_epoch
         self.epoch_per_cycle = epoch_per_cycle
         self.cycle_width = self.lr_range[1] - self.lr_range[0]
+        self.steps = self.steps_per_epoch * self.epoch_per_cycle
+        self.half_life = int(self.steps/2.)
+        self.min_delta = abs(float(min_delta))
+        self.step_size = self.cycle_width / self.half_life 
 
         # state
         self.history = {}
@@ -230,24 +245,29 @@ class CycleLR(tf.keras.callbacks.Callback):
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
         
     def calc_lr(self,):
-        self.step_size = self.cycle_width / self.steps
         if self.cycle_step < self.half_life:
-            return self.lr_range[0]+(self.cycle_step*self.step_size)
+            new_lr = self.lr_range[0]+(self.cycle_step*self.step_size)
+            return  new_lr
         else:
-            return self.lr_range[-1]-((self.cycle_step-self.half_life)*self.step_size)
+            new_lr = self.lr_range[1]-((self.cycle_step-self.half_life)*self.step_size)
+            return new_lr
 
     def on_train_begin(self, logs={}):
         logs = logs or {}
         self._reset()
-        self.steps = self.steps_per_epoch * self.epoch_per_cycle
+        print(f"Cycle Step {self.cycle_step}; LR {self.calc_lr()}")
         tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
+        print(f"Cycle Count: {self.cycle_count}")
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
 
-        self.clr_iterations += 1
         new_lr = self.calc_lr()
 
+        # debug
+        #if self.cycle_step % 50 == 0:
+            #print(f"Cycle Step {self.cycle_step}; LR {new_lr}")
+        self.cycle_step += 1
         # setdefault() adds the second argument in case the key doesn't exist
         # if it does already exist, it does nothing
         self.history.setdefault('lr', []).append(
@@ -260,19 +280,20 @@ class CycleLR(tf.keras.callbacks.Callback):
     def _reset_before_new_cycle(self) -> None:
         self.cycle_step = 0
         # for triangular policy, the LR range stays the same so nothing to be done here
-        if self.policy == 'triangular2':
-            # reduce the top of lr_range to half it's value
-            self.lr_range[-1] /= 2.
+        if self.cycle_count > 0:
+            if self.policy == 'triangular2':
+                # reduce the top of lr_range to half it's value
+                self.lr_range[np.argmax(self.lr_range)] /= 2.
+                self.cycle_width = self.lr_range[1] - self.lr_range[0]
+                self.step_size = self.cycle_width / self.half_life
 
 
     def on_epoch_end(self, epoch, logs):
 
-        if self.cycle_step == int(2*self.half_life):
-            print(f"Cycle Finished after epoch: {epoch}")
+        if self.cycle_step == self.steps:
+            print(f"Cycle {self.cycle_count} Finished after epoch: {epoch+1}")
             self.cycle_count += 1
             self._reset_before_new_cycle()
-
-        self.cycle_step += 1
 
         # do nothing when no metric is available yet
         value = self.get_monitor_value(logs)
@@ -319,6 +340,23 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.model.stop_training = True
         if self.verbose >= 1:
             print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+
+    def restore_best_weights(self) -> bool:
+        if self.best_weights is None:
+            return False
+        self.model.set_weights(self.best_weights)
+        if self.verbose >= 1:
+            print_msg(
+                f"{self.__class__.__name__}: recovered best weights from epoch {self.best_epoch + 1}, "
+                f"best metric was {self.best_metric:.5f}",
+            )
+
+    def get_monitor_value(self, logs: dict[str, Any]) -> float | int:
+        logs = logs or {}
+        value = logs.get(self.monitor)
+        if value is None:
+            print_msg(f"{self.__class__.__name__}: metric '{self.monitor}' not available, found {','.join(list(logs))}")
+        return value
 
 
 class LRFinder(tf.keras.callbacks.Callback):
