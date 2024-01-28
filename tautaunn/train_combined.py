@@ -23,7 +23,7 @@ from tabulate import tabulate
 
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
-    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
+    get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, CycleLR, EmbeddingEncoder,
     LivePlotWriter, FadeInLayer,
 )
 from tautaunn.util import load_sample_root, calc_new_columns, create_model_name, transform_data_dir_cache, get_indices
@@ -861,6 +861,17 @@ def train(
                 repeat_func=lres_repeat,
                 verbose=1,
             ),
+            #cycle_callback := CycleLR(
+                #steps_per_epoch=validate_every,
+                #epoch_per_cycle=5,
+                #policy='triangular2',
+                #lr_range=[1e-5,5e-3],
+                #monitor="val_ce",
+                #mode='min',
+                #invert=True,
+                #es_patience=early_stopping_patience,
+                #verbose=2,
+            #),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
                 log_dir=full_tensorboard_dir,
@@ -927,6 +938,8 @@ def train(
         lres_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
 
+        #cycle_callback.restore_best_weights()
+        #print(f"training took {human_duration(seconds=t_end - t_start)}")
         # perform one final validation round for verification of the best model
         print("performing final round of validation")
         results_valid = model.evaluate(
