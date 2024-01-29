@@ -22,7 +22,7 @@ from tabulate import tabulate
 from tautaunn.multi_dataset import MultiDataset
 from tautaunn.tf_util import (
     get_device, ClassificationModelWithValidationBuffers, L2Metric, ReduceLRAndStop, EmbeddingEncoder,
-    LivePlotWriter,
+    LivePlotWriter, metric_class_factory, BetterModel, CustomMetricSum,
 )
 from tautaunn.util import load_sample_root, calc_new_columns, create_model_name, transform_data_dir_cache
 from tautaunn.config import Sample, activation_settings, dynamic_columns, embedding_expected_inputs
@@ -617,15 +617,25 @@ def train(
         }[optimizer]
 
         model.compile(
-            loss={"regression_output": tf.keras.losses.mean_squared_error, "classification_output_softmax": tf.keras.losses.categorical_crossentropy},
-            loss_weights={"regression_output": 1.0, "classification_output_softmax": classifier_weight},
+            loss={
+                "regression_output": tf.keras.losses.mean_squared_error,
+                "classification_output_softmax": tf.keras.losses.categorical_crossentropy,
+            },
+            loss_weights={
+                "regression_output": 1.0,
+                "classification_output_softmax": classifier_weight,
+            },
             optimizer=opt_cls(
                 learning_rate=learning_rate,
                 jit_compile=jit_compile,
             ),
-            metrics={
-                "regression_output": L2Metric(model),
-            },
+            metrics=[
+                metric_class_factory(L2Metric)(name="l2", model=model),
+            ],
+            weighted_metrics=[
+                metric_class_factory(tf.keras.metrics.MeanSquaredError)(name="mse", output_name="regression_output"),
+                metric_class_factory(tf.keras.metrics.CategoricalCrossentropy)(name="ce", output_name="classification_output_softmax"),
+            ],
             jit_compile=jit_compile,
             run_eagerly=eager_mode,
         )
@@ -643,7 +653,7 @@ def train(
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
             lres_callback := ReduceLRAndStop(
-                monitor="val_loss",
+                monitor="val_metric_sum",
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,
@@ -663,6 +673,13 @@ def train(
                 class_names=list(class_names.values()),
                 validate_every=validate_every,
             ) if full_tensorboard_dir else None,
+            CustomMetricSum(
+                name="val_metric_sum",
+                metrics=[
+                    "val_mse",
+                    "val_ce",
+                ],
+            ),
         ]
 
         # some logs
@@ -692,7 +709,7 @@ def train(
                 epochs=max_epochs,
                 steps_per_epoch=validate_every,
                 validation_freq=1,
-                validation_steps=1,
+                validation_steps=dataset_valid.batches_per_cycle,
                 callbacks=list(filter(None, fit_callbacks)),
             )
             # model.load_weights("/gpfs/dust/cms/user/riegerma/taunn_data/store/Training/dev_weights/hbtres_LSbinary_FSreg-reg_ED5_LU5x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_LR3.0e-03_SPINy_MASSy_FI0_SD1")  # noqa
@@ -721,7 +738,7 @@ def train(
         print("performing final round of validation")
         results_valid = model.evaluate(
             x=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"], target_names=["regression_output", "classification_output_softmax"]),
-            steps=1,
+            steps=dataset_valid.batches_per_cycle,
             return_dict=True,
         )
 
@@ -1024,12 +1041,12 @@ def create_model(
         kernel_regularizer=tf.keras.regularizers.l2(0.0) if l2_norm > 0 else None,
         name="regression_output",
     )
-    outputs = []
+    outputs = {}
     y1 = output_layer_reg(b)
-    outputs.append(y1)
+    outputs["regression_output"] = y1
 
     y2 = CustomOutputScalingLayer(target_means, target_stds, name="regression_output_hep")(y1)
-    outputs.append(y2)
+    outputs["regression_output_hep"] = y2
 
     # add the classification output layer
     if n_classes > 0:
@@ -1041,19 +1058,19 @@ def create_model(
             name="classification_output",
         )
         y3 = output_layer_cls(c)
-        outputs.append(y3)
+        outputs["classification_output"] = y3
 
         y4 = tf.keras.layers.Activation("softmax", name="classification_output_softmax")(y3)
-        outputs.append(y4)
+        outputs["classification_output_softmax"] = y4
 
-    outputs.append(b)
+    outputs["regression_last_layer"] = b
     if n_classes > 0:
-        outputs.append(c)
+        outputs["classification_last_layer"] = c
 
     # build the model
     log_live_plots = False
-    model_cls = ClassificationModelWithValidationBuffers if log_live_plots else tf.keras.Model
-    model = model_cls(inputs=[x_cont, x_cat], outputs=outputs, name="htautau_regression")
+    model_cls = ClassificationModelWithValidationBuffers if log_live_plots else BetterModel
+    model = model_cls(inputs={x_cont.name: x_cont, x_cat.name: x_cat}, outputs=outputs, name="htautau_regression")
 
     # scale the l2 regularization to the number of weights in dense layers
     if l2_norm > 0:

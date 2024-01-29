@@ -11,6 +11,7 @@ import psutil
 import numpy as np
 import tensorflow as tf
 from tensorflow.experimental import numpy as tnp
+from tensorflow.python.keras.engine import compile_utils
 from keras.src.utils.io_utils import print_msg
 import sklearn.metrics
 import matplotlib
@@ -153,7 +154,7 @@ class L2Metric(tf.keras.metrics.Metric):
             if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
         ]
 
-    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: tf.Tensor | None = None) -> None:
+    def update_state(self, y_true: tf.Tensor | None, y_pred: tf.Tensor | None, sample_weight: tf.Tensor | None = None) -> None:
         if self.kernels and self.norms:
             self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
 
@@ -162,6 +163,51 @@ class L2Metric(tf.keras.metrics.Metric):
 
     def reset_states(self) -> None:
         self.l2.assign(0.0)
+
+
+class MetricMeta(type(tf.keras.metrics.Metric)):
+
+    def __new__(meta_cls, cls_name, bases, cls_dict):
+        return super().__new__(meta_cls, cls_dict.get("_cls_name", cls_name), bases, cls_dict)
+
+
+def metric_class_factory(
+    base: type[tf.keras.metrics.Metric],
+    name: str | None = None,
+) -> type[tf.keras.metrics.Metric]:
+
+    class CustomMetric(base, metaclass=MetricMeta):
+
+        _cls_name = name or base.__name__
+
+        def __init__(self, name: str, output_name: str | None = None, **kwargs) -> None:
+            super().__init__(name=name, **kwargs)
+            self.output_name = output_name
+
+        def update_state(
+            self,
+            x: dict[str, tf.Tensor],
+            y_true: dict[str, tf.Tensor],
+            y_pred: dict[str, tf.Tensor],
+            sample_weight: tf.Tensor | None = None,
+            **kwargs,
+        ) -> None:
+            y_true = y_true[self.output_name] if self.output_name else y_true
+            y_pred = y_pred[self.output_name] if self.output_name else y_pred
+            super().update_state(y_true, y_pred, sample_weight)
+
+    return CustomMetric
+
+
+class CustomMetricSum(tf.keras.callbacks.Callback):
+    def __init__(self, name: str, metrics: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.metrics = metrics
+
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
+        logs = logs or {}
+        logs[self.name] = sum(logs.get(metric, 0.0) for metric in self.metrics)
 
 
 class CycleLR(tf.keras.callbacks.Callback):
@@ -868,3 +914,75 @@ class EmbeddingEncoder(tf.keras.layers.Layer):
             ],
             axis=1,
         )
+
+
+class BetterModel(tf.keras.Model):
+
+    def compile(self, **kwargs):
+        metrics = kwargs.pop("metrics", None)
+        weighted_metrics = kwargs.pop("weighted_metrics", None)
+        from_serialized = kwargs.get("from_serialized", False)
+
+        # metrics must be lists or tuples when set
+        if metrics is not None:
+            if not isinstance(metrics, (list, tuple)):
+                raise TypeError(
+                    "Type of `metrics` argument not understood. "
+                    "Expected a list or tuple, found: {}".format(type(metrics)),
+                )
+            metrics = list(metrics)
+        if weighted_metrics is not None:
+            if not isinstance(weighted_metrics, (list, tuple)):
+                raise TypeError(
+                    "Type of `weighted_metrics` argument not understood. "
+                    "Expected a list or tuple, found: {}".format(type(weighted_metrics)),
+                )
+            weighted_metrics = list(weighted_metrics)
+
+        # let super do the rest
+        super().compile(**kwargs)
+
+        # reset the metrics container
+        self.compiled_metrics = CustomMetricsContainer(
+            metrics,
+            weighted_metrics,
+            output_names=self.output_names,
+            from_serialized=from_serialized,
+            # mesh=None if self._layout_map is None else self._layout_map.get_default_mesh(),
+        )
+
+    def compute_metrics(self, x, y, y_pred, sample_weight):
+        self.compiled_metrics.update_state(x, y, y_pred, sample_weight)
+        return self.get_metrics_result()
+
+    # def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
+    #     pass
+
+
+class CustomMetricsContainer(compile_utils.MetricsContainer):
+
+    def build(self, x, y_true, y_pred):
+        # this is fine as long as there is single inheritance
+        compile_utils.Container.build(self, y_pred)
+        self._built = False
+
+        # setup metrics, optionally set names, etc,
+        self._metrics = tuple(self._user_metrics or ())
+        self._weighted_metrics = tuple(self._user_weighted_metrics or ())
+
+        # finalize as done in super class
+        self._create_ordered_metrics()
+        self._built = True
+
+    def update_state(self, x, y_true, y_pred, sample_weight=None):
+        if not self._built:
+            self.build(x, y_true, y_pred)
+
+        # let metrics update their state
+        for metric in self._metrics:
+            metric.update_state(x, y_true, y_pred, sample_weight=None)
+        for metric in self._weighted_metrics:
+            metric.update_state(x, y_true, y_pred, sample_weight=sample_weight)
+
+    def _create_ordered_metrics(self):
+        self._metrics_in_order = list(self._metrics) + list(self._weighted_metrics)
