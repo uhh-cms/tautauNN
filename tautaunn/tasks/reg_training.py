@@ -141,7 +141,7 @@ class RegTrainingParameters(Task):
             sample_set=self.sample_set,
             feature_set=f"{self.cont_feature_set}-{self.cat_feature_set}",
             embedding_output_dim=self.embedding_output_dim,
-            units=list(self.units),
+            units=tuple(map(list, self.units)),
             connection_type=self.connection_type,
             activation=self.activation,
             l2_norm=self.l2_norm,
