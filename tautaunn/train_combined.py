@@ -650,6 +650,8 @@ def train(
             seed=seed,
         )
 
+        #feature_names = cont_input_names + cat_input_names
+
         # get indices of inputs for regression pre-NN, plus additional data
         regression_data = None
         if regression_cfg:
@@ -1031,15 +1033,19 @@ def train(
     # create shap plot
     if not skip_shap_plots:
         # this only takes the first batch for now since that already takes soo long
-        X_val = np.hstack([cont_inputs_valid[0], cat_inputs_valid[0]])
+        x_val = np.hstack(np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0))
+        y_val = np.concatenate(labels_valid, axis=0)
+        event_weights_val = np.concatenate(event_weights_valid, axis=0)
+
+        #x_val, y_val, weights = dataset_valid.get_validation_data()
         feature_names = cont_input_names + cat_input_names
 
         def caller(X, model=model, n_cont=len(cont_input_names)):
             X_cont, X_cat = X[:, :n_cont], X[:, n_cont:]
-            return model([X_cont, X_cat], training=False)
+            return model([X_cont, X_cat], weights=event_weights_val, training=False)
 
-        explainer = shap.explainers.Permutation(caller, X_val, feature_names=feature_names)
-        shap_values = explainer(X_val)
+        explainer = shap.explainers.Permutation(caller, x_val, feature_names=feature_names)
+        shap_values = explainer(x_val)
 
         # only plot for first class
         shap.plots.bar(shap_values[:, :, 0], show=False, max_display=15)
