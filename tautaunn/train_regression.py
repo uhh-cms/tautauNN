@@ -651,6 +651,14 @@ def train(
 
         # callbacks
         fit_callbacks = [
+            # sum up all the metrics for the learning rate reduction and early stopping
+            CustomMetricSum(
+                name="val_metric_sum",
+                metrics=[
+                    "val_mse",
+                    "val_ce",
+                ],
+            ),
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
             lres_callback := ReduceLRAndStop(
                 monitor="val_metric_sum",
@@ -673,13 +681,6 @@ def train(
                 class_names=list(class_names.values()),
                 validate_every=validate_every,
             ) if full_tensorboard_dir else None,
-            CustomMetricSum(
-                name="val_metric_sum",
-                metrics=[
-                    "val_mse",
-                    "val_ce",
-                ],
-            ),
         ]
 
         # some logs
