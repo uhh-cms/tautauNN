@@ -223,6 +223,7 @@ class CycleLR(tf.keras.callbacks.Callback):
             mode: str = "min",
             es_patience: int = 10,
             min_delta: float = 1.0e-5,
+            repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
             verbose: int = 0,
             **kwargs,
     ):
@@ -259,6 +260,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.half_life = int(self.steps / 2.)
         self.min_delta = abs(float(min_delta))
         self.step_size = self.cycle_width / self.half_life
+        self.lr_min = self.lr_range[np.argmin(self.lr_range)]
 
         # state
         self.history = {}
@@ -301,9 +303,8 @@ class CycleLR(tf.keras.callbacks.Callback):
     def on_train_begin(self, logs={}):
         logs = logs or {}
         self._reset()
-        print(f"Cycle Step {self.cycle_step}; LR {self.calc_lr()}")
+        print(f"Starting CycleLR with {self.policy} policy and {self.lr_range} range.")
         tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
-        print(f"Cycle Count: {self.cycle_count}")
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -328,6 +329,9 @@ class CycleLR(tf.keras.callbacks.Callback):
         # for triangular policy, the LR range stays the same so nothing to be done here
         if self.cycle_count > 0:
             if self.policy == "triangular2":
+                if self.lr_range[np.argmax(self.lr_range)] == self.lr_min:
+                    # if the current max of lr_range is the minimum, we continue with the same cycle
+                    return
                 # reduce the top of lr_range to half it's value
                 self.lr_range[np.argmax(self.lr_range)] /= 2.
                 self.cycle_width = self.lr_range[1] - self.lr_range[0]
@@ -336,7 +340,7 @@ class CycleLR(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs):
 
         if self.cycle_step == self.steps:
-            print(f"Cycle {self.cycle_count} Finished after epoch: {epoch+1}")
+            print(f"\n Cycle {self.cycle_count+1} Finished after epoch: {epoch+1}")
             self.cycle_count += 1
             self._reset_before_new_cycle()
 
@@ -358,6 +362,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
             logs["last_best"] = 0
             return
+        logs["last_best"] = int(epoch - self.best_epoch)
 
         # no improvement, increase wait counter
         self.wait += 1
@@ -411,7 +416,9 @@ class LRFinder(tf.keras.callbacks.Callback):
         batch_size,
         num_samples,
         num_val_batches,
-        validation_data,
+        validation_x,
+        validation_y,
+        validation_weights,
         lr_scale: str = "exp",
         lr_bounds=(1e-5, 1e-2),
         save_dir=None,
@@ -423,7 +430,9 @@ class LRFinder(tf.keras.callbacks.Callback):
         self.batch_size = batch_size
         self.num_samples = num_samples
         self.num_val_batches = num_val_batches
-        self.validation_data = validation_data
+        self.valdation_x = validation_x
+        self.validation_y = validation_y
+        self.validation_weights = validation_weights
         self.save_dir = save_dir
 
         self.num_batches_ = num_samples // batch_size
@@ -456,15 +465,15 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         if self.current_epoch_ > 1:
             return
-        X, Y = self.validation_data[0], self.validation_data[1]
+        X, Y = self.valdation_x, self.validation_y
 
         num_samples = self.batch_size * self.num_val_batches
         if num_samples > X.shape[0]:
             num_samples = X.shape[0]
 
         idx = np.random.choice(X.shape[0], num_samples, replace=False)
-        x, y = X[idx], Y[idx]
-        values = self.model.evaluate(x, y, batch_size=self.batch_size, verbose=False)
+        x, y, w = X[idx], Y[idx], self.validation_weights[idx]
+        values = self.model.evaluate(x, y, weights=w, batch_size=self.batch_size, verbose=False)
         running_loss = values[0]
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
