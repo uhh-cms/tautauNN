@@ -473,7 +473,7 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         idx = np.random.choice(X.shape[0], num_samples, replace=False)
         x, y, w = X[idx], Y[idx], self.validation_weights[idx]
-        values = self.model.evaluate(x, y, weights=w, batch_size=self.batch_size, verbose=False)
+        values = self.model.evaluate(x, y, sample_weight=w, batch_size=self.batch_size, verbose=False)
         running_loss = values[0]
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
