@@ -850,7 +850,7 @@ def train(
              validation_y = y_val,
              validation_weights = event_weights_val,
              lr_bounds=(1e-6, 1e-2),
-             save_dir=os.path.join(model_path, "LRFinder"),
+             save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
          )
         from IPython import embed; embed()
         # model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
