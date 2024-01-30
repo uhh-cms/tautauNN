@@ -193,6 +193,8 @@ class TrainingParameters(Task):
 
 class Training(TrainingParameters):
 
+    default_store = os.getenv("TN_STORE_DIR_TRAINING", os.environ["TN_STORE_DIR"])
+
     def output(self):
         return {
             "saved_model": (model_dir := self.local_target(self.get_model_name(), dir=True)),

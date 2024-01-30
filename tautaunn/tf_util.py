@@ -11,6 +11,7 @@ import psutil
 import numpy as np
 import tensorflow as tf
 from tensorflow.experimental import numpy as tnp
+from tensorflow.python.keras.engine import compile_utils
 from keras.src.utils.io_utils import print_msg
 import sklearn.metrics
 import matplotlib
@@ -153,7 +154,7 @@ class L2Metric(tf.keras.metrics.Metric):
             if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
         ]
 
-    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: tf.Tensor | None = None) -> None:
+    def update_state(self, y_true: tf.Tensor | None, y_pred: tf.Tensor | None, sample_weight: tf.Tensor | None = None) -> None:
         if self.kernels and self.norms:
             self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
 
@@ -164,20 +165,68 @@ class L2Metric(tf.keras.metrics.Metric):
         self.l2.assign(0.0)
 
 
+class MetricMeta(type(tf.keras.metrics.Metric)):
+
+    def __new__(meta_cls, cls_name, bases, cls_dict):
+        return super().__new__(meta_cls, cls_dict.get("_cls_name", cls_name), bases, cls_dict)
+
+
+def metric_class_factory(
+    base: type[tf.keras.metrics.Metric],
+    name: str | None = None,
+) -> type[tf.keras.metrics.Metric]:
+
+    class CustomMetric(base, metaclass=MetricMeta):
+
+        _cls_name = name or base.__name__
+
+        def __init__(self, name: str, output_name: str | None = None, **kwargs) -> None:
+            super().__init__(name=name, **kwargs)
+            self.output_name = output_name
+
+        def update_state(
+            self,
+            x: dict[str, tf.Tensor],
+            y_true: dict[str, tf.Tensor],
+            y_pred: dict[str, tf.Tensor],
+            sample_weight: tf.Tensor | None = None,
+            **kwargs,
+        ) -> None:
+            y_true = y_true[self.output_name] if self.output_name else y_true
+            y_pred = y_pred[self.output_name] if self.output_name else y_pred
+            super().update_state(y_true, y_pred, sample_weight)
+
+    return CustomMetric
+
+
+class CustomMetricSum(tf.keras.callbacks.Callback):
+    def __init__(self, name: str, metrics: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.metrics = metrics
+
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
+        logs = logs or {}
+        logs[self.name] = sum(logs.get(metric, 0.0) for metric in self.metrics)
+
+
 class CycleLR(tf.keras.callbacks.Callback):
     # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
     def __init__(
             self,
             steps_per_epoch: int,
-            epoch_per_cycle: int = 2,
-            policy: str = "triangular",
-            lr_range: list = [1e-6, 3e-3],
+            epoch_per_cycle: int = 5,
+            policy: str = "triangular2",
+            lr_range: list = [1e-5, 3e-3],
+            reduce_on_end: bool = False,
+            invert: bool = True,
             monitor: str = "val_ce",
             mode: str = "min",
             es_patience: int = 10,
-            repeat_func: Callable[[CycleLR, dict[str, Any]], None] | None = None,
+            min_delta: float = 1.0e-5,
+            repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
             verbose: int = 0,
-            **kwargs
+            **kwargs,
     ):
         super().__init__(**kwargs)
         # some checks
@@ -189,7 +238,18 @@ class CycleLR(tf.keras.callbacks.Callback):
             raise ValueError(f"{self.__class__.__name__} received es_patience < 0 ({es_patience})")
 
         # set attributes
+        self.invert = invert
         self.lr_range = lr_range
+        if not self.lr_range[-1] > self.lr_range[0]:
+            raise ValueError(
+                f"{self.__class__.__name__}: Upper bound of LR Range must be larger than lower."
+                " If inverted policy is desired, set inverted to True",
+            )
+        if self.invert:
+            self.lr_range = self.lr_range[::-1]
+            print(f"LR Range: {self.lr_range}")
+
+        self.reduce_on_end = reduce_on_end
         self.monitor = monitor
         self.policy = policy
         self.mode = mode
@@ -198,6 +258,11 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.steps_per_epoch = steps_per_epoch
         self.epoch_per_cycle = epoch_per_cycle
         self.cycle_width = self.lr_range[1] - self.lr_range[0]
+        self.steps = self.steps_per_epoch * self.epoch_per_cycle
+        self.half_life = int(self.steps / 2.)
+        self.min_delta = abs(float(min_delta))
+        self.step_size = self.cycle_width / self.half_life
+        self.lr_min = self.lr_range[np.argmin(self.lr_range)]
 
         # state
         self.history = {}
@@ -209,6 +274,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.repeat_counter: int = 0
         self.cycle_step: int = 0
         self.cycle_count: int = 0
+        self.reduce_lr_and_stop: bool = False
 
         self._reset()
 
@@ -229,28 +295,27 @@ class CycleLR(tf.keras.callbacks.Callback):
             self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
 
-    def calc_lr(self,):
-        self.step_size = self.cycle_width / self.steps
+    def calc_lr(self):
         if self.cycle_step < self.half_life:
-            return self.lr_range[0]+(self.cycle_step * self.step_size)
+            new_lr = self.lr_range[0] + (self.cycle_step * self.step_size)
+            return new_lr
         else:
-            return self.lr_range[-1]-((self.cycle_step - self.half_life) * self.step_size)
+            new_lr = self.lr_range[1] - ((self.cycle_step - self.half_life) * self.step_size)
+            return new_lr
 
     def on_train_begin(self, logs={}):
         logs = logs or {}
         self._reset()
-        self.steps = self.steps_per_epoch * self.epoch_per_cycle
+        print(f"Starting CycleLR with {self.policy} policy and {self.lr_range} range.")
         tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
-
-        self.clr_iterations += 1
         new_lr = self.calc_lr()
-
+        self.cycle_step += 1
         # setdefault() adds the second argument in case the key doesn't exist
         # if it does already exist, it does nothing
-        self.history.setdefault('lr', []).append(
+        self.history.setdefault("lr", []).append(
             tf.keras.backend.get_value(self.model.optimizer.lr))
         tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
 
@@ -260,102 +325,239 @@ class CycleLR(tf.keras.callbacks.Callback):
     def _reset_before_new_cycle(self) -> None:
         self.cycle_step = 0
         # for triangular policy, the LR range stays the same so nothing to be done here
-        if self.policy == 'triangular2':
-            # reduce the top of lr_range to half it's value
-            self.lr_range[-1] /= 2.
-
+        if self.cycle_count > 0:
+            if self.policy == "triangular2":
+                if self.lr_range[np.argmax(self.lr_range)] == self.lr_min:
+                    # if the current max of lr_range is the minimum, we continue with the same cycle
+                    return
+                if np.max(self.lr_range) > 4 * np.min(self.lr_range):
+                    # reduce the top of lr_range to half it's value
+                    self.lr_range[np.argmax(self.lr_range)] /= 2.
+                    self.cycle_width = self.lr_range[1] - self.lr_range[0]
+                    self.step_size = self.cycle_width / self.half_life
+                    new_lr = self.calc_lr()
+                    tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+                else:
+                    return
 
     def on_epoch_end(self, epoch, logs):
 
-        if self.cycle_step == int(2*self.half_life):
-            print(f"Cycle Finished after epoch: {epoch}")
-            self.cycle_count += 1
-            self._reset_before_new_cycle()
+        if self.reduce_lr_and_stop == False:
 
-        self.cycle_step += 1
+            if self.cycle_step == self.steps:
+                self.cycle_count += 1
+                self._reset_before_new_cycle()
 
-        # do nothing when no metric is available yet
-        value = self.get_monitor_value(logs)
-        if value is None:
-            return
+            # add the current learning rate to the logs
+            logs = logs or {}
+            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-        # helper to get a newline only for the first invocation
-        nls = {"nl": "\n"}
-        nl = lambda: nls.pop("nl", "")
-        # new best value?
-        if self.best_metric is None or self.monitor_op(value, self.best_metric):
-            self.best_metric = value
-            self.best_weights = self.model.get_weights()
-            self.best_epoch = epoch
-            self.wait = 0
-            if self.verbose >= 2:
-                print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
-            logs["last_best"] = 0
-            return
+            # do nothing when no metric is available yet
+            value = self.get_monitor_value(logs)
+            if value is None:
+                return
 
-        # no improvement, increase wait counter
-        self.wait += 1
+            # helper to get a newline only for the first invocation
+            nls = {"nl": "\n"}
+            nl = lambda: nls.pop("nl", "")
+            # new best value?
+            if self.best_metric is None or self.monitor_op(value, self.best_metric):
+                self.best_metric = value
+                self.best_weights = self.model.get_weights()
+                self.best_epoch = epoch
+                self.wait = 0
+                if self.verbose >= 2:
+                    print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+                logs["last_best"] = 0
+                return
+            logs["last_best"] = int(epoch - self.best_epoch)
 
-        # run at least one full cycle
-        if self.cycle_count < 1:
-            return
+            # no improvement, increase wait counter
+            self.wait += 1
 
-        # within patience?
-        if self.wait <= self.es_patience:
-            return
+            # run at least one full cycle
+            if self.cycle_count < 1:
+                return
 
-        # repeat cycling?
-        if callable(self.repeat_func) and self.repeat_func(self, logs):
-            # yes, repeat
-            self.repeat_counter += 1
-            self._reset_before_repeat()
+            # within patience?
+            if self.wait <= self.es_patience:
+                return
+
+            # repeat cycling?
+            if callable(self.repeat_func) and self.repeat_func(self, logs):
+                # yes, repeat
+                self.repeat_counter += 1
+                self._reset_before_repeat()
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
+                    )
+                return
+
+            if self.reduce_on_end:
+                # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
+                self.reduce_lr_and_stop = True
+                print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                print(f"\n Current lr_range {self.lr_range}")
+                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                self.wait = 0
+                return
+
+            # stop training completely
+            self.model.stop_training = True
             if self.verbose >= 1:
-                print_msg(
-                    f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
-                )
-            return
+                print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+        else:
+            # add the current learning rate to the logs
+            logs = logs or {}
+            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-        # stop training completely
-        self.model.stop_training = True
+            # set the lr to the mid of the current lr range
+            tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+            # do nothing when no metric is available yet
+            value = self.get_monitor_value(logs)
+            if value is None:
+                return
+
+            # helper to get a newline only for the first invocation
+            nls = {"nl": "\n"}
+            nl = lambda: nls.pop("nl", "")
+
+            # new best value?
+            if self.best_metric is None or self.monitor_op(value, self.best_metric):
+                self.best_metric = value
+                self.best_weights = self.model.get_weights()
+                self.best_epoch = epoch
+                self.wait = 0
+                if self.verbose >= 2:
+                    print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+                logs["last_best"] = 0
+                return
+            logs["last_best"] = int(epoch - self.best_epoch)
+
+            # no improvement, increase wait counter
+            self.wait += 1
+
+            #
+            # lr monitoring
+            #
+
+            if self.wait <= self.lr_patience:
+                return
+            # drop?
+            if (
+                self.best_metric_with_previous_lr is None or
+                self.monitor_op(self.best_metric, self.best_metric_with_previous_lr)
+            ):
+                # yes, drop
+                logs["lr"] *= self.lr_factor
+                tf.keras.backend.set_value(self.model.optimizer.lr, logs["lr"])
+                self.lr_counter += 1
+                self.wait = 0
+                if self.verbose >= 1:
+                    msg = (
+                        f"{nl()}{self.__class__.__name__}: reducing learning rate to {logs['lr']:.2e} "
+                        f"(reduction {self.lr_counter}), best metric is {self.best_metric:.5f}"
+                    )
+                    if self.best_metric_with_previous_lr not in (None, np.inf, -np.inf):
+                        msg += f", was {self.best_metric_with_previous_lr:.5f} with previous learning rate"
+                    print_msg(msg)
+                self.best_metric_with_previous_lr = self.best_metric
+            else:
+                # last drop had already no effect, stop monitoring for lr drops
+                self.skip_lr_monitoring = True
+                self.wait = 0
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: last learning rate reduction had no effect, "
+                        f"from now on checking early stopping with patience {self.es_patience}",
+                    )
+
+            # do nothing if es is not yet to be monitored
+            if epoch < self.es_start_epoch:
+                self.wait = 0
+                return
+
+            # within patience?
+            if self.wait <= self.es_patience:
+                return
+
+            # stop training completely
+            self.model.stop_training = True
+            if self.verbose >= 1:
+                print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if self.cycle_step == 0:
+            print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
+            print(f"\n Starting new cycle with lr_range: {self.lr_range}")
+
+    def restore_best_weights(self) -> bool:
+        if self.best_weights is None:
+            return False
+        self.model.set_weights(self.best_weights)
         if self.verbose >= 1:
-            print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+            print_msg(
+                f"{self.__class__.__name__}: recovered best weights from epoch {self.best_epoch + 1}, "
+                f"best metric was {self.best_metric:.5f}",
+            )
+
+    def get_monitor_value(self, logs: dict[str, Any]) -> float | int:
+        logs = logs or {}
+        value = logs.get(self.monitor)
+        if value is None:
+            print_msg(f"{self.__class__.__name__}: metric '{self.monitor}' not available, found {','.join(list(logs))}")
+        return value
 
 
 class LRFinder(tf.keras.callbacks.Callback):
     # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
-    def __init__(self,
-                 batch_size,
-                 num_samples,
-                 num_val_batches,
-                 validation_data,
-                 lr_scale: str = 'exp',
-                 lr_bounds = (1e-5, 1e-2),
-                 save_dir = None,
-                 **kwargs):
+    def __init__(
+        self,
+        num_samples,
+        batch_size,
+        use_validation_data: bool = False,
+        dataset_valid: tf.data.Dataset | None = None,
+        num_val_batches: int | None = None,
+        lr_scale: str = "exp",
+        lr_bounds=(1e-5, 1e-2),
+        save_dir=None,
+        verbose=False,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
 
-        self.lr_bounds = lr_bounds
-        self.batch_size = batch_size
         self.num_samples = num_samples
+        self.batch_size = batch_size
+        self.use_validation_data = use_validation_data
+        self.dataset_valid = dataset_valid
         self.num_val_batches = num_val_batches
-        self.validation_data = validation_data
+        self.lr_scale = lr_scale
+        self.lr_bounds = lr_bounds
         self.save_dir = save_dir
+        self.verbose = verbose
 
-        self.num_batches_ = num_samples // batch_size
+        if self.use_validation_data and any([ (i is None) for i in (self.dataset_valid, self.num_val_batches)]):
+            raise ValueError("dataset_valid and num_val_batches must be given if use_validation_data is True")
+        if any([not (i == None) for i in (self.num_val_batches, self.dataset_valid)]) and not self.use_validation_data:
+            raise ValueError("num_val_batches and/or dataset_valid passed, but use_validation_data is False")
+
+        self.num_batches_ = self.num_samples // batch_size
+        print(f"num_batches: {self.num_batches_}")
         self.current_lr = self.lr_bounds[0]
 
-        if lr_scale == 'exp':
+        if lr_scale == "exp":
             self.lr_multiplier_ = (lr_bounds[-1] / float(lr_bounds[0])) ** (
                 1. / float(self.num_batches_))
         else:
-            extra_batch = int((num_samples % batch_size) != 0)
+            extra_batch = int((self.num_samples % batch_size) != 0)
             self.lr_multiplier_ = np.linspace(
                 self.lr_bounds[0], self.lr_bounds[-1], num=self.num_batches_ + extra_batch)
-
 
         self.current_batch_ = 0
         self.current_epoch_ = 0
         self.best_loss_ = 1e6
+        self.best_ce_ = 1e6
         self.running_loss = 0.
         self.history = {}
 
@@ -364,7 +566,7 @@ class LRFinder(tf.keras.callbacks.Callback):
         tf.keras.backend.set_value(self.model.optimizer.lr, self.lr_bounds[0])
 
     def on_batch_begin(self, batch, logs):
-        self.current_batch_ +=1
+        self.current_batch_ += 1
 
     def on_batch_end(self, batch, logs):
 
@@ -372,30 +574,37 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         if self.current_epoch_ > 1:
             return
-        X, Y = self.validation_data[0], self.validation_data[1]
-
-        num_samples = self.batch_size * self.num_val_batches
-        if num_samples > X.shape[0]:
-            num_samples = X.shape[0]
-
-        idx = np.random.choice(X.shape[0], num_samples, replace=False)
-        x, y = X[idx], Y[idx]
-        values = self.model.evaluate(x,y, batch_size=self.batch_size, verbose=False)
-        running_loss = values[0]
+        if self.use_validation_data:
+            values = self.model.evaluate(x=self.dataset_valid,
+                steps=50,
+                return_dict=True,
+                #workers=10,
+                #use_multiprocessing=True,
+                verbose=False)
+            running_loss = values['loss']
+            running_ce = values['ce']
+        else:
+            running_loss = logs['loss']
+            running_ce = logs['ce']
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
             self.best_loss_ = running_loss
 
-        current_lr = tf.keras.backend.get_value(self.model.optimzer.lr)
+        if running_ce < self.best_ce_ or self.current_batch_ == 1:
+            self.best_ce_ = running_ce
 
-        self.history.setdefault('running_loss_', []).append(running_loss)
-        if self.lr_scale == 'exp':
-            self.history.setdefault('log_lrs', []).append(np.log10(current_lr))
+        current_lr = tf.keras.backend.get_value(self.model.optimizer.lr)
+
+        self.history.setdefault("running_loss_", []).append(running_loss)
+        self.history.setdefault("running_ce_", []).append(running_ce)
+
+        if self.lr_scale == "exp":
+            self.history.setdefault("log_lrs", []).append(np.log10(current_lr))
         else:
-            self.history.setdefault('log_lrs', []).append(current_lr)
+            self.history.setdefault("log_lrs", []).append(current_lr)
 
         # compute the lr for the next batch and update the optimizer lr
-        if self.lr_scale == 'exp':
+        if self.lr_scale == "exp":
             current_lr *= self.lr_multiplier_
         else:
             current_lr = self.lr_multiplier_[self.current_batch_ - 1]
@@ -407,11 +616,8 @@ class LRFinder(tf.keras.callbacks.Callback):
             self.history.setdefault(k, []).append(v)
 
         if self.verbose:
-            if self.use_validation_set:
-                print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " %
-                      (values[0], current_lr))
-            else:
-                print(" - LRFinder: lr = %1.8f " % current_lr)
+            print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " % (values['loss'], current_lr))
+            print(" - LRFinder: val_ce: %1.4f - lr = %1.8f " % (values['ce'], current_lr))
 
     def on_epoch_end(self, epoch, logs=None):
         # basically just saves the history
@@ -419,15 +625,14 @@ class LRFinder(tf.keras.callbacks.Callback):
             if not os.path.exists(self.save_dir):
                 os.makedirs(self.save_dir)
 
-            losses_path = os.path.join(self.save_dir, 'losses.npy')
-            lrs_path = os.path.join(self.save_dir, 'lrs.npy')
+            losses_path = os.path.join(self.save_dir, "losses.npy")
+            lrs_path = os.path.join(self.save_dir, "lrs.npy")
 
             np.save(losses_path, self.losses)
             np.save(lrs_path, self.lrs)
 
             if self.verbose:
-                print("\tLR Finder : Saved the losses and learning rate values in path : {%s}"
-                      % (self.save_dir))
+                print("\tLR Finder : Saved the losses and learning rate values in path : {%s}" % (self.save_dir))
 
         self.current_epoch_ += 1
 
@@ -445,11 +650,9 @@ class LRFinder(tf.keras.callbacks.Callback):
         """
         try:
             import matplotlib.pyplot as plt
-            plt.style.use('seaborn-white')
+            plt.style.use("seaborn-white")
         except ImportError:
-            print(
-                "Matplotlib not found. Please use `pip install matplotlib` first."
-            )
+            print("Matplotlib not found. Please use `pip install matplotlib` first.")
             return
 
         if clip_beginning is not None and clip_beginning < 0:
@@ -470,16 +673,18 @@ class LRFinder(tf.keras.callbacks.Callback):
             lrs = lrs[:clip_ending]
 
         plt.plot(lrs, losses)
-        plt.title('Learning rate vs Loss')
-        plt.xlabel('learning rate')
-        plt.ylabel('loss')
+        plt.title("Learning rate vs Loss")
+        plt.xlabel("learning rate")
+        plt.ylabel("loss")
         plt.show()
 
     @classmethod
-    def plot_schedule_from_file(cls,
-                                directory,
-                                clip_beginning=None,
-                                clip_endding=None):
+    def plot_schedule_from_file(
+            cls,
+            directory,
+            clip_beginning=None,
+            clip_endding=None,
+    ):
         """
         Plots the schedule from the saved numpy arrays of the loss and learning
         rate values in the specified directory.
@@ -496,7 +701,7 @@ class LRFinder(tf.keras.callbacks.Callback):
         """
         try:
             import matplotlib.pyplot as plt
-            plt.style.use('seaborn-white')
+            plt.style.use("seaborn-white")
         except ImportError:
             print("Matplotlib not found. Please use `pip install matplotlib` first.")
             return
@@ -504,24 +709,25 @@ class LRFinder(tf.keras.callbacks.Callback):
         losses, lrs = cls.restore_schedule_from_dir(
             directory,
             clip_beginning=clip_beginning,
-            clip_endding=clip_endding)
+            clip_endding=clip_endding,
+        )
 
         if losses is None or lrs is None:
             return
         else:
             plt.plot(lrs, losses)
-            plt.title('Learning rate vs Loss')
-            plt.xlabel('learning rate')
-            plt.ylabel('loss')
+            plt.title("Learning rate vs Loss")
+            plt.xlabel("learning rate")
+            plt.ylabel("loss")
             plt.show()
 
     @property
     def lrs(self):
-        return np.array(self.history['log_lrs'])
+        return np.array(self.history["log_lrs"])
 
     @property
     def losses(self):
-        return np.array(self.history['running_loss_'])
+        return np.array(self.history["running_loss_"])
 
 
 class ReduceLRAndStop(tf.keras.callbacks.Callback):
@@ -834,3 +1040,75 @@ class EmbeddingEncoder(tf.keras.layers.Layer):
             ],
             axis=1,
         )
+
+
+class BetterModel(tf.keras.Model):
+
+    def compile(self, **kwargs):
+        metrics = kwargs.pop("metrics", None)
+        weighted_metrics = kwargs.pop("weighted_metrics", None)
+        from_serialized = kwargs.get("from_serialized", False)
+
+        # metrics must be lists or tuples when set
+        if metrics is not None:
+            if not isinstance(metrics, (list, tuple)):
+                raise TypeError(
+                    "Type of `metrics` argument not understood. "
+                    "Expected a list or tuple, found: {}".format(type(metrics)),
+                )
+            metrics = list(metrics)
+        if weighted_metrics is not None:
+            if not isinstance(weighted_metrics, (list, tuple)):
+                raise TypeError(
+                    "Type of `weighted_metrics` argument not understood. "
+                    "Expected a list or tuple, found: {}".format(type(weighted_metrics)),
+                )
+            weighted_metrics = list(weighted_metrics)
+
+        # let super do the rest
+        super().compile(**kwargs)
+
+        # reset the metrics container
+        self.compiled_metrics = CustomMetricsContainer(
+            metrics,
+            weighted_metrics,
+            output_names=self.output_names,
+            from_serialized=from_serialized,
+            # mesh=None if self._layout_map is None else self._layout_map.get_default_mesh(),
+        )
+
+    def compute_metrics(self, x, y, y_pred, sample_weight):
+        self.compiled_metrics.update_state(x, y, y_pred, sample_weight)
+        return self.get_metrics_result()
+
+    # def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None):
+    #     pass
+
+
+class CustomMetricsContainer(compile_utils.MetricsContainer):
+
+    def build(self, x, y_true, y_pred):
+        # this is fine as long as there is single inheritance
+        compile_utils.Container.build(self, y_pred)
+        self._built = False
+
+        # setup metrics, optionally set names, etc,
+        self._metrics = tuple(self._user_metrics or ())
+        self._weighted_metrics = tuple(self._user_weighted_metrics or ())
+
+        # finalize as done in super class
+        self._create_ordered_metrics()
+        self._built = True
+
+    def update_state(self, x, y_true, y_pred, sample_weight=None):
+        if not self._built:
+            self.build(x, y_true, y_pred)
+
+        # let metrics update their state
+        for metric in self._metrics:
+            metric.update_state(x, y_true, y_pred, sample_weight=None)
+        for metric in self._weighted_metrics:
+            metric.update_state(x, y_true, y_pred, sample_weight=sample_weight)
+
+    def _create_ordered_metrics(self):
+        self._metrics_in_order = list(self._metrics) + list(self._weighted_metrics)
