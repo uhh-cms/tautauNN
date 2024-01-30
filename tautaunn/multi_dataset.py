@@ -197,6 +197,26 @@ class MultiDataset(object):
                 w = arrays[0]
                 yield x, y, w
 
+    def get_n_batches(self, num_batches: int) -> int:
+        # this method returns a list of n batches as produced by the iterator
+        for arrays in self:
+            n_arrays = len(arrays)
+            break
+        if n_arrays == 1:
+            batches = []
+        else:
+            batches = [[] for i in range(len(arrays))]
+            
+        for idx, arrays in enumerate(self):
+            if n_arrays == 1:
+                batches.append(arrays[0])
+            else:
+                for i, a in enumerate(arrays):
+                    batches[i].append(a)
+            if idx == num_batches:
+                break
+        return batches
+
     def get_validation_data(self):
         if self.kind != "valid":
             raise RuntimeError("get_validation_data() is only available when kind='valid'")

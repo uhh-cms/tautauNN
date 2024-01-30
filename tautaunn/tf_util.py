@@ -216,8 +216,9 @@ class CycleLR(tf.keras.callbacks.Callback):
             self,
             steps_per_epoch: int,
             epoch_per_cycle: int = 5,
-            policy: str = "triangular",
+            policy: str = "triangular2",
             lr_range: list = [1e-5, 3e-3],
+            reduce_on_end: bool = False,
             invert: bool = True,
             monitor: str = "val_ce",
             mode: str = "min",
@@ -248,6 +249,7 @@ class CycleLR(tf.keras.callbacks.Callback):
             self.lr_range = self.lr_range[::-1]
             print(f"LR Range: {self.lr_range}")
 
+        self.reduce_on_end = reduce_on_end
         self.monitor = monitor
         self.policy = policy
         self.mode = mode
@@ -272,6 +274,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.repeat_counter: int = 0
         self.cycle_step: int = 0
         self.cycle_count: int = 0
+        self.reduce_lr_and_stop: bool = False
 
         self._reset()
 
@@ -308,12 +311,7 @@ class CycleLR(tf.keras.callbacks.Callback):
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
-
         new_lr = self.calc_lr()
-
-        # debug
-        # if self.cycle_step % 50 == 0:
-        #     print(f"Cycle Step {self.cycle_step}; LR {new_lr}")
         self.cycle_step += 1
         # setdefault() adds the second argument in case the key doesn't exist
         # if it does already exist, it does nothing
@@ -332,64 +330,168 @@ class CycleLR(tf.keras.callbacks.Callback):
                 if self.lr_range[np.argmax(self.lr_range)] == self.lr_min:
                     # if the current max of lr_range is the minimum, we continue with the same cycle
                     return
-                # reduce the top of lr_range to half it's value
-                self.lr_range[np.argmax(self.lr_range)] /= 2.
-                self.cycle_width = self.lr_range[1] - self.lr_range[0]
-                self.step_size = self.cycle_width / self.half_life
+                if np.max(self.lr_range) > 4 * np.min(self.lr_range):
+                    # reduce the top of lr_range to half it's value
+                    self.lr_range[np.argmax(self.lr_range)] /= 2.
+                    self.cycle_width = self.lr_range[1] - self.lr_range[0]
+                    self.step_size = self.cycle_width / self.half_life
+                    new_lr = self.calc_lr()
+                    tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+                else:
+                    return
 
     def on_epoch_end(self, epoch, logs):
 
-        if self.cycle_step == self.steps:
-            print(f"\n Cycle {self.cycle_count+1} Finished after epoch: {epoch+1}")
-            self.cycle_count += 1
-            self._reset_before_new_cycle()
+        if self.reduce_lr_and_stop == False:
 
-        # do nothing when no metric is available yet
-        value = self.get_monitor_value(logs)
-        if value is None:
-            return
+            if self.cycle_step == self.steps:
+                self.cycle_count += 1
+                self._reset_before_new_cycle()
 
-        # helper to get a newline only for the first invocation
-        nls = {"nl": "\n"}
-        nl = lambda: nls.pop("nl", "")
-        # new best value?
-        if self.best_metric is None or self.monitor_op(value, self.best_metric):
-            self.best_metric = value
-            self.best_weights = self.model.get_weights()
-            self.best_epoch = epoch
-            self.wait = 0
-            if self.verbose >= 2:
-                print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
-            logs["last_best"] = 0
-            return
-        logs["last_best"] = int(epoch - self.best_epoch)
+            # add the current learning rate to the logs
+            logs = logs or {}
+            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-        # no improvement, increase wait counter
-        self.wait += 1
+            # do nothing when no metric is available yet
+            value = self.get_monitor_value(logs)
+            if value is None:
+                return
 
-        # run at least one full cycle
-        if self.cycle_count < 1:
-            return
+            # helper to get a newline only for the first invocation
+            nls = {"nl": "\n"}
+            nl = lambda: nls.pop("nl", "")
+            # new best value?
+            if self.best_metric is None or self.monitor_op(value, self.best_metric):
+                self.best_metric = value
+                self.best_weights = self.model.get_weights()
+                self.best_epoch = epoch
+                self.wait = 0
+                if self.verbose >= 2:
+                    print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+                logs["last_best"] = 0
+                return
+            logs["last_best"] = int(epoch - self.best_epoch)
 
-        # within patience?
-        if self.wait <= self.es_patience:
-            return
+            # no improvement, increase wait counter
+            self.wait += 1
 
-        # repeat cycling?
-        if callable(self.repeat_func) and self.repeat_func(self, logs):
-            # yes, repeat
-            self.repeat_counter += 1
-            self._reset_before_repeat()
+            # run at least one full cycle
+            if self.cycle_count < 1:
+                return
+
+            # within patience?
+            if self.wait <= self.es_patience:
+                return
+
+            # repeat cycling?
+            if callable(self.repeat_func) and self.repeat_func(self, logs):
+                # yes, repeat
+                self.repeat_counter += 1
+                self._reset_before_repeat()
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
+                    )
+                return
+            
+            if self.reduce_on_end:
+                # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
+                self.reduce_lr_and_stop = True
+                print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                print(f"\n Current lr_range {lr_range}")
+                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                self.wait = 0
+                return
+
+            # stop training completely
+            self.model.stop_training = True
             if self.verbose >= 1:
-                print_msg(
-                    f"{nl()}{self.__class__.__name__}: repeat_func triggered repitition of lr and es cycle",
-                )
-            return
+                print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+        else:
+            # add the current learning rate to the logs
+            logs = logs or {}
+            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-        # stop training completely
-        self.model.stop_training = True
-        if self.verbose >= 1:
-            print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+            # set the lr to the mid of the current lr range
+            tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+            # do nothing when no metric is available yet
+            value = self.get_monitor_value(logs)
+            if value is None:
+                return
+
+            # helper to get a newline only for the first invocation
+            nls = {"nl": "\n"}
+            nl = lambda: nls.pop("nl", "")
+
+            # new best value?
+            if self.best_metric is None or self.monitor_op(value, self.best_metric):
+                self.best_metric = value
+                self.best_weights = self.model.get_weights()
+                self.best_epoch = epoch
+                self.wait = 0
+                if self.verbose >= 2:
+                    print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
+                logs["last_best"] = 0
+                return
+            logs["last_best"] = int(epoch - self.best_epoch)
+
+            # no improvement, increase wait counter
+            self.wait += 1
+
+            #
+            # lr monitoring
+            #
+
+            if self.wait <= self.lr_patience:
+                return
+            # drop?
+            if (
+                self.best_metric_with_previous_lr is None or
+                self.monitor_op(self.best_metric, self.best_metric_with_previous_lr)
+            ):
+                # yes, drop
+                logs["lr"] *= self.lr_factor
+                tf.keras.backend.set_value(self.model.optimizer.lr, logs["lr"])
+                self.lr_counter += 1
+                self.wait = 0
+                if self.verbose >= 1:
+                    msg = (
+                        f"{nl()}{self.__class__.__name__}: reducing learning rate to {logs['lr']:.2e} "
+                        f"(reduction {self.lr_counter}), best metric is {self.best_metric:.5f}"
+                    )
+                    if self.best_metric_with_previous_lr not in (None, np.inf, -np.inf):
+                        msg += f", was {self.best_metric_with_previous_lr:.5f} with previous learning rate"
+                    print_msg(msg)
+                self.best_metric_with_previous_lr = self.best_metric
+            else:
+                # last drop had already no effect, stop monitoring for lr drops
+                self.skip_lr_monitoring = True
+                self.wait = 0
+                if self.verbose >= 1:
+                    print_msg(
+                        f"{nl()}{self.__class__.__name__}: last learning rate reduction had no effect, "
+                        f"from now on checking early stopping with patience {self.es_patience}",
+                    )
+
+            # do nothing if es is not yet to be monitored
+            if epoch < self.es_start_epoch:
+                self.wait = 0
+                return
+
+            # within patience?
+            if self.wait <= self.es_patience:
+                return
+
+            # stop training completely
+            self.model.stop_training = True
+            if self.verbose >= 1:
+                print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
+
+    def on_epoch_begin(self, epoch, logs=None):
+        if self.cycle_step == 0:
+            print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
+            print(f"\n Starting new cycle with lr_range: {self.lr_range}")
+
 
     def restore_best_weights(self) -> bool:
         if self.best_weights is None:
@@ -413,13 +515,11 @@ class LRFinder(tf.keras.callbacks.Callback):
     # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
     def __init__(
         self,
-        batch_size,
         num_samples,
-        num_val_batches,
-        dataset_valid,
-        #validation_x: np.ndarray,
-        #validation_y: np.ndarray,
-        #validation_weights: np.ndarray,
+        batch_size,
+        use_validation_data: bool = False,
+        dataset_valid: tf.data.Dataset | None = None,
+        num_val_batches: int | None = None,
         lr_scale: str = "exp",
         lr_bounds=(1e-5, 1e-2),
         save_dir=None,
@@ -428,19 +528,22 @@ class LRFinder(tf.keras.callbacks.Callback):
     ):
         super().__init__(**kwargs)
 
+        self.num_samples = num_samples
+        self.batch_size = batch_size
+        self.use_validation_data = use_validation_data
+        self.dataset_valid = dataset_valid
+        self.num_val_batches = num_val_batches
         self.lr_scale = lr_scale
         self.lr_bounds = lr_bounds
-        self.batch_size = batch_size
-        self.num_samples = num_samples
-        self.num_val_batches = num_val_batches
-        self.dataset_valid = dataset_valid
-        self.verbose = verbose
-        #self.valdation_x = validation_x
-        #self.validation_y = validation_y
-        #self.validation_weights = validation_weights
         self.save_dir = save_dir
+        self.verbose = verbose
 
-        self.num_batches_ = num_samples // batch_size
+        if self.use_validation_data and any([ (i is None) for i in (self.dataset_valid, self.num_val_batches)]):
+            raise ValueError("dataset_valid and num_val_batches must be given if use_validation_data is True")
+        if any([not (i == None) for i in (self.num_val_batches, self.dataset_valid)]) and not self.use_validation_data:
+            raise ValueError("num_val_batches and/or dataset_valid passed, but use_validation_data is False")
+
+        self.num_batches_ = self.num_samples // batch_size
         print(f"num_batches: {self.num_batches_}")
         self.current_lr = self.lr_bounds[0]
 
@@ -448,7 +551,7 @@ class LRFinder(tf.keras.callbacks.Callback):
             self.lr_multiplier_ = (lr_bounds[-1] / float(lr_bounds[0])) ** (
                 1. / float(self.num_batches_))
         else:
-            extra_batch = int((num_samples % batch_size) != 0)
+            extra_batch = int((self.num_samples % batch_size) != 0)
             self.lr_multiplier_ = np.linspace(
                 self.lr_bounds[0], self.lr_bounds[-1], num=self.num_batches_ + extra_batch)
 
@@ -472,22 +575,18 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         if self.current_epoch_ > 1:
             return
-        #X, Y = self.valdation_x, self.validation_y
-
-        #num_samples = self.batch_size * self.num_val_batches
-        #if num_samples > len(X):
-            #num_samples = len(X)
-
-        #idx = np.random.choice(len(X), num_samples, replace=False)
-        #x, y, w = X[idx], Y[idx], self.validation_weights[idx]
-        values = self.model.evaluate(x=self.dataset_valid,
-            steps=50,
-            return_dict=True,
-            #workers=10,
-            #use_multiprocessing=True,
-            verbose=False)
-        running_loss = values['loss']
-        running_ce = values['ce']
+        if self.use_validation_data:
+            values = self.model.evaluate(x=self.dataset_valid,
+                steps=50,
+                return_dict=True,
+                #workers=10,
+                #use_multiprocessing=True,
+                verbose=False)
+            running_loss = values['loss']
+            running_ce = values['ce']
+        else:
+            running_loss = logs['loss']
+            running_ce = logs['ce']
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
             self.best_loss_ = running_loss

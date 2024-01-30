@@ -839,17 +839,15 @@ def train(
 
 
         #from tautaunn.tf_util import LRFinder
-        #x_val_list = list(zip(cont_inputs_valid, cat_inputs_valid))
+        #x_train_lr_find = dataset_train.get_n_batches(500)
         #lr_callback = LRFinder(
-                #batch_size=4096,
-                #num_samples=len(dataset_train),
-                #num_val_batches=10,
-                #dataset_valid = dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+                #num_samples=500*batch_size,
+                #batch_size=batch_size,
                 #lr_bounds=(1e-6, 1e-2),
                 #save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
             #)
         #from IPython import embed; embed()
-        # model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
+        #model.fit(x=x_train_lr_find, epochs=1, batch_size=4096, callbacks=[lr_callback])
         # lr_callback.plot_schedule()
 
         # callbacks
@@ -869,7 +867,8 @@ def train(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
                 policy='triangular2',
-                lr_range=[1e-5,5e-3],
+                lr_range=[5e-6,5e-3],
+                reduce_on_end=True,
                 monitor="val_ce",
                 mode='min',
                 invert=True,
