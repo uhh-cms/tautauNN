@@ -838,21 +838,17 @@ def train(
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
 
-        from tautaunn.tf_util import LRFinder
-        x_val = np.hstack([np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0)])
-        y_val = np.concatenate(labels_valid, axis=0)
-        event_weights_val = np.concatenate(event_weights_valid, axis=0)
-        lr_callback = LRFinder(
-             batch_size=4096,
-             num_samples=len(dataset_train),
-             num_val_batches=10,
-             validation_x = x_val,
-             validation_y = y_val,
-             validation_weights = event_weights_val,
-             lr_bounds=(1e-6, 1e-2),
-             save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
-         )
-        from IPython import embed; embed()
+        #from tautaunn.tf_util import LRFinder
+        #x_val_list = list(zip(cont_inputs_valid, cat_inputs_valid))
+        #lr_callback = LRFinder(
+                #batch_size=4096,
+                #num_samples=len(dataset_train),
+                #num_val_batches=10,
+                #dataset_valid = dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+                #lr_bounds=(1e-6, 1e-2),
+                #save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
+            #)
+        #from IPython import embed; embed()
         # model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
         # lr_callback.plot_schedule()
 
