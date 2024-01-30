@@ -416,26 +416,32 @@ class LRFinder(tf.keras.callbacks.Callback):
         batch_size,
         num_samples,
         num_val_batches,
-        validation_x,
-        validation_y,
-        validation_weights,
+        dataset_valid,
+        #validation_x: np.ndarray,
+        #validation_y: np.ndarray,
+        #validation_weights: np.ndarray,
         lr_scale: str = "exp",
         lr_bounds=(1e-5, 1e-2),
         save_dir=None,
+        verbose=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
+        self.lr_scale = lr_scale
         self.lr_bounds = lr_bounds
         self.batch_size = batch_size
         self.num_samples = num_samples
         self.num_val_batches = num_val_batches
-        self.valdation_x = validation_x
-        self.validation_y = validation_y
-        self.validation_weights = validation_weights
+        self.dataset_valid = dataset_valid
+        self.verbose = verbose
+        #self.valdation_x = validation_x
+        #self.validation_y = validation_y
+        #self.validation_weights = validation_weights
         self.save_dir = save_dir
 
         self.num_batches_ = num_samples // batch_size
+        print(f"num_batches: {self.num_batches_}")
         self.current_lr = self.lr_bounds[0]
 
         if lr_scale == "exp":
@@ -449,6 +455,7 @@ class LRFinder(tf.keras.callbacks.Callback):
         self.current_batch_ = 0
         self.current_epoch_ = 0
         self.best_loss_ = 1e6
+        self.best_ce_ = 1e6
         self.running_loss = 0.
         self.history = {}
 
@@ -465,23 +472,34 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         if self.current_epoch_ > 1:
             return
-        X, Y = self.valdation_x, self.validation_y
+        #X, Y = self.valdation_x, self.validation_y
 
-        num_samples = self.batch_size * self.num_val_batches
-        if num_samples > X.shape[0]:
-            num_samples = X.shape[0]
+        #num_samples = self.batch_size * self.num_val_batches
+        #if num_samples > len(X):
+            #num_samples = len(X)
 
-        idx = np.random.choice(X.shape[0], num_samples, replace=False)
-        x, y, w = X[idx], Y[idx], self.validation_weights[idx]
-        values = self.model.evaluate(x, y, sample_weight=w, batch_size=self.batch_size, verbose=False)
-        running_loss = values[0]
+        #idx = np.random.choice(len(X), num_samples, replace=False)
+        #x, y, w = X[idx], Y[idx], self.validation_weights[idx]
+        values = self.model.evaluate(x=self.dataset_valid,
+            steps=50,
+            return_dict=True,
+            #workers=10,
+            #use_multiprocessing=True,
+            verbose=False)
+        running_loss = values['loss']
+        running_ce = values['ce']
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
             self.best_loss_ = running_loss
+        
+        if running_ce < self.best_ce_ or self.current_batch_ == 1:
+            self.best_ce_ = running_ce
 
-        current_lr = tf.keras.backend.get_value(self.model.optimzer.lr)
+        current_lr = tf.keras.backend.get_value(self.model.optimizer.lr)
 
         self.history.setdefault("running_loss_", []).append(running_loss)
+        self.history.setdefault("running_ce_", []).append(running_ce)
+
         if self.lr_scale == "exp":
             self.history.setdefault("log_lrs", []).append(np.log10(current_lr))
         else:
@@ -500,10 +518,8 @@ class LRFinder(tf.keras.callbacks.Callback):
             self.history.setdefault(k, []).append(v)
 
         if self.verbose:
-            if self.use_validation_set:
-                print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " % (values[0], current_lr))
-            else:
-                print(" - LRFinder: lr = %1.8f " % current_lr)
+            print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " % (values['loss'], current_lr))
+            print(" - LRFinder: val_ce: %1.4f - lr = %1.8f " % (values['ce'], current_lr))
 
     def on_epoch_end(self, epoch, logs=None):
         # basically just saves the history
