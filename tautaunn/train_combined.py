@@ -650,8 +650,6 @@ def train(
             seed=seed,
         )
 
-        #feature_names = cont_input_names + cat_input_names
-
         # get indices of inputs for regression pre-NN, plus additional data
         regression_data = None
         if regression_cfg:
@@ -839,41 +837,50 @@ def train(
                     self.fadein_factor.assign(1.0)
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
-        # from tf_util import LRFinder
-        # lr_callback = LRFinder(
-        #     batch_size=4096,
-        #     num_samples=len(dataset_train),
-        #     lr_bounds=(1e-6, 1e-2),
-        #     validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
-        #     save_dir=os.path.join(model_path, "LRFinder"),
-        # )
+
+        from tautaunn.tf_util import LRFinder
+        x_val = np.hstack([np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0)])
+        y_val = np.concatenate(labels_valid, axis=0)
+        event_weights_val = np.concatenate(event_weights_valid, axis=0)
+        lr_callback = LRFinder(
+             batch_size=4096,
+             num_samples=len(dataset_train),
+             num_val_batches=10,
+             validation_x = x_val,
+             validation_y = y_val,
+             validation_weights = event_weights_val,
+             lr_bounds=(1e-6, 1e-2),
+             save_dir=os.path.join(model_path, "LRFinder"),
+         )
+        from IPython import embed; embed()
         # model.fit(x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]), epochs=1, batch_size=4096, callbacks=[lr_callback])
         # lr_callback.plot_schedule()
 
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
-            lres_callback := ReduceLRAndStop(
+            #lres_callback := ReduceLRAndStop(
+                #monitor="val_ce",
+                #mode="min",
+                #lr_patience=learning_rate_patience,
+                #lr_factor=0.5,  # TODO: test 0.333
+                #es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
+                #es_patience=early_stopping_patience,
+                #repeat_func=lres_repeat,
+                #verbose=1,
+            #),
+            cycle_callback := CycleLR(
+                steps_per_epoch=validate_every,
+                epoch_per_cycle=5,
+                policy='triangular2',
+                lr_range=[1e-5,5e-3],
                 monitor="val_ce",
-                mode="min",
-                lr_patience=learning_rate_patience,
-                lr_factor=0.5,  # TODO: test 0.333
-                es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
+                mode='min',
+                invert=True,
                 es_patience=early_stopping_patience,
                 repeat_func=lres_repeat,
-                verbose=1,
+                verbose=2,
             ),
-            #cycle_callback := CycleLR(
-                #steps_per_epoch=validate_every,
-                #epoch_per_cycle=5,
-                #policy='triangular2',
-                #lr_range=[1e-5,5e-3],
-                #monitor="val_ce",
-                #mode='min',
-                #invert=True,
-                #es_patience=early_stopping_patience,
-                #verbose=2,
-            #),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
                 log_dir=full_tensorboard_dir,
@@ -937,11 +944,11 @@ def train(
                 return
             print("")
         # manually restore best weights
-        lres_callback.restore_best_weights()
-        print(f"training took {human_duration(seconds=t_end - t_start)}")
-
-        #cycle_callback.restore_best_weights()
+        #lres_callback.restore_best_weights()
         #print(f"training took {human_duration(seconds=t_end - t_start)}")
+
+        cycle_callback.restore_best_weights()
+        print(f"training took {human_duration(seconds=t_end - t_start)}")
         # perform one final validation round for verification of the best model
         print("performing final round of validation")
         results_valid = model.evaluate(
@@ -1033,7 +1040,7 @@ def train(
     # create shap plot
     if not skip_shap_plots:
         # this only takes the first batch for now since that already takes soo long
-        x_val = np.hstack(np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0))
+        x_val = np.hstack([np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0)])
         y_val = np.concatenate(labels_valid, axis=0)
         event_weights_val = np.concatenate(event_weights_valid, axis=0)
 
