@@ -838,44 +838,43 @@ def train(
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
 
-        #from tautaunn.tf_util import LRFinder
-        #x_train_lr_find = dataset_train.get_n_batches(500)
-        #lr_callback = LRFinder(
-                #num_samples=500*batch_size,
-                #batch_size=batch_size,
-                #lr_bounds=(1e-6, 1e-2),
-                #save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
-            #)
-        #from IPython import embed; embed()
-        #model.fit(x=x_train_lr_find, epochs=1, batch_size=4096, callbacks=[lr_callback])
+        # from tautaunn.tf_util import LRFinder
+        # x_train_lr_find = dataset_train.get_n_batches(500)
+        # lr_callback = LRFinder(
+        #     num_samples=500*batch_size,
+        #     batch_size=batch_size,
+        #     lr_bounds=(1e-6, 1e-2),
+        #    save_dir=os.path.join(os.path.join(model_dir, model_name), "LRFinder"),
+        # )
+        # model.fit(x=x_train_lr_find, epochs=1, batch_size=4096, callbacks=[lr_callback])
         # lr_callback.plot_schedule()
 
         # callbacks
         fit_callbacks = [
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
-            #lres_callback := ReduceLRAndStop(
-                #monitor="val_ce",
-                #mode="min",
-                #lr_patience=learning_rate_patience,
-                #lr_factor=0.5,  # TODO: test 0.333
-                #es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
-                #es_patience=early_stopping_patience,
-                #repeat_func=lres_repeat,
-                #verbose=1,
-            #),
-            cycle_callback := CycleLR(
-                steps_per_epoch=validate_every,
-                epoch_per_cycle=5,
-                policy='triangular2',
-                lr_range=[5e-6,5e-3],
-                reduce_on_end=True,
+            lres_callback := ReduceLRAndStop(
                 monitor="val_ce",
-                mode='min',
-                invert=True,
+                mode="min",
+                lr_patience=learning_rate_patience,
+                lr_factor=0.5,  # TODO: test 0.333
+                es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
                 es_patience=early_stopping_patience,
                 repeat_func=lres_repeat,
-                verbose=2,
+                verbose=1,
             ),
+            # cycle_callback := CycleLR(
+            #     steps_per_epoch=validate_every,
+            #     epoch_per_cycle=5,
+            #     policy='triangular2',
+            #     lr_range=[5e-6,5e-3],
+            #     reduce_on_end=True,
+            #     monitor="val_ce",
+            #     mode='min',
+            #     invert=True,
+            #     es_patience=early_stopping_patience,
+            #     repeat_func=lres_repeat,
+            #     verbose=2,
+            # ),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
                 log_dir=full_tensorboard_dir,
@@ -939,8 +938,8 @@ def train(
                 return
             print("")
         # manually restore best weights
-        #lres_callback.restore_best_weights()
-        #print(f"training took {human_duration(seconds=t_end - t_start)}")
+        lres_callback.restore_best_weights()
+        print(f"training took {human_duration(seconds=t_end - t_start)}")
 
         cycle_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
