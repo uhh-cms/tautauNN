@@ -463,6 +463,12 @@ selection_sets = {
             "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
         ),
     ]),
+    "baseline_lbtag": {
+        year: baseline_selection + [
+            f"(bjet1_bID_deepFlavor > {w['loose']}) | (bjet2_bID_deepFlavor > {w['loose']})",
+        ]
+        for year, w in btag_wps.items()
+    },
     "signal": {
         year: baseline_selection + [
             (
@@ -790,8 +796,6 @@ class RegressionSet:
     model_files: dict[int, str]
     cont_feature_set: str
     cat_feature_set: str
-    # mapping to [reg_nn, reg_hep, cls_logits, cls, reg_last, cls_last]
-    output_indices: tuple[int, int, int, int, int, int]
     parameterize_year: bool = False
     parameterize_spin: bool = True
     parameterize_mass: bool = True
@@ -800,7 +804,7 @@ class RegressionSet:
     use_cls_outputs: bool = True
     use_cls_last_layer: bool = True
     fade_in: tuple[int, int] = (0, 0)
-    fine_tune: bool = False
+    fine_tune: dict[str, Any] | None = None
     feed_lbn: bool = False
 
     def copy(self, **attrs) -> RegressionSet:
@@ -817,7 +821,6 @@ regression_sets = {
         },
         cont_feature_set="reg2",
         cat_feature_set="reg",
-        output_indices=(0, 1, -1, 2, 3, 4),
         parameterize_year=False,
         parameterize_spin=True,
         parameterize_mass=True,
@@ -826,10 +829,9 @@ regression_sets = {
         use_cls_outputs=False,
         use_cls_last_layer=True,
         fade_in=(150, 20),
-        fine_tune=False,
+        fine_tune=None,
         feed_lbn=False,
     )),
-    "default_ft": default_reg_set.copy(fine_tune=True),
     "v2": (reg_set_v2 := RegressionSet(
         model_files={
             fold: os.path.join(os.getenv("TN_REG_MODEL_DIR"), "ttreg_ED5_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
@@ -837,7 +839,6 @@ regression_sets = {
         },
         cont_feature_set="reg_v2",
         cat_feature_set="default",
-        output_indices=(0, 1, 2, 3, 4, 5),
         parameterize_year=True,
         parameterize_spin=True,
         parameterize_mass=True,
@@ -846,11 +847,58 @@ regression_sets = {
         use_cls_outputs=False,
         use_cls_last_layer=True,
         fade_in=(150, 20),
-        fine_tune=False,
+        fine_tune=None,
         feed_lbn=False,
     )),
-    "v2_lbn": reg_set_v2.copy(feed_lbn=True),
-    "v2_lbn_passall": reg_set_v2.copy(feed_lbn=True, use_reg_outputs=True, use_cls_outputs=True),
+    "v2_ft": reg_set_v2.copy(
+        fine_tune={
+            # use same norm as dnn
+            "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 4,
+            # use current learning rate, but with two reverse reduction steps
+            "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-2,
+        },
+    ),
+    # "v2_lbn": reg_set_v2.copy(feed_lbn=True),
+    # "v2_lbn_passall": reg_set_v2.copy(feed_lbn=True, use_reg_outputs=True, use_cls_outputs=True),
+    "v3": (reg_set_v3 := RegressionSet(
+        model_files={
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"daurot_v3/tautaureg_PSbaseline_LSmulti4_SSdefault_FSdefault_daurot-default_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1_val_metric_sum")  # noqa
+            for fold in range(5)
+        },
+        cont_feature_set="default_daurot",
+        cat_feature_set="default",
+        parameterize_year=True,
+        parameterize_spin=True,
+        parameterize_mass=True,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        fade_in=(150, 20),
+        fine_tune=None,
+        feed_lbn=False,
+    )),
+    "v3_lbn": reg_set_v3.copy(feed_lbn=True),
+    "v3_lbn_ft_lt10_lr2": reg_set_v3.copy(
+        feed_lbn=True,
+        fine_tune={
+            "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 10,
+            "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-2,
+        },
+    ),
+    "v3_lbn_ft_lt20_lr1": reg_set_v3.copy(
+        feed_lbn=True,
+        fine_tune={
+            "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
+            "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-1,
+        },
+    ),
+    "v3_ft_lt20_lr1": reg_set_v3.copy(
+        fine_tune={
+            "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
+            "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-1,
+        },
+    ),
 }
 
 

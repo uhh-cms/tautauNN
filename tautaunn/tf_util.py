@@ -228,13 +228,13 @@ class CycleLR(tf.keras.callbacks.Callback):
             self.best_metric = -np.inf
             self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
-        
+
     def calc_lr(self,):
         self.step_size = self.cycle_width / self.steps
         if self.cycle_step < self.half_life:
-            return self.lr_range[0]+(self.cycle_step*self.step_size)
+            return self.lr_range[0]+(self.cycle_step * self.step_size)
         else:
-            return self.lr_range[-1]-((self.cycle_step-self.half_life)*self.step_size)
+            return self.lr_range[-1]-((self.cycle_step - self.half_life) * self.step_size)
 
     def on_train_begin(self, logs={}):
         logs = logs or {}
@@ -253,7 +253,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.history.setdefault('lr', []).append(
             tf.keras.backend.get_value(self.model.optimizer.lr))
         tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
-        
+
         for k, v in logs.items():
             self.history.setdefault(k, []).append(v)
 
@@ -278,7 +278,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         value = self.get_monitor_value(logs)
         if value is None:
             return
-            
+
         # helper to get a newline only for the first invocation
         nls = {"nl": "\n"}
         nl = lambda: nls.pop("nl", "")
@@ -292,7 +292,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print_msg(f"{nl()}{self.__class__.__name__}: recorded new best value of {value:.5f}")
             logs["last_best"] = 0
             return
-        
+
         # no improvement, increase wait counter
         self.wait += 1
 
@@ -365,19 +365,19 @@ class LRFinder(tf.keras.callbacks.Callback):
 
     def on_batch_begin(self, batch, logs):
         self.current_batch_ +=1
-                 
+
     def on_batch_end(self, batch, logs):
 
         # we're only training for one epoch so the magic happens here
 
         if self.current_epoch_ > 1:
-            return 
+            return
         X, Y = self.validation_data[0], self.validation_data[1]
 
         num_samples = self.batch_size * self.num_val_batches
         if num_samples > X.shape[0]:
             num_samples = X.shape[0]
-        
+
         idx = np.random.choice(X.shape[0], num_samples, replace=False)
         x, y = X[idx], Y[idx]
         values = self.model.evaluate(x,y, batch_size=self.batch_size, verbose=False)
@@ -385,7 +385,7 @@ class LRFinder(tf.keras.callbacks.Callback):
 
         if running_loss < self.best_loss_ or self.current_batch_ == 1:
             self.best_loss_ = running_loss
-        
+
         current_lr = tf.keras.backend.get_value(self.model.optimzer.lr)
 
         self.history.setdefault('running_loss_', []).append(running_loss)
@@ -524,7 +524,6 @@ class LRFinder(tf.keras.callbacks.Callback):
         return np.array(self.history['running_loss_'])
 
 
-
 class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
     def __init__(
@@ -598,6 +597,11 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
     def _reset_before_repeat(self) -> None:
         self.wait = 0
         self.lr_counter = 0
+
+    def _reset_for_fine_tuning(self) -> None:
+        self.wait = 0
+        self.skip_lr_monitoring = False
+        self.repeat_counter = 0
 
     def on_train_begin(self, logs: dict[str, Any] | None = None) -> None:
         self._reset()

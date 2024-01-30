@@ -669,6 +669,9 @@ def train(
             rows = []
             for i in range(0, len(lbn_cfg.input_features), 4):
                 rows.append(["-" if j < 0 else combined_cont_input_names[j] for j in lbn_input_indices[i:i + 4]])
+            if regression_cfg and regression_cfg.feed_lbn:
+                rows.append(["-", "reg_nu1_px", "reg_nu1_py", "reg_nu1_pz"])
+                rows.append(["-", "reg_nu2_px", "reg_nu2_py", "reg_nu2_pz"])
             print("LBN input names:")
             print(tabulate(rows, headers=headers, tablefmt="github"))
             # store data
@@ -678,7 +681,7 @@ def train(
             }
 
         # create the model
-        model = create_model(
+        model, regression_weight_range = create_model(
             dnn_cont_input_indices=dnn_cont_input_indices,
             dnn_cat_input_indices=dnn_cat_input_indices,
             regression_data=regression_data,
@@ -726,58 +729,6 @@ def train(
             run_eagerly=eager_mode,
         )
 
-        # callback to repeat the lr and es scheduler once to enable fine-tuning of the regression pre-nn if set
-        # see https://keras.io/guides/transfer_learning/#finetuning
-        lres_repeat = None
-        if regression_cfg and regression_cfg.fine_tune:
-            def lres_repeat(lres_callback: ReduceLRAndStop, logs: dict[str, Any]) -> bool:  # noqa
-                # only repeat once
-                if lres_callback.repeat_counter != 0:
-                    return False
-                # 1. make the reg_model trainable
-                reg_model.trainable = True
-                # 2. update l2 norms (enabled those on reg_model and just update others)
-                if l2_norm > 0:
-                    # TODO: one could also consider different methods for resetting l2:
-                    # a) use current weights of both networks to determine the new l2 norm such that the loss will be
-                    #    equal to the current one of only the main NN
-                    # b) like a), but set the new norm to 2x (3x, ...) the current one
-                    # c) use the same norm, although this might lead to a way too large l2 component as the reg_model
-                    #    usually has many weights
-                    # some naive first shot:
-                    n_weights_total = sum(map(
-                        tf.keras.backend.count_params,
-                        [layer.kernel for layer in model.l2_layers["main"] + model.l2_layers["reg"]],
-                    ))
-                    for layer in model.l2_layers["main"] + model.l2_layers["reg"]:
-                        layer.kernel_regularizer.l2[...] = l2_norm / n_weights_total
-                # 3. re-compile, optionally update learning rate
-                model.compile(
-                    loss="categorical_crossentropy",
-                    optimizer=opt_cls(
-                        learning_rate=tf.keras.backend.get_value(model.optimizer.lr),
-                        jit_compile=jit_compile,
-                    ),
-                    weighted_metrics=[
-                        tf.keras.metrics.CategoricalCrossentropy(name="ce"),
-                        tf.keras.metrics.CategoricalAccuracy(name="acc"),
-                    ],
-                    metrics=[
-                        L2Metric(
-                            model,
-                            select_layers=(lambda model: model.l2_layers["main"] + model.l2_layers["reg"]),
-                            name="l2",
-                        ),
-                    ],
-                    jit_compile=jit_compile,
-                    run_eagerly=eager_mode,
-                )
-                # opt.iterations.assign(opt1.iterations)
-                # 4. optionally update lr and es patiences, lr factor and reductions
-                pass  # to be seen
-                print(f"\nenabled fine-tuning of {reg_model.name} layers")
-                return True
-
         # prepare the tensorboard dir
         full_tensorboard_dir = None
         if tensorboard_dir:
@@ -793,21 +744,37 @@ def train(
                 self,
                 model: tf.keras.Model,
                 fade_in: tuple[int, int],
+                dense_index_start: int,
+                dense_index_stop: int,
                 name="regression_fader",
                 **kwargs,
             ) -> None:
                 super().__init__(**kwargs)
 
-                # get fade-in layer and first dense layer
-                self.fadein_layer = next(layer for layer in model.layers if "reg_fade_in" in layer.name)
-                self.dense_layer = next(layer for layer in model.layers if "dense_1" in layer.name)
+                # get fade-in layers and first dense layer
+                self.dense_layer = None
+                self.fadein_layer = None
+                self.fadein_lbn_layer = None
+                for layer in model.layers:
+                    if "dense_1" in layer.name and self.dense_layer is None:
+                        self.dense_layer = layer
+                    elif "reg_fade_in" in layer.name and self.fadein_layer is None:
+                        self.fadein_layer = layer
+                    elif "reg_lbn_fade_in" in layer.name and self.fadein_lbn_layer is None:
+                        self.fadein_lbn_layer = layer
+
+                # dense layer and fade-in layer are mandatory, lbn fade-in layer is optional
+                assert self.dense_layer is not None
+                assert self.fadein_layer is not None
 
                 # reference to the fade-in factor
                 self.fadein_factor = self.fadein_layer.factor
+                self.fadein_lbn_factor = None if self.fadein_lbn_layer is None else self.fadein_lbn_layer.factor
 
                 # store initial weights of first dense layer that connect to the regression network
-                self.n_last_dense_weights = self.fadein_layer.output_shape[1]
-                self.dense_weights_reg = self.dense_layer.kernel[-self.n_last_dense_weights:]
+                self.dense_index_start = dense_index_start
+                self.dense_index_stop = dense_index_stop
+                self.dense_weights_reg = self.dense_layer.kernel[self.dense_index_start:self.dense_index_stop]
 
                 # fade-in range
                 assert fade_in[0] > 0
@@ -823,18 +790,22 @@ def train(
 
                 # inject initial weights
                 if self.counter == self.fade_in[0]:
-                    self.dense_layer.kernel[-self.n_last_dense_weights:].assign(self.dense_weights_reg)
+                    self.dense_layer.kernel[self.dense_index_start:self.dense_index_stop].assign(self.dense_weights_reg)
                     print(f"\n{self.name}: injected initial weights")
 
                 if self.fade_in[0] <= self.counter < self.fade_in[0] + self.fade_in[1]:
                     # ramp up factor
                     f = (self.counter - self.fade_in[0]) / self.fade_in[1]
                     self.fadein_factor.assign(f)
+                    if self.fadein_lbn_factor is not None:
+                        self.fadein_lbn_factor.assign(f)
                     print(f"\n{self.name}: set fade-in factor to {f:.3f}")
 
                 elif self.counter == self.fade_in[0] + self.fade_in[1]:
                     # fix factor at 1
                     self.fadein_factor.assign(1.0)
+                    if self.fadein_lbn_factor is not None:
+                        self.fadein_lbn_factor.assign(1.0)
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
         # from tf_util import LRFinder
@@ -858,7 +829,6 @@ def train(
                 lr_factor=0.5,  # TODO: test 0.333
                 es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
                 es_patience=early_stopping_patience,
-                repeat_func=lres_repeat,
                 verbose=1,
             ),
             # tensorboard
@@ -878,6 +848,8 @@ def train(
             RegressionFader(
                 model=model,
                 fade_in=regression_cfg.fade_in,
+                dense_index_start=regression_weight_range[0],
+                dense_index_stop=regression_weight_range[1],
             ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
         ]
 
@@ -895,6 +867,10 @@ def train(
         # training
         t_start = time.perf_counter()
         try:
+            # test
+            # pretrained_model = "feat5/hbtres_PSbaseline_LSmulti3_SSdefault_FSdefault_daurot-default_ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_RSv2_LBdefault_daurot_FI0_SD1"  # noqa
+            # model.load_weights(os.path.join(os.environ["TN_DATA_DIR"], "store/Training", pretrained_model))
+
             model.fit(
                 x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
                 validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
@@ -905,7 +881,91 @@ def train(
                 validation_steps=dataset_valid.batches_per_cycle,
                 callbacks=list(filter(None, fit_callbacks)),
             )
-            # model.load_weights("/gpfs/dust/cms/user/riegerma/taunn_data/store/Training/dev_weights/hbtres_LSbinary_FSreg-reg_ED5_LU5x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_LR3.0e-03_SPINy_MASSy_FI0_SD1")  # noqa
+
+            # fine tuning
+            # see https://keras.io/guides/transfer_learning/#finetuning
+            if regression_cfg and regression_cfg.fine_tune:
+                ft_cfg = regression_cfg.fine_tune
+                print("\nstarting fine-tuning adjustments")
+
+                # verify that the regression fade-in took place
+                reg_fader = fit_callbacks[-1]
+                if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
+                    raise RuntimeError("regression fade-in did not take place yet")
+
+                # obtain updated hyper-parameters from the fine-tuning config
+                # l2 norm
+                reg_l2_norm = l2_norm
+                if "l2_norm" in ft_cfg:
+                    _reg_l2_norm = ft_cfg["l2_norm"]
+                    if callable(_reg_l2_norm):
+                        _reg_l2_norm = _reg_l2_norm(reg_l2_norm)
+                    reg_l2_norm = _reg_l2_norm
+                # learning rate
+                ft_learning_rate = tf.keras.backend.get_value(model.optimizer.lr)
+                if "learning_rate" in ft_cfg:
+                    reg_learning_rate = ft_cfg["learning_rate"]
+                    if callable(reg_learning_rate):
+                        reg_learning_rate = reg_learning_rate(learning_rate, ft_learning_rate)
+                    ft_learning_rate = reg_learning_rate
+
+                # make the reg_model trainable
+                reg_model.trainable = True
+
+                # adjust l2 norm on regression layers
+                if reg_l2_norm > 0:
+                    n_reg_weights_total = sum(map(
+                        tf.keras.backend.count_params,
+                        [layer.kernel for layer in model.l2_layers["reg"]],
+                    ))
+                    l2_norm_scaled = reg_l2_norm / n_reg_weights_total
+                    print(
+                        f"scaled reg l2 norm from {reg_l2_norm:.1f} to {l2_norm_scaled:5f} based on "
+                        f"{n_reg_weights_total} weights",
+                    )
+                    for layer in model.l2_layers["reg"]:
+                        layer.kernel_regularizer.l2[...] = l2_norm_scaled
+
+                # re-compile
+                opt1 = model.optimizer
+                model.compile(
+                    loss="categorical_crossentropy",
+                    optimizer=opt_cls(
+                        learning_rate=ft_learning_rate,
+                        jit_compile=jit_compile,
+                    ),
+                    weighted_metrics=[
+                        tf.keras.metrics.CategoricalCrossentropy(name="ce"),
+                        # tf.keras.metrics.CategoricalAccuracy(name="acc"),
+                    ],
+                    metrics=[
+                        L2Metric(
+                            model,
+                            select_layers=(lambda model: model.l2_layers["main"] + model.l2_layers["reg"]),
+                            name="l2",
+                        ),
+                    ],
+                    jit_compile=jit_compile,
+                    run_eagerly=eager_mode,
+                )
+                model.optimizer.iterations.assign(opt1.iterations)
+
+                # reset learning rate and early stopping monitor
+                lres_callback._reset_for_fine_tuning()
+
+                print(f"\nenabled fine-tuning of {reg_model.name} layers")
+
+                model.fit(
+                    x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
+                    validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
+                    shuffle=False,  # the custom generators already shuffle
+                    initial_epoch=int(round(model.optimizer.iterations.numpy() / validate_every)),
+                    epochs=max_epochs,
+                    steps_per_epoch=validate_every,
+                    validation_freq=1,
+                    validation_steps=dataset_valid.batches_per_cycle,
+                    callbacks=list(filter(None, fit_callbacks[:-1])),  # drop the regression fader
+                )
 
             t_end = time.perf_counter()
         except KeyboardInterrupt:
@@ -1149,41 +1209,16 @@ def create_model(
     dnn_input_layers.append(dnn_cat_embedded_flat)
 
     #
-    # LBN
-    #
-
-    if lbn_data:
-        lbn_cfg = lbn_data["lbn_cfg"]
-
-        # lbn input selection and pre-processing
-        lbn_selector = LBNInputSelection(lbn_data["lbn_cont_input_indices"])
-
-        # the lbn layer itself
-        lbn_outputs = LBNLayer(
-            lbn_selector.lbn_input_shape,
-            n_particles=lbn_cfg.n_particles,
-            n_restframes=lbn_cfg.n_restframes,
-            boost_mode=lbn_cfg.boost_mode,
-            features=lbn_cfg.output_features,
-            name="lbn",
-        )(lbn_selector(x_cont))
-
-        # batch norm
-        lbn_outputs_norm = tf.keras.layers.BatchNormalization(dtype=tf.float32, name="lbn_norm")(lbn_outputs)
-
-        # define as input
-        dnn_input_layers.append(lbn_outputs_norm)
-
-    #
     # regression pre-NN
-    # (note: this must be the last input to be able to determine the weights that are re-initialized after fade-in)
     #
 
+    regression_weight_range = None
+    reg_neutrinos = None
     if regression_data:
         regression_cfg = regression_data["regression_cfg"]
 
         # load the model
-        reg_model = tf.keras.models.load_model(regression_data["model_file"])
+        reg_model = tf.keras.models.load_model(regression_data["model_file"], compile=False)
 
         # add back empty kernel regualizers to all dense layers
         for layer in reg_model.layers:
@@ -1201,14 +1236,20 @@ def create_model(
         reg_cat = tf.gather(x_cat, regression_data["reg_cat_input_indices"], axis=1, name="select_reg_cat_inputs")
 
         # run the pre-NN
-        reg_out_reg, _, reg_out_cls, reg_out_reg_last, reg_out_cls_last = reg_model([reg_cont, reg_cat])
+        reg_pred = reg_model({"cat_input": reg_cat, "cont_input": reg_cont})
+        reg_out_reg_nn = reg_pred.get("regression_output")
+        reg_out_reg_hep = reg_pred.get("regression_output_hep")
+        reg_out_cls_logits = reg_pred.get("classification_output")
+        reg_out_cls = reg_pred.get("classification_output_softmax")
+        reg_out_reg_last = reg_pred.get("regression_last_layer")
+        reg_out_cls_last = reg_pred.get("classification_last_layer")
 
         # concatenate all regression outputs
         reg_concat_layers = []
         if regression_cfg.use_reg_outputs:
-            reg_concat_layers.append(reg_out_reg)
+            reg_concat_layers.append(reg_out_reg_nn)
         if regression_cfg.use_cls_outputs:
-            reg_concat_layers.append(reg_out_cls)
+            reg_concat_layers.append(reg_out_cls_logits if reg_out_cls_logits is not None else reg_out_cls)
         if regression_cfg.use_reg_last_layer:
             reg_concat_layers.append(reg_out_reg_last)
         if regression_cfg.use_cls_last_layer:
@@ -1220,8 +1261,59 @@ def create_model(
         if regression_cfg.fade_in[0] > 0:
             reg_out = FadeInLayer(name="reg_fade_in")(reg_out)
 
+        # store the range where the regression output is positioned in the overall dnn input for the fade-in later on
+        regression_weight_range = (
+            (start := sum(t.shape[1] for t in dnn_input_layers)),
+            start + reg_out.shape[1],
+        )
+
         # define as input
         dnn_input_layers.append(reg_out)
+
+        # prepare neutrinos passed to the lbn if requested
+        if regression_cfg.feed_lbn and reg_out_reg_hep is not None:
+            p_nu1 = reg_out_reg_hep[:, 0:3]
+            p_nu2 = reg_out_reg_hep[:, 3:6]
+            reg_neutrinos = tf.concat(
+                [tf.reduce_sum(p_nu1**2, axis=1)[:, None], p_nu1, tf.reduce_sum(p_nu2**2, axis=1)[:, None], p_nu2],
+                axis=1,
+            )
+
+            if regression_cfg.fade_in[0] > 0:
+                reg_neutrinos = FadeInLayer(name="reg_lbn_fade_in")(reg_neutrinos)
+
+    #
+    # LBN
+    #
+
+    if lbn_data:
+        lbn_cfg = lbn_data["lbn_cfg"]
+
+        # lbn input selection and pre-processing
+        lbn_selector = LBNInputSelection(lbn_data["lbn_cont_input_indices"])
+        lbn_input_shape = list(lbn_selector.lbn_input_shape)
+        lbn_inputs = lbn_selector(x_cont)
+
+        # add regressed neutrinos if set
+        if reg_neutrinos is not None:
+            lbn_inputs = tf.concat([lbn_inputs, tf.reshape(reg_neutrinos, (-1, 2, 4))], axis=1)
+            lbn_input_shape[0] += 2
+
+        # the lbn layer itself
+        lbn_outputs = LBNLayer(
+            tuple(lbn_input_shape),
+            n_particles=lbn_cfg.n_particles,
+            n_restframes=lbn_cfg.n_restframes,
+            boost_mode=lbn_cfg.boost_mode,
+            features=lbn_cfg.output_features,
+            name="lbn",
+        )(lbn_inputs)
+
+        # batch norm
+        lbn_outputs_norm = tf.keras.layers.BatchNormalization(dtype=tf.float32, name="lbn_norm")(lbn_outputs)
+
+        # define as input
+        dnn_input_layers.append(lbn_outputs_norm)
 
     #
     # combine inputs and start DNN
@@ -1336,7 +1428,7 @@ def create_model(
         for layer in l2_layers["main"]:
             layer.kernel_regularizer.l2[...] = l2_norm_scaled
 
-    return model
+    return model, regression_weight_range
 
 
 def main() -> None:
