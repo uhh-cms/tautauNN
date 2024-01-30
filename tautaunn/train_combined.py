@@ -939,10 +939,9 @@ def train(
             print("")
         # manually restore best weights
         lres_callback.restore_best_weights()
+        # cycle_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
 
-        cycle_callback.restore_best_weights()
-        print(f"training took {human_duration(seconds=t_end - t_start)}")
         # perform one final validation round for verification of the best model
         print("performing final round of validation")
         results_valid = model.evaluate(
