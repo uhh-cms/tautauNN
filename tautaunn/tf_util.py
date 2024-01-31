@@ -263,6 +263,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.min_delta = abs(float(min_delta))
         self.step_size = self.cycle_width / self.half_life
         self.lr_min = self.lr_range[np.argmin(self.lr_range)]
+        self.repeat_func = repeat_func
 
         # state
         self.history = {}
@@ -402,6 +403,8 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
                 print(f"\n Current lr_range {self.lr_range}")
                 print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                # set the lr to the mid of the current lr range
+                tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
                 self.wait = 0
                 return
 
@@ -414,8 +417,6 @@ class CycleLR(tf.keras.callbacks.Callback):
             logs = logs or {}
             logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-            # set the lr to the mid of the current lr range
-            tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
             # do nothing when no metric is available yet
             value = self.get_monitor_value(logs)
             if value is None:

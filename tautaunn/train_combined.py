@@ -850,11 +850,11 @@ def train(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
                 policy='triangular2',
-                lr_range=[5e-6,5e-3],
+                lr_range=[5e-6,3e-3],
                 reduce_on_end=True,
                 monitor="val_ce",
                 mode='min',
-                invert=True,
+                invert=False,
                 es_patience=early_stopping_patience,
                 verbose=2,
             )
