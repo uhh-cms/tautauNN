@@ -971,7 +971,10 @@ def train(
                 model.optimizer.iterations.assign(opt1.iterations)
 
                 # reset learning rate and early stopping monitor
-                lres_callback._reset_for_fine_tuning()
+                if cycle_lr:
+                    cycle_callback._reset_for_fine_tuning()
+                else:
+                    lres_callback._reset_for_fine_tuning()
 
                 print(f"\nenabled fine-tuning of {reg_model.name} layers")
 
@@ -1004,8 +1007,10 @@ def train(
                 return
             print("")
         # manually restore best weights
-        lres_callback.restore_best_weights()
-        # cycle_callback.restore_best_weights()
+        if cycle_lr:
+            cycle_callback.restore_best_weights()
+        else:
+            lres_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
 
         # perform one final validation round for verification of the best model

@@ -327,9 +327,6 @@ class CycleLR(tf.keras.callbacks.Callback):
         # for triangular policy, the LR range stays the same so nothing to be done here
         if self.cycle_count > 0:
             if self.policy == "triangular2":
-                if self.lr_range[np.argmax(self.lr_range)] == self.lr_min:
-                    # if the current max of lr_range is the minimum, we continue with the same cycle
-                    return
                 if np.max(self.lr_range) > 4 * np.min(self.lr_range):
                     # reduce the top of lr_range to half it's value
                     self.lr_range[np.argmax(self.lr_range)] /= 2.
@@ -339,6 +336,11 @@ class CycleLR(tf.keras.callbacks.Callback):
                     tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
                 else:
                     return
+    
+    def _reset_for_fine_tuning(self) -> None:
+        self.wait = 0
+        self.repeat_counter = 0
+
 
     def on_epoch_end(self, epoch, logs):
 
