@@ -332,8 +332,8 @@ class CycleLR(tf.keras.callbacks.Callback):
                     self.lr_range[np.argmax(self.lr_range)] /= 2.
                     self.cycle_width = self.lr_range[1] - self.lr_range[0]
                     self.step_size = self.cycle_width / self.half_life
-                    new_lr = self.calc_lr()
-                    tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+                    #new_lr = self.calc_lr()
+                    #tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
                 else:
                     return
     

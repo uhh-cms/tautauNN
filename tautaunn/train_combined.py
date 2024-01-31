@@ -846,7 +846,7 @@ def train(
             ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
         ]
         if cycle_lr:
-            cycle_callback := CycleLR(
+            cycle_callback = CycleLR(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
                 policy='triangular2',
@@ -856,13 +856,12 @@ def train(
                 mode='min',
                 invert=True,
                 es_patience=early_stopping_patience,
-                repeat_func=lres_repeat,
                 verbose=2,
             )
             fit_callbacks.append(cycle_callback)
         else:
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
-            lres_callback := ReduceLRAndStop(
+            lres_callback = ReduceLRAndStop(
                 monitor="val_ce",
                 mode="min",
                 lr_patience=learning_rate_patience,
