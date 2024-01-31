@@ -67,6 +67,7 @@ action() {
         export TN_DATA_DIR="/eos/user/${user_name:0:1}/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_lxplus"
         export TN_REG_MODEL_DIR=""
+        export TN_REG_MODEL_DIR_TOBI=""
         export TN_SKIMS_2016APV="/eos/user/l/lportale/hhbbtautau/skims/SKIMS_UL16APV"
         export TN_SKIMS_2016="/eos/user/l/lportale/hhbbtautau/skims/SKIMS_UL16"
         export TN_SKIMS_2017="/eos/user/l/lportale/hhbbtautau/skims/SKIMS_UL17"
