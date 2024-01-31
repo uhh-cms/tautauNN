@@ -490,7 +490,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_epoch_begin(self, epoch, logs=None):
-        if self.cycle_step == 0:
+        if self.cycle_step == 0 and self.cycle_count > 0:
             print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
             print(f"\n Starting new cycle with lr_range: {self.lr_range}")
 
