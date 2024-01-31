@@ -201,6 +201,8 @@ def train(
     learning_rate_patience: int = 8,
     # stop training if the validation loss hasn't improved since this many validation steps
     early_stopping_patience: int = 10,
+    # whether or not to use cyclical learning rate with default settings
+    cycle_lr: bool = False,
     # maximum number of epochs to even cap early stopping
     max_epochs: int = 10000,
     # how frequently to calulcate the validation loss
@@ -822,29 +824,6 @@ def train(
 
         # callbacks
         fit_callbacks = [
-            # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
-            lres_callback := ReduceLRAndStop(
-                monitor="val_ce",
-                mode="min",
-                lr_patience=learning_rate_patience,
-                lr_factor=0.5,  # TODO: test 0.333
-                es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
-                es_patience=early_stopping_patience,
-                verbose=1,
-            ),
-            # cycle_callback := CycleLR(
-            #     steps_per_epoch=validate_every,
-            #     epoch_per_cycle=5,
-            #     policy='triangular2',
-            #     lr_range=[5e-6,5e-3],
-            #     reduce_on_end=True,
-            #     monitor="val_ce",
-            #     mode='min',
-            #     invert=True,
-            #     es_patience=early_stopping_patience,
-            #     repeat_func=lres_repeat,
-            #     verbose=2,
-            # ),
             # tensorboard
             tf.keras.callbacks.TensorBoard(
                 log_dir=full_tensorboard_dir,
@@ -866,6 +845,33 @@ def train(
                 dense_index_stop=regression_weight_range[1],
             ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
         ]
+        if cycle_lr:
+            cycle_callback := CycleLR(
+                steps_per_epoch=validate_every,
+                epoch_per_cycle=5,
+                policy='triangular2',
+                lr_range=[5e-6,5e-3],
+                reduce_on_end=True,
+                monitor="val_ce",
+                mode='min',
+                invert=True,
+                es_patience=early_stopping_patience,
+                repeat_func=lres_repeat,
+                verbose=2,
+            )
+            fit_callbacks.append(cycle_callback)
+        else:
+            # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
+            lres_callback := ReduceLRAndStop(
+                monitor="val_ce",
+                mode="min",
+                lr_patience=learning_rate_patience,
+                lr_factor=0.5,  # TODO: test 0.333
+                es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
+                es_patience=early_stopping_patience,
+                verbose=1,
+            )
+            fit_callbacks.append(lres_callback)
 
         # some logs
         model.summary()

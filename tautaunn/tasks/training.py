@@ -77,6 +77,10 @@ class TrainingParameters(Task):
         default=15,
         description="non-improving steps before stopping training; default: 15",
     )
+    cycle_lr = luigi.BoolParameter(
+        default=False,
+        description="enable cyclic learning rate; default: False",
+    )
     background_weight = luigi.FloatParameter(
         default=1.0,
         description="relative weight of background classes; default: 1.0",
@@ -250,6 +254,7 @@ class Training(TrainingParameters):
             learning_rate=self.learning_rate,
             learning_rate_patience=self.learning_rate_patience,
             early_stopping_patience=self.early_stopping_patience,
+            cycle_lr=self.cycle_lr,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,
             parameterize_year=True,
