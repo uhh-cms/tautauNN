@@ -1019,7 +1019,8 @@ def write_datacards(
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     sample_names: list[str] | None = None,
-    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flat_s"),
+    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
+    uncertainty: None | float = None,
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1142,6 +1143,7 @@ def write_datacards(
             output_pattern.format(year=year, spin=spin, mass=mass, category=category),
             variable_pattern.format(spin=spin, mass=mass),
             binning,
+            uncertainty,
             qcd_estimation,
             skip_existing,
         ))
@@ -1176,6 +1178,7 @@ def _write_datacard(
     binning: tuple[int, float, float, str] | tuple[float, float, str],
     qcd_estimation: bool,
     skip_existing: bool,
+    uncertainty: None | float = None,
 ) -> tuple[str | None, str | None]:
     # input checks
     assert len(binning) in [3, 4]
@@ -1185,7 +1188,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal_distance", "flat_s"]
+    assert binning_algo in ["equal_distance", "flat_s", "ud"]
 
     # prepare the output paths
     datacard_path = f"datacard_{output_name}.txt"
@@ -1284,6 +1287,71 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
+    elif binning_algo == "ud": # uncertainty-driven
+        if uncertainty is None:
+            raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        # get the signal values
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain uncertainty_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        signal_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        # geth the background values
+        bkgd_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
+        ]
+        bkgd_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[bkgd_process_names]
+        ], axis=0)
+        # sort the bkgd values ascending
+        bkgd_values = ak.sort(bkgd_values)
+        # sort signal values ascending
+        signal_values = ak.sort(signal_values)
+        # the rightmost bin should contain at least 400 bkgd events
+        bin_edges = [1,]
+        min_N = 1/(uncertainty)**2
+        edge_num = 1
+        while True:
+            # calculate the min of 
+            min_sig = signal_values[int(-1*min_N)]
+            min_bkgd = bkgd_values[int(-1*min_N)]
+            next_edge = ak.min([min_sig, min_bkgd])
+            edge_num += 1
+            if any([next_edge == ak.min(vals) for vals in [signal_values, bkgd_values]]):
+                # check remaining stats
+                if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
+                    # remove previous edge
+                    bin_edges.pop()
+                # close bin edges with 0
+                bin_edges.append(0)
+                break
+            if edge_num == n_bins:
+                # check remaining stats
+                if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
+                    # remove previous edge
+                    bin_edges.pop()
+                # close bin edges with 0
+                bin_edges.append(0)
+                break
+            bin_edges.append(next_edge)
+            signal_values = signal_values[signal_values < next_edge]
+            bkgd_values = bkgd_values[bkgd_values < next_edge]
+        bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
@@ -1293,7 +1361,7 @@ def _write_datacard(
         ]
         if len(signal_process_names) != 1:
             raise Exception(
-                "other none or too many signal processes found to obtain flat_s binning: "
+                "either none or too many signal processes found to obtain flat_s binning: "
                 f"{signal_process_names}",
             )
         signal_process_name = signal_process_names[0]
@@ -1344,6 +1412,7 @@ def _write_datacard(
                 f"due to edge value rounding in process {signal_process_name}",
             )
             n_bins = _n_bins_actual
+
 
     #
     # write shapes
@@ -1662,9 +1731,16 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal", "flats"),
+        choices=("equal", "flats", "ud"),
         default="equal",
         help="binning strategy to use; default: equal",
+    )
+    parser.add_argument(
+        "--uncertainty",
+        "-u",
+        type=float,
+        default=None,
+        help="uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: None",
     )
     parser.add_argument(
         "--n-bins",
@@ -1749,6 +1825,7 @@ def main():
         eval_directory=args.eval_directory,
         output_directory=output_directory,
         binning=(args.n_bins, 0.0, 1.0, "equal_distance" if args.binning == "equal" else "flat_s"),
+        uncertainty=args.uncertainty,
         qcd_estimation=not args.no_qcd,
         n_parallel_read=args.parallel_read,
         n_parallel_write=args.parallel_write,
