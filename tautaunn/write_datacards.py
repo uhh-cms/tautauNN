@@ -1312,16 +1312,19 @@ def _write_datacard(
             sample_data[sample_name].full_weight * signal_scale
             for sample_name in sample_map[signal_process_name]
         ], axis=0)
-        # geth the background values
+        # get the background values
         bkgd_process_names = [
             process_name
             for process_name in sample_map
             # dict.get() returns the key if it exits, otherwise the default value (False here)
             if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
         ]
+        bkgd_sample_names = set() 
+        for process in bkgd_process_names:
+            bkgd_sample_names |= set(sample_map[process])
         bkgd_values = ak.concatenate([
             sample_data[sample_name][variable_name]
-            for sample_name in sample_map[bkgd_process_names]
+            for sample_name in bkgd_sample_names 
         ], axis=0)
         # apply axis limits and complain
         outlier_mask_sig = (signal_values < x_min) | (signal_values > x_max)
