@@ -50,7 +50,7 @@ def flat_signal(signal_values: ak.Array,
     sort_indices = ak.argsort(signal_values, ascending=False)
     signal_values = signal_values[sort_indices]
     signal_weights = signal_weights[sort_indices]
-    cumulative_yield = ak.cumsum(signal_weights)
+    cumulative_yield = np.cumsum(signal_weights)
     bin_edges = [1]
     for i in range(n_bins-1):
         # find the index such that the cumulative yield up to signal_values[index] is bin_yield*(i+1) 
@@ -75,9 +75,9 @@ def flat_signal_ud(signal_values: ak.Array,
     sort_indices = ak.argsort(signal_values, ascending=False)
     signal_values = signal_values[sort_indices]
     signal_weights = signal_weights[sort_indices]
-    cumulative_yield = ak.cumsum(signal_weights)
+    cumulative_yield = np.cumsum(signal_weights)
     bin_edges = [1]
-    # rightmost bin edge is derived by requiring at least N_min signal events in the last bin
+    # rightmost bin edge is derived by requiring at least N_min bkgd events in the last bin
     bin_edges.append(bkgd_values[int(-1*N_min)])
     # calculate the signal yield in that bin
     bin_yield = ak.sum(signal_weights[signal_values > bin_edges[-1]])
@@ -85,6 +85,10 @@ def flat_signal_ud(signal_values: ak.Array,
     for i in range(n_bins-2):
         # find the index such that the cumulative yield up to signal_values[index] is bin_yield*(i+1) 
         bin_index = np.searchsorted(cumulative_yield, bin_yield*(i+1))
+        # if this index is equal to the length of the signal array this means we can only create one bin
+        if bin_index == len(signal_values):
+            print(f"Reducing n_bins to 1 due to low signal statistics")
+            break
         # check bkgd stats for new bin (bkgd_values has been updated to exclude
         # anything above the last bin edge already)
         new_edge = signal_values[bin_index]
