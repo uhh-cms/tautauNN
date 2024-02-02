@@ -39,6 +39,7 @@ import hist
 
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
+from tautaunn.binning_algorithms import uncertainty_driven, flat_signal, flat_signal_ud
 
 
 #
@@ -1287,6 +1288,52 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
+    elif binning_algo == "ud_flats": # uncertainty-driven flat_s
+        if uncertainty is None:
+            raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        # get the signal values
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain uncertainty_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        signal_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        signal_weights = ak.concatenate([
+            sample_data[sample_name].full_weight * signal_scale
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        # apply axis limits and complain
+        outlier_mask_sig = (signal_values < x_min) | (signal_values > x_max)
+        if ak.any(outlier_mask_sig):
+            print(f"  found {ak.sum(outlier_mask_sig)} signal outliers in ({category},{spin},{mass})")
+        signal_values = signal_values[~outlier_mask_sig]
+        signal_weights = signal_weights[~outlier_mask_sig]
+        outlier_mask_bkgd = (bkgd_values < x_min) | (bkgd_values > x_max)
+        if ak.any(outlier_mask_bkgd):
+            print(f"  found {ak.sum(outlier_mask_bkgd)} bkgd outliers in ({category},{spin},{mass})")
+        bkgd_values = bkgd_values[~outlier_mask_bkgd]
+        # the number of bins cannot be larger than the amount of unique signal values
+        _n_bins_max = len(set(signal_values))
+        if n_bins > _n_bins_max:
+            print(
+                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                f"due to limited signal statistics of process {signal_process_name}",
+            )
+            n_bins = _n_bins_max
+        if n_bins < 1:
+            print(f"  do not write datacard in ({category},{spin},{mass})")
+            return (None, None)
+        bin_edges = flat_signal_ud(signal_values, signal_weights, bkgd_values, n_bins)
     elif binning_algo == "ud": # uncertainty-driven
         if uncertainty is None:
             raise Exception("uncertainty must be specified for uncertainty-driven binning")
@@ -1318,40 +1365,28 @@ def _write_datacard(
             sample_data[sample_name][variable_name]
             for sample_name in sample_map[bkgd_process_names]
         ], axis=0)
-        # sort the bkgd values ascending
-        bkgd_values = ak.sort(bkgd_values)
-        # sort signal values ascending
-        signal_values = ak.sort(signal_values)
-        # the rightmost bin should contain at least 400 bkgd events
-        bin_edges = [1,]
-        min_N = 1/(uncertainty)**2
-        edge_num = 1
-        while True:
-            # calculate the min of 
-            min_sig = signal_values[int(-1*min_N)]
-            min_bkgd = bkgd_values[int(-1*min_N)]
-            next_edge = ak.min([min_sig, min_bkgd])
-            edge_num += 1
-            if any([next_edge == ak.min(vals) for vals in [signal_values, bkgd_values]]):
-                # check remaining stats
-                if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
-                    # remove previous edge
-                    bin_edges.pop()
-                # close bin edges with 0
-                bin_edges.append(0)
-                break
-            if edge_num == n_bins:
-                # check remaining stats
-                if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
-                    # remove previous edge
-                    bin_edges.pop()
-                # close bin edges with 0
-                bin_edges.append(0)
-                break
-            bin_edges.append(next_edge)
-            signal_values = signal_values[signal_values < next_edge]
-            bkgd_values = bkgd_values[bkgd_values < next_edge]
-        bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
+        # apply axis limits and complain
+        outlier_mask_sig = (signal_values < x_min) | (signal_values > x_max)
+        if ak.any(outlier_mask_sig):
+            print(f"  found {ak.sum(outlier_mask_sig)} signal outliers in ({category},{spin},{mass})")
+        signal_values = signal_values[~outlier_mask_sig]
+        signal_weights = signal_weights[~outlier_mask_sig]
+        outlier_mask_bkgd = (bkgd_values < x_min) | (bkgd_values > x_max)
+        if ak.any(outlier_mask_bkgd):
+            print(f"  found {ak.sum(outlier_mask_bkgd)} bkgd outliers in ({category},{spin},{mass})")
+        bkgd_values = bkgd_values[~outlier_mask_bkgd]
+        # the number of bins cannot be larger than the amount of unique signal values
+        _n_bins_max = len(set(signal_values))
+        if n_bins > _n_bins_max:
+            print(
+                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                f"due to limited signal statistics of process {signal_process_name}",
+            )
+            n_bins = _n_bins_max
+        if n_bins < 1:
+            print(f"  do not write datacard in ({category},{spin},{mass})")
+            return (None, None)
+        bin_edges = uncertainty_driven(signal_values, bkgd_values, uncertainty, n_bins)
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
