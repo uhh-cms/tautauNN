@@ -11,7 +11,7 @@ def uncertainty_driven(signal_values: ak.Array,
     signal_values = ak.sort(signal_values)
     # the rightmost bin should contain at least 400 bkgd events
     bin_edges = [1,]
-    min_N = 1/(uncertainty)**2
+    min_N = int(np.ceil(1/(uncertainty)**2))
     edge_num = 1
     while True:
         # calculate the min of 
@@ -27,7 +27,7 @@ def uncertainty_driven(signal_values: ak.Array,
             # close bin edges with 0
             bin_edges.append(0)
             break
-        if edge_num == n_bins:
+        if edge_num == n_bins-1:
             # check remaining stats
             if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
                 # remove previous edge
@@ -69,7 +69,7 @@ def flat_signal_ud(signal_values: ak.Array,
                    bkgd_values: ak.Array,
                    uncertainty: float,
                    n_bins: int=10):
-    N_min = 1/(uncertainty)**2
+    N_min = int(np.ceil(1/(uncertainty)**2))
     bkgd_values = ak.sort(bkgd_values)
     # reverse sort the signal values and weights
     sort_indices = ak.argsort(signal_values, ascending=False)
