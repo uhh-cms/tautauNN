@@ -1189,7 +1189,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal_distance", "flat_s", "ud"]
+    assert binning_algo in ["equal_distance", "flat_s", "ud", "ud_flats"]
 
     # prepare the output paths
     datacard_path = f"datacard_{output_name}.txt"
@@ -1766,7 +1766,7 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal", "flats", "ud"),
+        choices=("equal", "flats", "ud", "ud_flats"),
         default="equal",
         help="binning strategy to use; default: equal",
     )
