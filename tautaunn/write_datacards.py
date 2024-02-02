@@ -1021,7 +1021,7 @@ def write_datacards(
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     sample_names: list[str] | None = None,
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
-    uncertainty: None | float = None,
+    uncertainty: float = 0.1,
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1177,9 +1177,9 @@ def _write_datacard(
     output_name: str,
     variable_name: str,
     binning: tuple[int, float, float, str] | tuple[float, float, str],
+    uncertainty: float,
     qcd_estimation: bool,
     skip_existing: bool,
-    uncertainty: None | float = None,
 ) -> tuple[str | None, str | None]:
     # input checks
     assert len(binning) in [3, 4]
@@ -1289,8 +1289,8 @@ def _write_datacard(
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
     elif binning_algo == "ud_flats": # uncertainty-driven flat_s
-        if uncertainty is None:
-            raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        #if uncertainty is None:
+            #raise Exception("uncertainty must be specified for uncertainty-driven binning")
         # get the signal values
         signal_process_names = [
             process_name
@@ -1347,7 +1347,13 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = flat_signal_ud(signal_values, signal_weights, bkgd_values, n_bins)
+        bin_edges = flat_signal_ud(signal_values,
+                                   signal_weights,
+                                   bkgd_values,
+                                   uncertainty,
+                                   x_min,
+                                   x_max,
+                                   n_bins)
     elif binning_algo == "ud": # uncertainty-driven
         if uncertainty is None:
             raise Exception("uncertainty must be specified for uncertainty-driven binning")
@@ -1400,7 +1406,12 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = uncertainty_driven(signal_values, bkgd_values, uncertainty, n_bins)
+        bin_edges = uncertainty_driven(signal_values,
+                                       bkgd_values,
+                                       uncertainty,
+                                       x_min,
+                                       x_max,
+                                       n_bins)
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
@@ -1874,12 +1885,12 @@ def main():
         eval_directory=args.eval_directory,
         output_directory=output_directory,
         binning=(args.n_bins, 0.0, 1.0, args.binning),
-        uncertainty=args.uncertainty,
         qcd_estimation=not args.no_qcd,
         n_parallel_read=args.parallel_read,
         n_parallel_write=args.parallel_write,
         cache_directory=args.cache_directory,
         skip_existing=args.skip_existing,
+        uncertainty=args.uncertainty,
     )
     print("writing datacards with arguments")
     pprint.pprint(kwargs)
