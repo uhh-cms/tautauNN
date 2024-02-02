@@ -1859,7 +1859,7 @@ def main():
         skim_directory=args.skim_directory,
         eval_directory=args.eval_directory,
         output_directory=output_directory,
-        binning=(args.n_bins, 0.0, 1.0, "equal_distance" if args.binning == "equal" else "flat_s"),
+        binning=(args.n_bins, 0.0, 1.0, args.binning),
         uncertainty=args.uncertainty,
         qcd_estimation=not args.no_qcd,
         n_parallel_read=args.parallel_read,
