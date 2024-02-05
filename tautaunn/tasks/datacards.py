@@ -195,8 +195,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("flats", "equal"),
-        description="binning to use; choices: flats,equal; default: flats",
+        choices=("flats", "equal", "ud", "ud_flats", "tt_dy_driven"),
+        description=(
+            "binning to use; choices: flats, equal, ud (uncertainty-driven) "
+            "ud_flats (uncertainty-driven with flat signal distribution), tt_dy_driven (tt+dy-driven) "
+            "default: flats")
     )
     n_bins = luigi.IntParameter(
         default=10,
