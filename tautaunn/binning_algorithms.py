@@ -4,13 +4,15 @@ import numpy as np
 def uncertainty_driven(signal_values: ak.Array,
                        bkgd_values: ak.Array,
                        uncertainty: float,
+                       x_min: float=0.,
+                       x_max: float=1.,
                        n_bins: int=10):
     # sort the bkgd values ascending
     bkgd_values = ak.sort(bkgd_values)
     # sort signal values ascending
     signal_values = ak.sort(signal_values)
-    # the rightmost bin should contain at least 400 bkgd events
-    bin_edges = [1,]
+    # the rightmost bin should contain at least min_N events
+    bin_edges = [x_max,]
     min_N = int(np.ceil(1/(uncertainty)**2))
     edge_num = 1
     while True:
@@ -24,16 +26,16 @@ def uncertainty_driven(signal_values: ak.Array,
             if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
                 # remove previous edge
                 bin_edges.pop()
-            # close bin edges with 0
-            bin_edges.append(0)
+            # close bin edges with x_min
+            bin_edges.append(x_min)
             break
         if edge_num == n_bins-1:
             # check remaining stats
             if any([len(vals) < min_N for vals in [signal_values, bkgd_values]]):
                 # remove previous edge
                 bin_edges.pop()
-            # close bin edges with 0
-            bin_edges.append(0)
+            # close bin edges with x_min
+            bin_edges.append(x_min)
             break
         bin_edges.append(next_edge)
         signal_values = signal_values[signal_values < next_edge]
@@ -111,6 +113,51 @@ def flat_signal_ud(signal_values: ak.Array,
                 break
             bin_edges.append(signal_values[bin_index])
             bkgd_values = bkgd_values[bkgd_values < bin_edges[-1]]
+        bin_edges.append(x_min)
+        bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
+        return bin_edges
+
+def ttb_dy_driven(tt_values: ak.Array,
+                  dy_values: ak.Array,
+                  uncertainty: float,
+                  x_min: float=0.,
+                  x_max: float=1.,
+                  n_bins: int=10):
+    if n_bins == 1:
+        return [x_min, x_max]
+    else:
+        # sort the tt and dy values
+        tt_values = ak.sort(tt_values)
+        dy_values = ak.sort(dy_values)
+        # the rightmost bin should contain at least min_N events
+        bin_edges = [x_max]
+        min_N = int(np.ceil(1/(uncertainty)**2))
+        edge_num = 1
+        while True:
+            # calculate the min of 
+            min_tt = tt_values[int(-1*min_N)]
+            min_dy = dy_values[int(-1*min_N)]
+            next_edge = ak.min([min_tt, min_dy])
+            edge_num += 1
+            if any([next_edge == ak.min(vals) for vals in [tt_values, dy_values]]):
+                # check remaining stats
+                if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
+                    # remove previous edge
+                    bin_edges.pop()
+                # close bin edges with 0
+                bin_edges.append(0)
+                break
+            if edge_num == n_bins-2:
+                # check remaining stats
+                if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
+                    # remove previous edge
+                    bin_edges.pop()
+                # close bin edges with 0
+                bin_edges.append(0)
+                break
+            bin_edges.append(next_edge)
+            tt_values = tt_values[tt_values < next_edge]
+            dy_values = dy_values[dy_values < next_edge]
         bin_edges.append(x_min)
         bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
         return bin_edges
