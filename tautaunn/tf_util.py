@@ -218,9 +218,10 @@ class CycleLR(tf.keras.callbacks.Callback):
             epoch_per_cycle: int = 5,
             policy: str = "triangular2",
             lr_range: list = [1e-5, 3e-3],
-            reduce_on_end: bool = False,
             invert: bool = True,
             monitor: str = "val_ce",
+            reduce_on_end: bool = False,
+            lr_patience: int = 10,
             mode: str = "min",
             es_patience: int = 10,
             min_delta: float = 1.0e-5,
@@ -254,6 +255,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.policy = policy
         self.mode = mode
         self.es_patience = int(es_patience)
+        self.lr_patience = int(lr_patience)
         self.verbose = int(verbose)
         self.steps_per_epoch = steps_per_epoch
         self.epoch_per_cycle = epoch_per_cycle
