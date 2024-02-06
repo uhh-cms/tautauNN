@@ -222,6 +222,7 @@ class CycleLR(tf.keras.callbacks.Callback):
             monitor: str = "val_ce",
             reduce_on_end: bool = False,
             lr_patience: int = 10,
+            lr_factor: float = 0.1,
             mode: str = "min",
             es_patience: int = 10,
             max_cycles: int = 10,
@@ -268,6 +269,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.lr_min = self.lr_range[np.argmin(self.lr_range)]
         self.repeat_func = repeat_func
         self.max_cycles = max_cycles
+        self.lr_factor = float(lr_factor)
 
         # state
         self.history = {}
@@ -280,6 +282,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.cycle_step: int = 0
         self.cycle_count: int = 0
         self.reduce_lr_and_stop: bool = False
+        self.lr_counter: int = 0
 
         self._reset()
 
@@ -412,8 +415,6 @@ class CycleLR(tf.keras.callbacks.Callback):
                     tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
                     self.wait = 0
                     return
-                else:
-                    # stop training
             if self.reduce_on_end:
                 # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
                 self.reduce_lr_and_stop = True
