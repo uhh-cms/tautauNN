@@ -850,12 +850,12 @@ def train(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
                 policy='triangular2',
-                lr_range=[5e-6,1e-3],
+                lr_range=[5e-6,5e-3],
                 reduce_on_end=True,
                 monitor="val_ce",
                 mode='min',
                 invert=True,
-                es_patience=early_stopping_patience,
+                es_patience=10,
                 verbose=2,
             )
             fit_callbacks.append(cycle_callback)

@@ -224,6 +224,7 @@ class CycleLR(tf.keras.callbacks.Callback):
             lr_patience: int = 10,
             mode: str = "min",
             es_patience: int = 10,
+            max_cycles: int = 10,
             min_delta: float = 1.0e-5,
             repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
             verbose: int = 0,
@@ -266,6 +267,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.step_size = self.cycle_width / self.half_life
         self.lr_min = self.lr_range[np.argmin(self.lr_range)]
         self.repeat_func = repeat_func
+        self.max_cycles = max_cycles
 
         # state
         self.history = {}
@@ -399,6 +401,19 @@ class CycleLR(tf.keras.callbacks.Callback):
                     )
                 return
 
+
+            if self.cycle_count == self.max_cycles:
+                if self.reduce_on_end == True:
+                    self.reduce_lr_and_stop = True
+                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                    print(f"\n Current lr_range {self.lr_range}")
+                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                    # set the lr to the mid of the current lr range
+                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+                    self.wait = 0
+                    return
+                else:
+                    # stop training
             if self.reduce_on_end:
                 # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
                 self.reduce_lr_and_stop = True
