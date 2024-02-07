@@ -404,9 +404,8 @@ class CycleLR(tf.keras.callbacks.Callback):
                     )
                 return
 
-
             if self.cycle_count == self.max_cycles:
-                if self.reduce_on_end == True:
+                if self.reduce_on_end:
                     self.reduce_lr_and_stop = True
                     print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
                     print(f"\n Current lr_range {self.lr_range}")
@@ -415,6 +414,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                     tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
                     self.wait = 0
                     return
+
             if self.reduce_on_end:
                 # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
                 self.reduce_lr_and_stop = True
