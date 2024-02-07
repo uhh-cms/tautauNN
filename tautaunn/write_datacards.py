@@ -1403,7 +1403,8 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = tt_dy_driven(dy_values,
+        bin_edges = tt_dy_driven(signal_values,
+                                 dy_values,
                                  tt_values,
                                  uncertainty,
                                  x_min,
