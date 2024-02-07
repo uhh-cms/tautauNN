@@ -151,6 +151,12 @@ def tt_dy_driven(signal_values: ak.Array,
             # close bin edges with x_min
             bin_edges.append(x_min)
             break
+        if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
+            # remove previous edge
+            bin_edges.pop()
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
     bin_edges.append(x_min)
     bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
     return bin_edges
