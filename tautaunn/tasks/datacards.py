@@ -302,7 +302,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             variable_pattern=self.variable,
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
-            binning=(self.n_bins, 0.0, 1.0, "equal_distance" if self.binning == "equal" else "flat_s"),
+            binning=(self.n_bins, 0.0, 1.0, self.binning),
             qcd_estimation=self.qcd_estimation,
             n_parallel_read=self.parallel_read,
             n_parallel_write=self.parallel_write,
