@@ -279,7 +279,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         if self.binning in ["flats", "equal"]:
             dirname = f"{self.binning}{self.n_bins}"
         else:
-            dirname = f"{self.binning}_{self.uncertainty}_{self.signal_uncertainty}"
+            dirname = f"{self.binning}{self.n_bins}_{self.uncertainty}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)

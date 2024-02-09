@@ -1412,6 +1412,7 @@ def _write_datacard(
                                  tt_values=tt_values,
                                  uncertainty=uncertainty,
                                  signal_uncertainty=signal_uncertainty,
+                                 n_bins=n_bins,
                                  x_min=x_min,
                                  x_max=x_max,)
     elif binning_algo == "ud": # uncertainty-driven
@@ -1472,9 +1473,9 @@ def _write_datacard(
                                     bkgd_values=bkgd_values,
                                     bkgd_uncertainty=uncertainty,
                                     signal_uncertainty=signal_uncertainty,
+                                    n_bins=n_bins,
                                     x_min=x_min,
                                     x_max=x_max,)
-
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [

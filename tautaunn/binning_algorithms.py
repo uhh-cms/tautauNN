@@ -5,6 +5,7 @@ def uncertainty_driven(signal_values: ak.Array,
                        bkgd_values: ak.Array,
                        bkgd_uncertainty: float,
                        signal_uncertainty: float | None = None,
+                       n_bins: int=10,
                        N_signal: int | None = None,
                        x_min: float=0.,
                        x_max: float=1.,):
@@ -21,9 +22,16 @@ def uncertainty_driven(signal_values: ak.Array,
     # sort the bkgd values ascending
     bkgd_values = ak.sort(bkgd_values)
     bin_edges = [x_max,]
+    inner_edge_num = 0
     while True:
         # check remaining stats
         if any(len(vals) < limit for vals, limit in zip([signal_values, bkgd_values], [N_signal, N_bkgd])):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        inner_edge_num += 1
+        # one needs n-1 inner edges (+2 outer edges) for n bins
+        if inner_edge_num > n_bins-1:
             # close bin edges with x_min
             bin_edges.append(x_min)
             break
@@ -120,6 +128,7 @@ def tt_dy_driven(signal_values: ak.Array,
                  dy_values: ak.Array,
                  uncertainty: float,
                  signal_uncertainty: float | None = None,
+                 n_bins: int=10,
                  x_min: float=0.,
                  x_max: float=1.,):
     if signal_uncertainty is None:
@@ -132,6 +141,7 @@ def tt_dy_driven(signal_values: ak.Array,
     bin_edges = [x_max]
     min_N = int(np.ceil(1/(uncertainty)**2))
     min_N_signal = int(np.ceil(1/(signal_uncertainty)**2))
+    inner_edge_num = 0
     while True:
         # check remaining stats
         if len(signal_values) < min_N_signal: 
@@ -139,6 +149,11 @@ def tt_dy_driven(signal_values: ak.Array,
             bin_edges.append(x_min)
             break
         if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        inner_edge_num += 1
+        if inner_edge_num > n_bins-1:
             # close bin edges with x_min
             bin_edges.append(x_min)
             break
