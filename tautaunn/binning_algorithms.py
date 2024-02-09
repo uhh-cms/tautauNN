@@ -22,6 +22,11 @@ def uncertainty_driven(signal_values: ak.Array,
     bkgd_values = ak.sort(bkgd_values)
     bin_edges = [x_max,]
     while True:
+        # check remaining stats
+        if any(len(vals) < limit for vals, limit in zip([signal_values, bkgd_values], [N_signal, N_bkgd])):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
         # calculate the min of 
         min_bkgd = bkgd_values[int(-1*N_bkgd)]
         min_sig = signal_values[int(-1*N_signal)]
@@ -30,11 +35,6 @@ def uncertainty_driven(signal_values: ak.Array,
         # update vals
         bkgd_values = bkgd_values[bkgd_values < next_edge]
         signal_values = signal_values[signal_values < next_edge]
-        # check remaining stats
-        if any(len(vals) < limit for vals, limit in zip([signal_values, bkgd_values], [N_signal, N_bkgd])):
-            # close bin edges with x_min
-            bin_edges.append(x_min)
-            break
         bin_edges.append(next_edge)
     bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
     return bin_edges
@@ -132,32 +132,28 @@ def tt_dy_driven(signal_values: ak.Array,
     bin_edges = [x_max]
     min_N = int(np.ceil(1/(uncertainty)**2))
     min_N_signal = int(np.ceil(1/(signal_uncertainty)**2))
-    edge_num = 1
     while True:
-        # calculate the max of these two
+        # check remaining stats
+        if len(signal_values) < min_N_signal: 
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        # calculate the max of these two to make sure at least one of tt or dy has
+        # at least min_N events
         min_tt = tt_values[int(-1*min_N)]
         min_dy = dy_values[int(-1*min_N)]
-        # we want at least one signal event in the bin
         bkgd_driven = ak.max([min_tt, min_dy])
+        # further require that the signal has at least min_N_signal events
         min_signal = signal_values[int(-1*min_N_signal)]
         next_edge = ak.min([bkgd_driven, min_signal])
         bin_edges.append(next_edge)
         tt_values = tt_values[tt_values < next_edge]
         dy_values = dy_values[dy_values < next_edge]
         signal_values = signal_values[signal_values < next_edge]
-        # check remaining stats
-        if len(signal_values) < min_N_signal: 
-            # remove previous edge
-            bin_edges.pop()
-            # close bin edges with x_min
-            bin_edges.append(x_min)
-            break
-        if any([len(vals) < min_N for vals in [tt_values, dy_values]]):
-            # remove previous edge
-            bin_edges.pop()
-            # close bin edges with x_min
-            bin_edges.append(x_min)
-            break
     bin_edges.append(x_min)
     bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
     return bin_edges
