@@ -205,6 +205,14 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         default=10,
         description="number of bins to use; default: 10",
     )
+    uncertainty = luigi.FloatParameter(
+        default=0.1,
+        description="uncertainty to use for the ud binning; default: 0.1",
+    )
+    signal_uncertainty = luigi.FloatParameter(
+        default=0.5,
+        description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
+    )
     variable = luigi.Parameter(
         default="hbtresdnn_mass{mass}_spin{spin}_hh",
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
@@ -268,7 +276,10 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def output(self):
         # prepare the output directory
-        dirname = f"{self.binning}{self.n_bins}"
+        if self.binning in ["flats", "equal"]:
+            dirname = f"{self.binning}{self.n_bins}"
+        else:
+            dirname = f"{self.binning}_{self.uncertainty}_{self.signal_uncertainty}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
@@ -303,6 +314,8 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
             binning=(self.n_bins, 0.0, 1.0, self.binning),
+            uncertainty=self.uncertainty,
+            signal_uncertainty=self.signal_uncertainty,
             qcd_estimation=self.qcd_estimation,
             n_parallel_read=self.parallel_read,
             n_parallel_write=self.parallel_write,
