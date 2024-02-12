@@ -332,6 +332,10 @@ def sel_trigger(array: ak.Array) -> ak.Array:
         (array.pairType == 2)
     )
 
+# adding in comments selectors for new skims
+# @selector(
+#     needs=["isLeptrigger", "isMETtriggerNoThresh", "metnomu_et", "isSingleTauTrigger"],
+ 
 
 @selector(
     needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
