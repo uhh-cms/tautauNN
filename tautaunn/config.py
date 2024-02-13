@@ -490,12 +490,12 @@ selection_sets = {
         year: ["nleps == 0",
                "(nbjetscand > 1 | isBoosted == 1)",
                (
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {m[year]})) & (pairType == 0)) | ",
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {m[year]})) & (pairType == 1)) | ",
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {m[year]}) | isSingleTauTrigger ) & (pairType == 2))",
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 0)) | ",
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 1)) | ",
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]}) | isSingleTauTrigger ) & (pairType == 2))",
                )
                ]
-               for year, m in metnomu_et_cuts.items()
+               for year in metnomu_et_cuts
     }
 }
 
