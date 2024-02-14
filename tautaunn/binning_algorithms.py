@@ -115,7 +115,7 @@ def flat_signal_ud(signal_values: ak.Array,
             bin_index = np.searchsorted(cumulative_yield, bin_yield*(i+1))
             # if this index is equal to the length of the signal array the signal yield has been 'used up' 
             if bin_index == len(signal_values):
-                print(f"Reducing n_bins to {len(bin_edges-1)} due to low signal statistics")
+                print(f"Reducing n_bins to {len(bin_edges)-1} due to low signal statistics")
                 # check if remaining cumulative yield is less than 80 percent of the bin_yield
                 mask = signal_values < bin_edges[-1]
                 if ak.sum(signal_weights[mask]) < (0.8 * bin_yield):
