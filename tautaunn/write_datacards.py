@@ -266,6 +266,23 @@ stat_model_2018 = {
 categories = {}
 
 
+def apply_outlier_mask(values,
+                       name,
+                       x_min,
+                       x_max,
+                       category,
+                       spin,
+                       mass,
+                       return_mask=False):
+    outlier_mask = (values < x_min) | (values > x_max)
+    if ak.any(outlier_mask):
+        print(f"  found {ak.sum(outlier_mask)} {name} outliers in ({category},{spin},{mass})")
+    if return_mask:
+        return outlier_mask
+    else:
+        return values[~outlier_mask]
+
+
 def merge_dicts(*dicts):
     merged = dicts[0].__class__()
     for d in dicts:
@@ -1335,15 +1352,29 @@ def _write_datacard(
             for sample_name in bkgd_sample_names 
         ], axis=0)
         # apply axis limits and complain
-        outlier_mask_sig = (signal_values < x_min) | (signal_values > x_max)
-        if ak.any(outlier_mask_sig):
-            print(f"  found {ak.sum(outlier_mask_sig)} signal outliers in ({category},{spin},{mass})")
+        outlier_mask_sig = apply_outlier_mask(signal_values,
+                                              "signal",
+                                              x_min,
+                                              x_max,
+                                              category,
+                                              spin,
+                                              mass,
+                                              return_mask=True)
         signal_values = signal_values[~outlier_mask_sig]
         signal_weights = signal_weights[~outlier_mask_sig]
-        outlier_mask_bkgd = (bkgd_values < x_min) | (bkgd_values > x_max)
-        if ak.any(outlier_mask_bkgd):
-            print(f"  found {ak.sum(outlier_mask_bkgd)} bkgd outliers in ({category},{spin},{mass})")
-        bkgd_values = bkgd_values[~outlier_mask_bkgd]
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
+        # get tt and dy values
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        # apply axis limits and complain
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1358,6 +1389,8 @@ def _write_datacard(
         bin_edges = flat_signal_ud(signal_values=signal_values,
                                    signal_weights=signal_weights,
                                    bkgd_values=bkgd_values,
+                                   tt_values=tt_values,
+                                   dy_values=dy_values,
                                    uncertainty=uncertainty,
                                    x_min=x_min,
                                    x_max=x_max,
@@ -1392,14 +1425,8 @@ def _write_datacard(
             for sample_name in sample_map["DY"]
         ], axis=0)
         # apply axis limits and complain
-        outlier_mask_tt = (tt_values < x_min) | (tt_values > x_max)
-        if ak.any(outlier_mask_tt):
-            print(f"  found {ak.sum(outlier_mask_tt)} tt outliers in ({category},{spin},{mass})")
-        tt_values = tt_values[~outlier_mask_tt]
-        outlier_mask_dy = (dy_values < x_min) | (dy_values > x_max)
-        if ak.any(outlier_mask_dy):
-            print(f"  found {ak.sum(outlier_mask_dy)} dy outliers in ({category},{spin},{mass})")
-        dy_values = dy_values[~outlier_mask_dy]
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1416,6 +1443,7 @@ def _write_datacard(
                                  tt_values=tt_values,
                                  uncertainty=uncertainty,
                                  signal_uncertainty=signal_uncertainty,
+                                 mode="min",
                                  n_bins=n_bins,
                                  x_min=x_min,
                                  x_max=x_max,)
@@ -1453,15 +1481,20 @@ def _write_datacard(
             sample_data[sample_name][variable_name]
             for sample_name in bkgd_sample_names 
         ], axis=0)
+        # get tt and dy values
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
         # apply axis limits and complain
-        outlier_mask_sig = (signal_values < x_min) | (signal_values > x_max)
-        if ak.any(outlier_mask_sig):
-            print(f"  found {ak.sum(outlier_mask_sig)} signal outliers in ({category},{spin},{mass})")
-        signal_values = signal_values[~outlier_mask_sig]
-        outlier_mask_bkgd = (bkgd_values < x_min) | (bkgd_values > x_max)
-        if ak.any(outlier_mask_bkgd):
-            print(f"  found {ak.sum(outlier_mask_bkgd)} bkgd outliers in ({category},{spin},{mass})")
-        bkgd_values = bkgd_values[~outlier_mask_bkgd]
+        signal_values = apply_outlier_mask(signal_values, "signal", x_min, x_max, category, spin, mass) 
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1475,6 +1508,8 @@ def _write_datacard(
             return (None, None)
         bin_edges = uncertainty_driven(signal_values=signal_values,
                                     bkgd_values=bkgd_values,
+                                    tt_values=tt_values,
+                                    dy_values=dy_values,
                                     bkgd_uncertainty=uncertainty,
                                     signal_uncertainty=signal_uncertainty,
                                     n_bins=n_bins,

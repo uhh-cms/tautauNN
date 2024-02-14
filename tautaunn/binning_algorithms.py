@@ -3,6 +3,8 @@ import numpy as np
 
 def uncertainty_driven(signal_values: ak.Array,
                        bkgd_values: ak.Array,
+                       dy_values: ak.Array,
+                       tt_values: ak.Array,
                        bkgd_uncertainty: float,
                        signal_uncertainty: float | None = None,
                        n_bins: int=10,
@@ -21,6 +23,8 @@ def uncertainty_driven(signal_values: ak.Array,
     signal_values = ak.sort(signal_values)
     # sort the bkgd values ascending
     bkgd_values = ak.sort(bkgd_values)
+    tt_values = ak.sort(tt_values)
+    dy_values = ak.sort(dy_values)
     bin_edges = [x_max,]
     inner_edge_num = 0
     while True:
@@ -35,13 +39,12 @@ def uncertainty_driven(signal_values: ak.Array,
             # close bin edges with x_min
             bin_edges.append(x_min)
             break
-        # calculate the min of 
-        min_bkgd = bkgd_values[int(-1*N_bkgd)]
-        min_sig = signal_values[int(-1*N_signal)]
-        # the rightmost bin should contain at least min_N events
-        next_edge = ak.min([min_sig, min_bkgd])
+        # the rightmost bin should contain at least min_N events and also at least one dy and tt event
+        next_edge = ak.min([signal_values[int(-1*N_signal)], bkgd_values[int(-1*N_bkgd)], tt_values[-1], dy_values[-1]])
         # update vals
         bkgd_values = bkgd_values[bkgd_values < next_edge]
+        tt_values = tt_values[tt_values < next_edge]
+        dy_values = dy_values[dy_values < next_edge]
         signal_values = signal_values[signal_values < next_edge]
         bin_edges.append(next_edge)
     bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
@@ -78,6 +81,8 @@ def flat_signal(signal_values: ak.Array,
 def flat_signal_ud(signal_values: ak.Array,
                    signal_weights: ak.Array,
                    bkgd_values: ak.Array,
+                   tt_values: ak.Array,
+                   dy_values: ak.Array,
                    uncertainty: float,
                    x_min: float=0.,
                    x_max: float=1.,
@@ -92,35 +97,41 @@ def flat_signal_ud(signal_values: ak.Array,
         signal_values = signal_values[sort_indices]
         signal_weights = signal_weights[sort_indices]
         cumulative_yield = np.cumsum(signal_weights)
+        tt_values = ak.sort(tt_values)
+        dy_values = ak.sort(dy_values)
         bin_edges = [x_max]
         # rightmost bin edge is derived by requiring at least N_min bkgd events in the last bin
-        bin_edges.append(bkgd_values[int(-1*N_min)])
+        # additionally check after each bin edge if there's at least one dy&tt event
+        bin_edges.append(ak.min([dy_values[-1], tt_values[-1], bkgd_values[int(-1*N_min)]]))
         # calculate the signal yield in that bin
         bin_yield = ak.sum(signal_weights[signal_values >= bin_edges[-1]])
         # update bkgd values
         bkgd_values = bkgd_values[bkgd_values < bin_edges[-1]]
+        dy_values = dy_values[dy_values < bin_edges[-1]]
+        tt_values = tt_values[tt_values < bin_edges[-1]]
         # now we can calculate the remaining bin edges
         for i in range(n_bins-2):
             # find the index such that the cumulative yield up to signal_values[index] is bin_yield*(i+1) 
             bin_index = np.searchsorted(cumulative_yield, bin_yield*(i+1))
-            # if this index is equal to the length of the signal array this means we can only create one bin
+            # if this index is equal to the length of the signal array the signal yield has been 'used up' 
             if bin_index == len(signal_values):
-                print(f"Reducing n_bins to 1 due to low signal statistics")
+                print(f"Reducing n_bins to {len(bin_edges-1)} due to low signal statistics")
+                # check if remaining cumulative yield is less than 80 percent of the bin_yield
+                mask = signal_values < bin_edges[-1]
+                if ak.sum(signal_weights[mask]) < (0.8 * bin_yield):
+                    # if so, merge the last two bins -> close with x_min
+                    bin_edges.pop()
                 break
-            # check bkgd stats for new bin (bkgd_values has been updated to exclude
-            # anything above the last bin edge already)
-            new_edge = signal_values[bin_index]
-            mask = bkgd_values >= new_edge 
-            if len(bkgd_values[mask]) < N_min:
-                new_edge = bkgd_values[int(-1*N_min)]
-            # check if remaining cumulative yield is less than half of the bin_yield
-            if ak.sum(signal_weights[bin_index:]) < (0.5 * bin_yield):
-                # if so, merge the last two bins -> close with x_min
-                break
-            bin_edges.append(signal_values[bin_index])
-            bkgd_values = bkgd_values[bkgd_values < bin_edges[-1]]
+            flat_s_edge = signal_values[bin_index]
+            # choose the min out of the following to fulfill all criteria
+            new_edge = ak.min([dy_values[-1], tt_values[-1], bkgd_values[int(-1*N_min)], flat_s_edge])
+            bin_edges.append(new_edge)
+            bkgd_values = bkgd_values[bkgd_values < new_edge] 
+            dy_values = dy_values[dy_values < new_edge] 
+            tt_values = tt_values[tt_values < new_edge] 
         bin_edges.append(x_min)
-        bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
+        epsilon = 5e-6
+        bin_edges = sorted(set(round(edge-epsilon, 5) for edge in bin_edges))
         return bin_edges
 
 def tt_dy_driven(signal_values: ak.Array,
@@ -128,6 +139,7 @@ def tt_dy_driven(signal_values: ak.Array,
                  dy_values: ak.Array,
                  uncertainty: float,
                  signal_uncertainty: float | None = None,
+                 mode: str = "min", # if min, the unct. requirement is fulfilled by both tt and dy 
                  n_bins: int=10,
                  x_min: float=0.,
                  x_max: float=1.,):
@@ -157,11 +169,15 @@ def tt_dy_driven(signal_values: ak.Array,
             # close bin edges with x_min
             bin_edges.append(x_min)
             break
-        # calculate the max of these two to make sure at least one of tt or dy has
-        # at least min_N events
+        # tt & dy requirements 
         min_tt = tt_values[int(-1*min_N)]
         min_dy = dy_values[int(-1*min_N)]
-        bkgd_driven = ak.max([min_tt, min_dy])
+        if mode == "min":
+            bkgd_driven = ak.min([min_tt, min_dy])
+        elif mode == "max":
+            bkgd_driven = ak.max([min_tt, min_dy])
+        else:
+            raise ValueError(f"mode must be either 'min' or 'max', got {mode}")
         # further require that the signal has at least min_N_signal events
         min_signal = signal_values[int(-1*min_N_signal)]
         next_edge = ak.min([bkgd_driven, min_signal])
@@ -170,7 +186,8 @@ def tt_dy_driven(signal_values: ak.Array,
         dy_values = dy_values[dy_values < next_edge]
         signal_values = signal_values[signal_values < next_edge]
     bin_edges.append(x_min)
-    bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
+    epsilon = 5e-6
+    bin_edges = sorted(set(round(edge-epsilon, 5) for edge in bin_edges))
     return bin_edges
 
 
