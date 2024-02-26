@@ -218,11 +218,14 @@ class CycleLR(tf.keras.callbacks.Callback):
             epoch_per_cycle: int = 5,
             policy: str = "triangular2",
             lr_range: list = [1e-5, 3e-3],
-            reduce_on_end: bool = False,
             invert: bool = True,
             monitor: str = "val_ce",
+            reduce_on_end: bool = False,
+            lr_patience: int = 10,
+            lr_factor: float = 0.1,
             mode: str = "min",
             es_patience: int = 10,
+            max_cycles: int = 10,
             min_delta: float = 1.0e-5,
             repeat_func: Callable[[ReduceLRAndStop, dict[str, Any]], None] | None = None,
             verbose: int = 0,
@@ -254,6 +257,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.policy = policy
         self.mode = mode
         self.es_patience = int(es_patience)
+        self.lr_patience = int(lr_patience)
         self.verbose = int(verbose)
         self.steps_per_epoch = steps_per_epoch
         self.epoch_per_cycle = epoch_per_cycle
@@ -263,6 +267,9 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.min_delta = abs(float(min_delta))
         self.step_size = self.cycle_width / self.half_life
         self.lr_min = self.lr_range[np.argmin(self.lr_range)]
+        self.repeat_func = repeat_func
+        self.max_cycles = max_cycles
+        self.lr_factor = float(lr_factor)
 
         # state
         self.history = {}
@@ -275,6 +282,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.cycle_step: int = 0
         self.cycle_count: int = 0
         self.reduce_lr_and_stop: bool = False
+        self.lr_counter: int = 0
 
         self._reset()
 
@@ -327,18 +335,20 @@ class CycleLR(tf.keras.callbacks.Callback):
         # for triangular policy, the LR range stays the same so nothing to be done here
         if self.cycle_count > 0:
             if self.policy == "triangular2":
-                if self.lr_range[np.argmax(self.lr_range)] == self.lr_min:
-                    # if the current max of lr_range is the minimum, we continue with the same cycle
-                    return
                 if np.max(self.lr_range) > 4 * np.min(self.lr_range):
                     # reduce the top of lr_range to half it's value
                     self.lr_range[np.argmax(self.lr_range)] /= 2.
                     self.cycle_width = self.lr_range[1] - self.lr_range[0]
                     self.step_size = self.cycle_width / self.half_life
-                    new_lr = self.calc_lr()
-                    tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+                    #new_lr = self.calc_lr()
+                    #tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
                 else:
                     return
+    
+    def _reset_for_fine_tuning(self) -> None:
+        self.wait = 0
+        self.repeat_counter = 0
+
 
     def on_epoch_end(self, epoch, logs):
 
@@ -394,12 +404,25 @@ class CycleLR(tf.keras.callbacks.Callback):
                     )
                 return
 
+            if self.cycle_count == self.max_cycles:
+                if self.reduce_on_end:
+                    self.reduce_lr_and_stop = True
+                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                    print(f"\n Current lr_range {self.lr_range}")
+                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                    # set the lr to the mid of the current lr range
+                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+                    self.wait = 0
+                    return
+
             if self.reduce_on_end:
                 # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
                 self.reduce_lr_and_stop = True
                 print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
                 print(f"\n Current lr_range {self.lr_range}")
                 print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                # set the lr to the mid of the current lr range
+                tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
                 self.wait = 0
                 return
 
@@ -412,8 +435,6 @@ class CycleLR(tf.keras.callbacks.Callback):
             logs = logs or {}
             logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
 
-            # set the lr to the mid of the current lr range
-            tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
             # do nothing when no metric is available yet
             value = self.get_monitor_value(logs)
             if value is None:
@@ -488,7 +509,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_epoch_begin(self, epoch, logs=None):
-        if self.cycle_step == 0:
+        if self.cycle_step == 0 and self.cycle_count > 0:
             print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
             print(f"\n Starting new cycle with lr_range: {self.lr_range}")
 

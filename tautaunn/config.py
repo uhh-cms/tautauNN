@@ -86,6 +86,13 @@ btag_wps = {
     },
 }
 
+metnomu_et_cuts = {
+    "2016APV": 160,
+    "2016": 160, 
+    "2017": 180, 
+    "2018": 180, 
+}
+
 masses = [
     250, 260, 270, 280, 300, 320, 350, 400, 450, 500, 550, 600, 650,
     700, 750, 800, 850, 900, 1000, 1250, 1500, 1750, 2000, 2500, 3000,
@@ -486,6 +493,17 @@ selection_sets = {
         ]
         for year, w in btag_wps.items()
     },
+    "new_skims_baseline":{
+        year: ["nleps == 0",
+               "(nbjetscand > 1 | isBoosted == 1)",
+               (
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 0)) | ",
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 1)) | ",
+               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]}) | isSingleTauTrigger ) & (pairType == 2))",
+               )
+               ]
+               for year in metnomu_et_cuts
+    }
 }
 
 klub_aliases: dict[str, str] = {

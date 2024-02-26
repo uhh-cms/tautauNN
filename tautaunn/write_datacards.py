@@ -39,6 +39,7 @@ import hist
 
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
+from tautaunn.binning_algorithms import uncertainty_driven, tt_dy_driven, flat_signal_ud
 
 
 #
@@ -265,6 +266,23 @@ stat_model_2018 = {
 categories = {}
 
 
+def apply_outlier_mask(values,
+                       name,
+                       x_min,
+                       x_max,
+                       category,
+                       spin,
+                       mass,
+                       return_mask=False):
+    outlier_mask = (values < x_min) | (values > x_max)
+    if ak.any(outlier_mask):
+        print(f"  found {ak.sum(outlier_mask)} {name} outliers in ({category},{spin},{mass})")
+    if return_mask:
+        return outlier_mask
+    else:
+        return values[~outlier_mask]
+
+
 def merge_dicts(*dicts):
     merged = dicts[0].__class__()
     for d in dicts:
@@ -331,6 +349,10 @@ def sel_trigger(array: ak.Array) -> ak.Array:
         (array.pairType == 2)
     )
 
+# adding in comments selectors for new skims
+# @selector(
+#     needs=["isLeptrigger", "isMETtriggerNoThresh", "metnomu_et", "isSingleTauTrigger"],
+ 
 
 @selector(
     needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
@@ -1019,7 +1041,10 @@ def write_datacards(
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     sample_names: list[str] | None = None,
-    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flat_s"),
+    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
+    uncertainty: float = 0.1,
+    signal_uncertainty: float = 0.5,
+    N_signal: int = 4,
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1142,6 +1167,8 @@ def write_datacards(
             output_pattern.format(year=year, spin=spin, mass=mass, category=category),
             variable_pattern.format(spin=spin, mass=mass),
             binning,
+            uncertainty,
+            signal_uncertainty,
             qcd_estimation,
             skip_existing,
         ))
@@ -1174,6 +1201,8 @@ def _write_datacard(
     output_name: str,
     variable_name: str,
     binning: tuple[int, float, float, str] | tuple[float, float, str],
+    uncertainty: float,
+    signal_uncertainty: float,
     qcd_estimation: bool,
     skip_existing: bool,
 ) -> tuple[str | None, str | None]:
@@ -1185,7 +1214,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal_distance", "flat_s"]
+    assert binning_algo in ["equal_distance", "flat_s", "ud", "ud_flats", "tt_dy_driven"]
 
     # prepare the output paths
     datacard_path = f"datacard_{output_name}.txt"
@@ -1284,6 +1313,208 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
+    elif binning_algo == "ud_flats": # uncertainty-driven flat_s
+        #if uncertainty is None:
+            #raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        # get the signal values
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain uncertainty_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        signal_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        signal_weights = ak.concatenate([
+            sample_data[sample_name].full_weight * signal_scale
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        # get the background values
+        bkgd_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
+        ]
+        bkgd_sample_names = set() 
+        for process in bkgd_process_names:
+            bkgd_sample_names |= set(sample_map[process])
+        bkgd_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in bkgd_sample_names 
+        ], axis=0)
+        # apply axis limits and complain
+        outlier_mask_sig = apply_outlier_mask(signal_values,
+                                              "signal",
+                                              x_min,
+                                              x_max,
+                                              category,
+                                              spin,
+                                              mass,
+                                              return_mask=True)
+        signal_values = signal_values[~outlier_mask_sig]
+        signal_weights = signal_weights[~outlier_mask_sig]
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
+        # get tt and dy values
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        # apply axis limits and complain
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        # the number of bins cannot be larger than the amount of unique signal values
+        _n_bins_max = len(set(signal_values))
+        if n_bins > _n_bins_max:
+            print(
+                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                f"due to limited signal statistics of process {signal_process_name}",
+            )
+            n_bins = _n_bins_max
+        if n_bins < 1:
+            print(f"  do not write datacard in ({category},{spin},{mass})")
+            return (None, None)
+        bin_edges = flat_signal_ud(signal_values=signal_values,
+                                   signal_weights=signal_weights,
+                                   bkgd_values=bkgd_values,
+                                   tt_values=tt_values,
+                                   dy_values=dy_values,
+                                   uncertainty=uncertainty,
+                                   x_min=x_min,
+                                   x_max=x_max,
+                                   n_bins=n_bins)
+    elif binning_algo == "tt_dy_driven":
+        if uncertainty is None:
+            raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        # get the signal values
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain tt_dy_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        signal_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        # get tt and dy values
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        # apply axis limits and complain
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        # the number of bins cannot be larger than the amount of unique signal values
+        _n_bins_max = len(set(signal_values))
+        if n_bins > _n_bins_max:
+            print(
+                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                f"due to limited signal statistics of process {signal_process_name}",
+            )
+            n_bins = _n_bins_max
+        if n_bins < 1:
+            print(f"  do not write datacard in ({category},{spin},{mass})")
+            return (None, None)
+        bin_edges = tt_dy_driven(signal_values=signal_values,
+                                 dy_values=dy_values,
+                                 tt_values=tt_values,
+                                 uncertainty=uncertainty,
+                                 signal_uncertainty=signal_uncertainty,
+                                 mode="min",
+                                 n_bins=n_bins,
+                                 x_min=x_min,
+                                 x_max=x_max,)
+    elif binning_algo == "ud": # uncertainty-driven
+        if uncertainty is None:
+            raise Exception("uncertainty must be specified for uncertainty-driven binning")
+        # get the signal values
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain uncertainty_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        signal_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        # get the background values
+        bkgd_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
+        ]
+        bkgd_sample_names = set() 
+        for process in bkgd_process_names:
+            bkgd_sample_names |= set(sample_map[process])
+        bkgd_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in bkgd_sample_names 
+        ], axis=0)
+        # get tt and dy values
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        # apply axis limits and complain
+        signal_values = apply_outlier_mask(signal_values, "signal", x_min, x_max, category, spin, mass) 
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        # the number of bins cannot be larger than the amount of unique signal values
+        _n_bins_max = len(set(signal_values))
+        if n_bins > _n_bins_max:
+            print(
+                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                f"due to limited signal statistics of process {signal_process_name}",
+            )
+            n_bins = _n_bins_max
+        if n_bins < 1:
+            print(f"  do not write datacard in ({category},{spin},{mass})")
+            return (None, None)
+        bin_edges = uncertainty_driven(signal_values=signal_values,
+                                    bkgd_values=bkgd_values,
+                                    tt_values=tt_values,
+                                    dy_values=dy_values,
+                                    bkgd_uncertainty=uncertainty,
+                                    signal_uncertainty=signal_uncertainty,
+                                    n_bins=n_bins,
+                                    x_min=x_min,
+                                    x_max=x_max,)
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
@@ -1293,7 +1524,7 @@ def _write_datacard(
         ]
         if len(signal_process_names) != 1:
             raise Exception(
-                "other none or too many signal processes found to obtain flat_s binning: "
+                "either none or too many signal processes found to obtain flat_s binning: "
                 f"{signal_process_names}",
             )
         signal_process_name = signal_process_names[0]
@@ -1344,6 +1575,7 @@ def _write_datacard(
                 f"due to edge value rounding in process {signal_process_name}",
             )
             n_bins = _n_bins_actual
+
 
     #
     # write shapes
@@ -1662,9 +1894,22 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal", "flats"),
+        choices=("equal", "flats", "ud_flats", "ud", "tt_dy_driven"),
         default="equal",
         help="binning strategy to use; default: equal",
+    )
+    parser.add_argument(
+        "--uncertainty",
+        "-u",
+        type=float,
+        default=None,
+        help="uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: None",
+    )
+    parser.add_argument(
+        "--signal-uncertainty",
+        type=float,
+        default=0.5,
+        help="signal uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: 0.5",
     )
     parser.add_argument(
         "--n-bins",
@@ -1748,12 +1993,14 @@ def main():
         skim_directory=args.skim_directory,
         eval_directory=args.eval_directory,
         output_directory=output_directory,
-        binning=(args.n_bins, 0.0, 1.0, "equal_distance" if args.binning == "equal" else "flat_s"),
+        binning=(args.n_bins, 0.0, 1.0, args.binning),
         qcd_estimation=not args.no_qcd,
         n_parallel_read=args.parallel_read,
         n_parallel_write=args.parallel_write,
         cache_directory=args.cache_directory,
         skip_existing=args.skip_existing,
+        uncertainty=args.uncertainty,
+        signal_uncertainty=args.signal_uncertainty,
     )
     print("writing datacards with arguments")
     pprint.pprint(kwargs)
