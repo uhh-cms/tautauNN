@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import functools
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -45,10 +46,15 @@ skim_dirs = {
 
 @functools.cache
 def get_all_skim_names() -> dict[str, list[str]]:
+    # note: VBF signals are skipped!
     return {
         year: [
             d[5:] for d in os.listdir(skim_dir)
-            if d.startswith("SKIM_") and os.path.isdir(os.path.join(skim_dir, d))
+            if (
+                d.startswith("SKIM_") and
+                not re.match(r"^.*VBF_(BulkGraviton|Graviton|Radion).*$", d) and
+                os.path.isdir(os.path.join(skim_dir, d))
+            )
         ]
         for year, skim_dir in skim_dirs.items()
     }
@@ -452,6 +458,7 @@ cat_feature_sets = {
 # selection sets can be strings, lists (which will be AND joined) or dictionaries with years mapping to strings or lists
 # (in the latter case, the training script will choose the year automatically based on the sample)
 selection_sets = {
+    # TODO: the isLeptrigger condition will change with the new trigger strategy!
     "baseline": (baseline_selection := [
         "nbjetscand > 1",
         "nleps == 0",

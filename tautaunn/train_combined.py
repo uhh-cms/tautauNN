@@ -905,6 +905,8 @@ def train(
                 # verify that the regression fade-in took place
                 reg_fader = fit_callbacks[-1]
                 if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
+                    print("regression fade-in did not take place yet, debug!")
+                    from IPython import embed; embed()
                     raise RuntimeError("regression fade-in did not take place yet")
 
                 # obtain updated hyper-parameters from the fine-tuning config

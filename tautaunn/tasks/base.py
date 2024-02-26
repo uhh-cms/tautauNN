@@ -57,6 +57,15 @@ class Task(law.Task):
 
         return params
 
+    @classmethod
+    def split_skim_name(cls, skim_name: str) -> tuple[str, str, str, cfg.Sample]:
+        m = re.match(rf"^({'|'.join(cfg.skim_dirs.keys())})_(.+)$", skim_name)
+        if not m:
+            raise ValueError(f"invalid skim name format '{skim_name}'")
+        skim_year = m.group(1)
+        sample_name = m.group(2)
+        return sample_name, skim_year
+
     def store_parts(self) -> law.util.InsertableDict:
         parts = law.util.InsertableDict()
 
@@ -339,15 +348,6 @@ class SkimTask(Task):
         description="the name and year of a skim in the format '<YEAR>_<SAMPLE>'; no default",
     )
 
-    @classmethod
-    def split_skim_name(cls, skim_name: str) -> tuple[str, str, str, cfg.Sample]:
-        m = re.match(rf"^({'|'.join(cfg.skim_dirs.keys())})_(.+)$", skim_name)
-        if not m:
-            raise ValueError(f"invalid skim name format '{skim_name}'")
-        skim_year = m.group(1)
-        sample_name = m.group(2)
-        return sample_name, skim_year
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -376,16 +376,8 @@ class MultiSkimTask(Task):
     skim_names = law.CSVParameter(
         default=("201*_*",),
         description="skim name pattern(s); default: 201*_*",
+        brace_expand=True,
     )
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-
-        # get all corresponding sample objects, creating new ones if they do not exist yet
-        self.samples = [
-            cfg.get_sample(skim_name, silent=True) or cfg.Sample(*SkimTask.split_skim_name(skim_name))
-            for skim_name in self.skim_names
-        ]
 
     @classmethod
     def resolve_param_values(cls, params: dict) -> dict:
@@ -401,15 +393,63 @@ class MultiSkimTask(Task):
 
         return params
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        # get all corresponding sample objects, creating new ones if they do not exist yet
+        self.samples = [
+            cfg.get_sample(skim_name, silent=True) or cfg.Sample(*SkimTask.split_skim_name(skim_name))
+            for skim_name in self.skim_names
+        ]
+
 
 class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow):
 
+    chunk_size = 0
+
+    # files known to be broken and should be skipped
+    broken_files = {
+        "2016_DY_amc_0j": [171],
+        "2016_DY_amc_1j": [150, 179],
+        "2016_GluGluHToTauTau": [24],
+        "2016_WJets_HT70To100": [49],
+        "2016_ST_tchannel_antitop": [1],
+        "2018_ggF_BulkGraviton_m750": [1],
+        "2018_ggF_BulkGraviton_m850": [3],
+        "2018_ggF_BulkGraviton_m900": [0],
+        "2018_ggF_Radion_m700": [3],
+        "2018_ggF_Radion_m750": [2],
+        "2018_GluGluHToTauTau": [10, 1, 3, 4, 5, 6, 7, 8],
+        "2018_SingleMuon_Run2018D": [110, 111, 113, 119, 121, 124],
+        "2018_ttHToTauTau": [29, 30, 31, 32, 34, 35],
+        "2018_WJets_HT100To200": [10, 12, 18, 1, 21, 22, 27, 2, 32, 35, 38, 39, 41, 46],
+        "2018_WminusHToTauTau": [16, 20],
+        "2018_WWW": [10, 12, 16, 8],
+        "2018_WWZ": [12, 7],
+        "2018_DY_amc_2j": [46],
+    }
+
     @law.workflow_property(attr="_skim_nums", cache=True)
     def skim_nums(self):
-        return sorted(
+        nums = sorted(
             int(os.path.basename(path)[7:-5])
             for path in glob.glob(os.path.join(self.skim_dir, self.sample.directory_name, "output_*.root"))
         )
+        # filter out broken files
+        broken = self.broken_files.get(self.sample.skim_name, [])
+        nums = [num for num in nums if num not in broken]
+        # complain if no skim files are found
+        if not nums:
+            raise Exception(f"no skim files found in '{os.path.join(self.skim_dir, self.sample.directory_name)}'")
+        return nums
 
     def create_branch_map(self):
-        return self.skim_nums
+        # create a branch map with one branch per skim file if the chunk size is 0
+        if self.chunk_size == 0:
+            return self.skim_nums
+        # otherwise, create chunks
+        return list(law.util.iter_chunks(self.skim_nums, self.chunk_size))
+
+    def htcondor_destination_info(self, info):
+        info["sample"] = self.sample.skim_name
+        return info

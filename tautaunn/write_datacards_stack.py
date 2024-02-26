@@ -16,15 +16,15 @@ from __future__ import annotations
 
 import os
 import gc
+import re
 import itertools
 import hashlib
 import pickle
 import tempfile
 import shutil
-import pprint
 from functools import reduce, wraps
 from operator import mul
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from fnmatch import fnmatch
 from multiprocessing import Pool as ProcessPool
 from multiprocessing.dummy import Pool as ThreadPool
@@ -61,7 +61,7 @@ klub_weight_columns = [
     "bTagweightReshape",
 ]
 klub_extra_columns = [
-    "DNNoutSM_kl_1",
+    # "DNNoutSM_kl_1",
 ]
 processes = OrderedDict({
     "TT": {
@@ -152,7 +152,7 @@ processes = OrderedDict({
         for spin, resonance in zip(spins, ["Radion", "*Graviton"])
     },
     "data_mu": {
-        "sample_patterns": ["SingleMuon_Run2017*", "Mu_201*"],
+        "sample_patterns": ["SingleMuon_Run201*", "Mu_201*"],
         "data": True,
         "channels": ["mutau"],
     },
@@ -162,7 +162,7 @@ processes = OrderedDict({
         "channels": ["etau"],
     },
     "data_tau": {
-        "sample_patterns": ["Tau_Run201*"],
+        "sample_patterns": ["Tau_Run201*", "Tau_201*"],
         "data": True,
         "channels": ["tautau"],
     },
@@ -177,7 +177,7 @@ processes = OrderedDict({
     #     "channels": ["mutau", "etau", "tautau"],
     # },
 })
-stat_model_common = {
+stat_model = {
     "BR_hbb": {
         "*_hbb": "0.9874/1.0124",
         "*_hbbhtt": "0.9874/1.0124",
@@ -247,22 +247,13 @@ stat_model_common = {
         "qqHH_*": "0.781/1.219",
     },
     "pu_reweight": {"*": "1.01"},
+    # year dependent (both the selection of nuisances and their effect depend on the year)
+    "lumi_13TeV_2016": {"*": {"2016*": "1.010"}},
+    "lumi_13TeV_2017": {"*": {"2017": "1.020"}},
+    "lumi_13TeV_2018": {"*": {"2018": "1.015"}},
+    "lumi_13TeV_1718": {"*": {"2017": "1.006", "2018": "1.002"}},
+    "lumi_13TeV_correlated": {"*": {"2016*": "1.006", "2017": "1.009", "2018": "1.020"}},
 }
-stat_model_2016 = {
-    "lumi_13TeV_2016": {"*": "1.010"},
-    "lumi_13TeV_correlated": {"*": "1.006"},
-}
-stat_model_2017 = {
-    "lumi_13TeV_2017": {"*": "1.020"},
-    "lumi_13TeV_correlated": {"*": "1.009"},
-    "lumi_13TeV_1718": {"*": "1.006"},
-}
-stat_model_2018 = {
-    "lumi_13TeV_2018": {"*": "1.015"},
-    "lumi_13TeV_correlated": {"*": "1.020"},
-    "lumi_13TeV_1718": {"*": "1.002"},
-}
-categories = {}
 
 
 def merge_dicts(*dicts):
@@ -270,6 +261,10 @@ def merge_dicts(*dicts):
     for d in dicts:
         merged.update(deepcopy(d))
     return merged
+
+
+def make_list(x):
+    return list(x) if isinstance(x, (list, tuple, set)) else [x]
 
 
 def selector(
@@ -313,7 +308,7 @@ def selector(
     needs=["pairType", "dau1_deepTauVsJet", "dau1_iso", "dau1_eleMVAiso"],
     str_repr="((pairType == 0) & (dau1_iso < 0.15)) | ((pairType == 1) & (dau1_eleMVAiso == 1)) | ((pairType == 2) & (dau1_deepTauVsJet >= 5))",  # noqa
 )
-def sel_iso_first_lep(array: ak.Array) -> ak.Array:
+def sel_iso_first_lep(array: ak.Array, **kwargs) -> ak.Array:
     return (
         ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
         ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
@@ -321,27 +316,37 @@ def sel_iso_first_lep(array: ak.Array) -> ak.Array:
     )
 
 
+# the isLeptrigger was needed only for etau and mutau at some point
+# @selector(
+#     needs=["pairType", "isLeptrigger"],
+#     str_repr="(((pairType == 0) | (pairType == 1)) & (isLeptrigger == 1)) | (pairType == 2)",
+# )
+# def sel_trigger(array: ak.Array, **kwargs) -> ak.Array:
+#     return (
+#         (((array.pairType == 0) | (array.pairType == 1)) & (array.isLeptrigger == 1)) |
+#         (array.pairType == 2)
+#     )
+
+
+# now it is needed for all channels
 @selector(
-    needs=["pairType", "isLeptrigger"],
-    str_repr="(((pairType == 0) | (pairType == 1)) & (isLeptrigger == 1)) | (pairType == 2)",
+    needs=["isLeptrigger"],
+    str_repr="isLeptrigger == 1",
 )
-def sel_trigger(array: ak.Array) -> ak.Array:
-    return (
-        (((array.pairType == 0) | (array.pairType == 1)) & (array.isLeptrigger == 1)) |
-        (array.pairType == 2)
-    )
+def sel_trigger(array: ak.Array, **kwargs) -> ak.Array:
+    return array.isLeptrigger == 1
 
 
 @selector(
     needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
     str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & (nbjetscand > 1)",  # noqa
 )
-def sel_baseline(array: ak.Array) -> ak.Array:
+def sel_baseline(array: ak.Array, **kwargs) -> ak.Array:
     return (
-        sel_trigger(array) &
+        sel_trigger(array, **kwargs) &
         # including cut on first isolated lepton to reduce memory footprint
         # (note that this is not called "baseline" anymore by KLUB standards)
-        sel_iso_first_lep(array) &
+        sel_iso_first_lep(array, **kwargs) &
         (array.nleps == 0) &
         (array.nbjetscand > 1)
     )
@@ -350,29 +355,29 @@ def sel_baseline(array: ak.Array) -> ak.Array:
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
-def sel_region_os_iso(array: ak.Array) -> ak.Array:
-    return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet >= 5)
+def sel_region_os_iso(array: ak.Array, **kwargs) -> ak.Array:
+    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 1) & (array.dau2_deepTauVsJet >= 5)
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
-def sel_region_ss_iso(array: ak.Array) -> ak.Array:
-    return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet >= 5)
+def sel_region_ss_iso(array: ak.Array, **kwargs) -> ak.Array:
+    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 0) & (array.dau2_deepTauVsJet >= 5)
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
-def sel_region_os_noniso(array: ak.Array) -> ak.Array:
-    return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+def sel_region_os_noniso(array: ak.Array, **kwargs) -> ak.Array:
+    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 1) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
-def sel_region_ss_noniso(array: ak.Array) -> ak.Array:
-    return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+def sel_region_ss_noniso(array: ak.Array, **kwargs) -> ak.Array:
+    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
 
 
 region_sels = [
@@ -386,22 +391,19 @@ region_sels = [
 region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
 
 
-def category_factory(
-    year: str,
-    channel: str,
-) -> dict[str, Callable]:
+def category_factory(channel: str) -> dict[str, Callable]:
     pair_type = channels[channel]
 
     @selector(needs=["pairType"])
-    def sel_channel(array: ak.Array) -> ak.Array:
+    def sel_channel(array: ak.Array, **kwargs) -> ak.Array:
         return array.pairType == pair_type
 
     @selector(needs=["isBoosted"])
-    def sel_boosted(array: ak.Array) -> ak.Array:
+    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return array.isBoosted == 1
 
     @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
-    def sel_vbf(array: ak.Array) -> ak.Array:
+    def sel_vbf(array: ak.Array, **kwargs) -> ak.Array:
         return (
             (array.isVBF == 1) &
             (array.VBFjj_mass > 500) &
@@ -409,50 +411,49 @@ def category_factory(
         )
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh1_resolved(array: ak.Array) -> ak.Array:
+    def sel_mhh1_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh2_resolved(array: ak.Array) -> ak.Array:
+    def sel_mhh2_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh3_resolved(array: ak.Array) -> ak.Array:
+    def sel_mhh3_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh4_resolved(array: ak.Array) -> ak.Array:
+    def sel_mhh4_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh5_resolved(array: ak.Array) -> ak.Array:
+    def sel_mhh5_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return array.HHKin_mass >= 1100
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh1_boosted(array: ak.Array) -> ak.Array:
+    def sel_mhh1_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh2_boosted(array: ak.Array) -> ak.Array:
+    def sel_mhh2_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh3_boosted(array: ak.Array) -> ak.Array:
+    def sel_mhh3_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
 
     @selector(needs=["HHKin_mass"])
-    def sel_mhh4_boosted(array: ak.Array) -> ak.Array:
+    def sel_mhh4_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return array.HHKin_mass >= 1100
 
     def sel_combinations(main_sel, sub_sels):
         def create(sub_sel):
             @selector(
                 needs=[main_sel, sub_sel],
-                year=year,
                 channel=channel,
             )
-            def func(array: ak.Array) -> ak.Array:
-                return main_sel(array) & sub_sel(array)
+            def func(array: ak.Array, **kwargs) -> ak.Array:
+                return main_sel(array, **kwargs) & sub_sel(array, **kwargs)
             return func
 
         return [create(sub_sel) for sub_sel in sub_sels]
@@ -472,77 +473,9 @@ def category_factory(
         sel_mhh4_boosted,
     ]
 
-    mdnn_columns = [
-        "mdnn__v5__kl1_c2v1_c31_vbf__dy",
-        "mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf",
-        "mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tt_fh",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tt_lep",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tth",
-    ]
-
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_ggf(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > tt)
-        )
-
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_vbf(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > tt)
-        )
-
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_tth(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > tt)
-        )
-
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_dy(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > tt)
-        )
-
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_tt(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__dy)
-        )
-
-    mdnn_sels = [
-        sel_mdnn_ggf,
-        sel_mdnn_vbf,
-        sel_mdnn_tth,
-        sel_mdnn_dy,
-        sel_mdnn_tt,
-    ]
-
-    mdnn_sel_names = ["ggf", "vbf", "tth", "dy", "tt"]
-
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_m(array: ak.Array) -> ak.Array:
+    def sel_btag_m(array: ak.Array, **kwargs) -> ak.Array:
+        year = kwargs["year"]
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor < btag_wps[year]["medium"])
@@ -552,35 +485,38 @@ def category_factory(
         )
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_mm(array: ak.Array) -> ak.Array:
+    def sel_btag_mm(array: ak.Array, **kwargs) -> ak.Array:
+        year = kwargs["year"]
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_ll(array: ak.Array) -> ak.Array:
+    def sel_btag_ll(array: ak.Array, **kwargs) -> ak.Array:
+        year = kwargs["year"]
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
         )
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_m_first(array: ak.Array) -> ak.Array:
+    def sel_btag_m_first(array: ak.Array, **kwargs) -> ak.Array:
+        year = kwargs["year"]
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
     @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_resolved(array: ak.Array) -> ak.Array:
+    def sel_mass_window_resolved(array: ak.Array, **kwargs) -> ak.Array:
         return (
             ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
             ((array.bH_mass_raw - 169.0) / 145.0)**2.0
         ) < 1.0
 
     @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
+    def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
             ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
             ((array.bH_mass_raw - 159.0) / 94.0)**2.0
@@ -588,89 +524,81 @@ def category_factory(
 
     @selector(
         needs=[sel_baseline, sel_channel],
-        year=year,
         channel=channel,
     )
-    def cat_baseline(array: ak.Array) -> ak.Array:
-        return sel_baseline(array) & sel_channel(array)
+    def cat_baseline(array: ak.Array, **kwargs) -> ak.Array:
+        return sel_baseline(array, **kwargs) & sel_channel(array, **kwargs)
 
     @selector(
         needs=[sel_baseline, sel_channel, sel_btag_m, sel_boosted, sel_vbf, sel_btag_m_first],
-        year=year,
         channel=channel,
     )
-    def cat_resolved_1b(array: ak.Array) -> ak.Array:
+    def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_m(array) &
-            ~sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_btag_m(array, **kwargs) &
+            ~sel_boosted(array, **kwargs) &
+            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
         )
 
     @selector(
         needs=[cat_resolved_1b, sel_mass_window_resolved],
-        year=year,
         channel=channel,
     )
-    def cat_resolved_1b_mwc(array: ak.Array) -> ak.Array:
-        return cat_resolved_1b(array) & sel_mass_window_resolved(array)
+    def cat_resolved_1b_mwc(array: ak.Array, **kwargs) -> ak.Array:
+        return cat_resolved_1b(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
 
     @selector(
         needs=[sel_baseline, sel_channel, sel_btag_mm, sel_boosted, sel_vbf, sel_btag_m_first],
-        year=year,
         channel=channel,
     )
-    def cat_resolved_2b(array: ak.Array) -> ak.Array:
+    def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_mm(array) &
-            ~sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_btag_mm(array, **kwargs) &
+            ~sel_boosted(array, **kwargs) &
+            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
         )
 
     @selector(
         needs=[cat_resolved_2b, sel_mass_window_resolved],
-        year=year,
         channel=channel,
     )
-    def cat_resolved_2b_mwc(array: ak.Array) -> ak.Array:
-        return cat_resolved_2b(array) & sel_mass_window_resolved(array)
+    def cat_resolved_2b_mwc(array: ak.Array, **kwargs) -> ak.Array:
+        return cat_resolved_2b(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
 
     @selector(
         needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-        year=year,
         channel=channel,
     )
-    def cat_boosted(array: ak.Array) -> ak.Array:
+    def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_ll(array) &
-            sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_btag_ll(array, **kwargs) &
+            sel_boosted(array, **kwargs) &
+            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
         )
 
     @selector(
         needs=[cat_boosted, sel_mass_window_resolved],
-        year=year,
         channel=channel,
     )
-    def cat_boosted_mwc(array: ak.Array) -> ak.Array:
-        return cat_boosted(array) & sel_mass_window_resolved(array)
+    def cat_boosted_mwc(array: ak.Array, **kwargs) -> ak.Array:
+        return cat_boosted(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
 
     @selector(
         needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-        year=year,
         channel=channel,
     )
-    def cat_vbf(array: ak.Array) -> ak.Array:
+    def cat_vbf(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            sel_baseline(array) &
-            sel_channel(array) &
-            sel_vbf(array) &
-            sel_btag_m_first(array)
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_vbf(array, **kwargs) &
+            sel_btag_m_first(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
@@ -696,11 +624,6 @@ def category_factory(
         **{
             f"boostedmhh{i + 1}": sel
             for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
-        },
-        # mdnn in vbf
-        **{
-            f"vbfmdnn{mdnn_sel_names[i]}": sel
-            for i, sel in enumerate(sel_combinations(cat_vbf, mdnn_sels))
         },
         # mass window cuts and mhh bins in resolved and boosted
         **{
@@ -730,41 +653,23 @@ def category_factory(
     return selectors
 
 
+categories = {}
 for channel in channels:
-    cats_2016APV = category_factory(year="2016APV", channel=channel)
-    for name, sel in cats_2016APV.items():
-        categories[f"2016APV_{channel}_{name}"] = {
+    for name, sel in category_factory(channel=channel).items():
+        # categories per year
+        for year in ["2016", "2016APV", "2017", "2018"]:
+            categories[f"{year}_{channel}_{name}"] = {
+                "selection": sel,
+                "n_bins": 10,
+                "year": year,
+                **sel.extra,
+            }
+
+        # combined categories
+        categories[f"run2_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
-            "scale": luminosities[sel.extra["year"]],
-            "stat_model": merge_dicts(stat_model_common, stat_model_2016),
-            **sel.extra,
-        }
-    cats_2016 = category_factory(year="2016", channel=channel)
-    for name, sel in cats_2016.items():
-        categories[f"2016_{channel}_{name}"] = {
-            "selection": sel,
-            "n_bins": 10,
-            "scale": luminosities[sel.extra["year"]],
-            "stat_model": merge_dicts(stat_model_common, stat_model_2016),
-            **sel.extra,
-        }
-    cats_2017 = category_factory(year="2017", channel=channel)
-    for name, sel in cats_2017.items():
-        categories[f"2017_{channel}_{name}"] = {
-            "selection": sel,
-            "n_bins": 10,
-            "scale": luminosities[sel.extra["year"]],
-            "stat_model": merge_dicts(stat_model_common, stat_model_2017),
-            **sel.extra,
-        }
-    cats_2018 = category_factory(year="2018", channel=channel)
-    for name, sel in cats_2018.items():
-        categories[f"2018_{channel}_{name}"] = {
-            "selection": sel,
-            "n_bins": 10,
-            "scale": luminosities[sel.extra["year"]],
-            "stat_model": merge_dicts(stat_model_common, stat_model_2018),
+            "year": None,
             **sel.extra,
         }
 
@@ -831,7 +736,10 @@ def load_dnn_file(
 
     # load the array
     f = uproot.open(os.path.join(eval_directory, f"SKIM_{sample_name}", file_name))
-    array = f["evaluation"].arrays(filter_name=expressions)
+    try:
+        array = f["evaluation"].arrays(filter_name=expressions)
+    except uproot.exceptions.KeyInFileError:
+        array = f["hbtres"].arrays(filter_name=expressions)
 
     return array
 
@@ -929,13 +837,14 @@ def get_cache_path(
 def load_sample_data(
     skim_directory: str,
     eval_directory: str,
+    year: str,
     sample_name: str,
     selection_columns: list[str] | None = None,
     dnn_output_columns: list[str] | None = None,
     n_parallel: int = 4,
     cache_directory: str = "",
 ) -> ak.Array:
-    print(f"loading sample {sample_name} ...")
+    print(f"loading sample {sample_name} ({year}) ...")
 
     # load from cache?
     cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, sample_name, dnn_output_columns or [])
@@ -948,7 +857,7 @@ def load_sample_data(
         # determine file names and build arguments for the parallel load implementation
         load_args = [
             (skim_directory, eval_directory, sample_name, file_name, dnn_output_columns or [])
-            for file_name in os.listdir(os.path.join(skim_directory, f"SKIM_{sample_name}"))
+            for file_name in os.listdir(os.path.join(eval_directory, f"SKIM_{sample_name}"))
             if fnmatch(file_name, "output_*.root")
         ]
 
@@ -990,7 +899,6 @@ def load_sample_data(
 
 
 def expand_categories(category: str | Sequence[str]) -> list[str]:
-    make_list = lambda x: list(x) if isinstance(x, (list, tuple, set)) else [x]
     _categories = []
     for pattern in make_list(category):
         pattern_matched = False
@@ -1013,12 +921,11 @@ def write_datacards(
     spin: int | Sequence[int],
     mass: int | Sequence[int],
     category: str | Sequence[str],
-    skim_directory: str,
-    eval_directory: str,
+    skim_directories: dict[tuple[str, str], list[str] | None],
+    eval_directories: dict[str, str],
     output_directory: str,
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
-    sample_names: list[str] | None = None,
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flat_s"),
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
@@ -1027,10 +934,19 @@ def write_datacards(
     skip_existing: bool = False,
 ) -> list[tuple[str, str]]:
     # cast arguments to lists
-    make_list = lambda x: list(x) if isinstance(x, (list, tuple, set)) else [x]
     _spins = make_list(spin)
     _masses = make_list(mass)
     _categories = expand_categories(category)
+
+    # split skim directories and sample names to filter and actual directories, both mapped to years
+    filter_sample_names = {
+        year: sample_names or []
+        for (year, _), sample_names in skim_directories.items()
+    }
+    skim_directories = {
+        year: skim_dir
+        for year, skim_dir in skim_directories
+    }
 
     # input checks
     for spin in _spins:
@@ -1039,31 +955,35 @@ def write_datacards(
         assert mass in masses
     for category in _categories:
         assert category in categories
+    for year in skim_directories:
+        assert year in eval_directories
 
-    # get the year
-    year = categories[category]["year"]
-
-    # get a list of all sample names in the skim directory
-    all_sample_names = [
-        dir_name[5:]
-        for dir_name in os.listdir(skim_directory)
-        if (
-            os.path.isdir(os.path.join(skim_directory, dir_name)) and
-            dir_name.startswith("SKIM_")
-        )
-    ]
+    # get a list of all sample names per skim directory
+    all_sample_names = {
+        year: [
+            dir_name[5:]
+            for dir_name in os.listdir(skim_dir)
+            if (
+                os.path.isdir(os.path.join(skim_dir, dir_name)) and
+                dir_name.startswith("SKIM_")
+            )
+        ]
+        for year, skim_dir in skim_directories.items()
+    }
 
     # fiter by given sample names
-    if sample_names:
-        all_sample_names = [
+    all_sample_names = {
+        year: [
             sample_name
-            for sample_name in all_sample_names
-            if any(fnmatch(sample_name, pattern) for pattern in sample_names)
+            for sample_name in sample_names
+            if any(fnmatch(sample_name, pattern) for pattern in filter_sample_names[year] or ["*"])
         ]
+        for year, sample_names in all_sample_names.items()
+    }
 
     # get a mapping of process name to sample names
-    sample_map = {}
-    matched_sample_names = []
+    sample_map: dict[str, dict[str, list]] = defaultdict(dict)
+    all_matched_sample_names: dict[str, list[str]] = defaultdict(list)
     for process_name, process_data in processes.items():
         # skip signals that do not match any spin or mass
         if (
@@ -1073,18 +993,19 @@ def write_datacards(
             continue
 
         # match sample names
-        _sample_names = []
-        for sample_name in all_sample_names:
-            if any(fnmatch(sample_name, pattern) for pattern in process_data["sample_patterns"]):
-                if sample_name in matched_sample_names:
-                    raise Exception(f"sample '{sample_name}' already matched by a previous process")
-                matched_sample_names.append(sample_name)
-                _sample_names.append(sample_name)
+        for year, _sample_names in all_sample_names.items():
+            matched_sample_names = []
+            for sample_name in _sample_names:
+                if any(fnmatch(sample_name, pattern) for pattern in process_data["sample_patterns"]):
+                    if sample_name in matched_sample_names:
+                        raise Exception(f"sample '{sample_name}' already matched by a previous process")
+                    all_matched_sample_names[year].append(sample_name)
+                    matched_sample_names.append(sample_name)
+                    continue
+            if not matched_sample_names:
+                print(f"process '{process_name}' has no matched samples, skipping")
                 continue
-        if not _sample_names:
-            print(f"process '{process_name}' has no matched samples, skipping")
-            continue
-        sample_map[process_name] = _sample_names
+            sample_map[year][process_name] = matched_sample_names
 
     # ensure that the output directory exists
     output_directory = os.path.expandvars(os.path.expanduser(output_directory))
@@ -1098,36 +1019,28 @@ def write_datacards(
 
     # prepare dnn output columns
     dnn_output_columns = [
-        "DNNoutSM_kl_1",
-        "dnn_output",
+        variable_pattern.format(spin=spin, mass=mass)
+        for spin, mass in itertools.product(_spins, _masses)
     ]
-    for spin, mass in itertools.product(_spins, _masses):
-        dnn_output_columns.append(variable_pattern.format(spin=spin, mass=mass))
 
-    # prepare loading data
-    print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
-    data_gen = (
-        load_sample_data(
-            skim_directory,
-            eval_directory,
-            sample_name,
-            selection_columns,
-            dnn_output_columns,
-            n_parallel=n_parallel_read,
-            cache_directory=cache_directory,
-        )
-        for sample_name in matched_sample_names
-    )
-
-    # for debugging: just load data and free memory
-    # print("just load data and exit")
-    # for _ in data_gen:
-    #     gc.collect()
-    # print("done loading data, exit")
-    # return
-
-    # actually load
-    sample_data = dict(zip(matched_sample_names, data_gen))
+    # loading data
+    print(f"going to load {sum(map(len, all_matched_sample_names.values()))} samples")
+    sample_data = {
+        year: {
+            sample_name: load_sample_data(
+                skim_directories[year],
+                eval_directories[year],
+                year,
+                sample_name,
+                selection_columns,
+                dnn_output_columns,
+                n_parallel=n_parallel_read,
+                cache_directory=cache_directory,
+            )
+            for sample_name in sample_names
+        }
+        for year, sample_names in all_matched_sample_names.items()
+    }
 
     # write each spin, mass and category combination
     datacard_args = []
@@ -1139,7 +1052,7 @@ def write_datacards(
             mass,
             category,
             output_directory,
-            output_pattern.format(year=year, spin=spin, mass=mass, category=category),
+            output_pattern.format(spin=spin, mass=mass, category=category),
             variable_pattern.format(spin=spin, mass=mass),
             binning,
             qcd_estimation,
@@ -1165,8 +1078,8 @@ def write_datacards(
 
 
 def _write_datacard(
-    sample_map: dict[str, list[str]],
-    sample_data: dict[str, ak.Array],
+    sample_map: dict[str, dict[str, list[str]]],
+    sample_data: dict[str, dict[str, ak.Array]],
     spin: int,
     mass: int,
     category: str,
@@ -1177,15 +1090,23 @@ def _write_datacard(
     qcd_estimation: bool,
     skip_existing: bool,
 ) -> tuple[str | None, str | None]:
+    cat_data = categories[category]
+
     # input checks
     assert len(binning) in [3, 4]
     if len(binning) == 3:
         x_min, x_max, binning_algo = binning
-        n_bins = categories[category]["n_bins"]
+        n_bins = cat_data["n_bins"]
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
     assert binning_algo in ["equal_distance", "flat_s"]
+
+    # check if there is data provided for this category if it is bound to a year
+    assert cat_data["year"] in list(luminosities.keys()) + [None]
+    if cat_data["year"] is not None and not any(cat_data["year"] == year for year in sample_data):
+        print(f"category {category} is bound to a year but no data was provided for that year")
+        return (None, None)
 
     # prepare the output paths
     datacard_path = f"datacard_{output_name}.txt"
@@ -1219,92 +1140,123 @@ def _write_datacard(
         "syst_comb": "$CHANNEL/$PROCESS__$SYSTEMATIC",
     }
 
-    # remove signal processes from the sample map that do not correspond to spin or mass
-    sample_map = {
-        process_name: sample_names
-        for process_name, sample_names in sample_map.items()
-        if (
-            # background or data
-            not processes[process_name].get("signal", False) or
-            # matching signal
-            (processes[process_name]["spin"] == spin and processes[process_name]["mass"] == mass)
-        )
-    }
+    # reduce the sample_map in three steps:
+    # - when the category is bound to a year, drop other years
+    # - remove signal processes from the sample map that do not correspond to spin or mass
+    # - remove data processes that are not meant to be included for the channel
+    reduced_sample_map = defaultdict(dict)
+    for year, _map in sample_map.items():
+        if cat_data["year"] not in (None, year):
+            continue
 
-    # remove data processes from the sample map that are not meant to be included for the channel
-    sample_map = {
-        process_name: sample_names
-        for process_name, sample_names in sample_map.items()
-        if (
-            # signal or background
-            not processes[process_name].get("data", False) or
-            # data with matching channel
-            categories[category]["channel"] in processes[process_name]["channels"]
-        )
+        for process_name, sample_names in _map.items():
+            # skip some signals
+            if (
+                processes[process_name].get("signal", False) and
+                (processes[process_name]["spin"] != spin or processes[process_name]["mass"] != mass)
+            ):
+                continue
+            # skip some data
+            if (
+                processes[process_name].get("data", False) and
+                cat_data["channel"] not in processes[process_name]["channels"]
+            ):
+                continue
+            reduced_sample_map[year][process_name] = sample_names
+    sample_map = reduced_sample_map
+
+    # drop years from sample_data if not needed
+    sample_data = {
+        year: data
+        for year, data in sample_data.items()
+        if year in sample_map
     }
 
     # reversed map to assign processes to samples
-    sample_processes = {}
-    for process_name, sample_names in sample_map.items():
-        sample_processes.update({sample_name: process_name for sample_name in sample_names})
+    sample_processes = defaultdict(dict)
+    for year, _map in sample_map.items():
+        for process_name, sample_names in _map.items():
+            sample_processes[year].update({sample_name: process_name for sample_name in sample_names})
 
     # apply qcd estimation category selections
     if qcd_estimation:
         qcd_data = {
             region_name: {
-                sample_name: sample_data[sample_name][categories[qcd_category]["selection"](sample_data[sample_name])]
-                for sample_name, process_name in sample_processes.items()
-                # skip signal
-                if not processes[process_name].get("signal", False)
+                year: {
+                    sample_name: data[sample_name][categories[qcd_category]["selection"](data[sample_name], year=year)]
+                    for sample_name, process_name in sample_processes[year].items()
+                    # skip signal
+                    if not processes[process_name].get("signal", False)
+                }
+                for year, data in sample_data.items()
             }
             for region_name, qcd_category in qcd_categories.items()
         }
 
     # apply the category selection to sample data
     sample_data = {
-        sample_name: sample_data[sample_name][categories[category]["selection"](sample_data[sample_name])]
-        for sample_name, process_name in sample_processes.items()
-        # skip data for now as were are using fake data from background-only below
-        if not processes[process_name].get("data", False)
+        year: {
+            sample_name: data[sample_name][cat_data["selection"](data[sample_name], year=year)]
+            for sample_name, process_name in sample_processes[year].items()
+            # skip data for now as were are using fake data from background-only below
+            if not processes[process_name].get("data", False)
+        }
+        for year, data in sample_data.items()
     }
 
     # complain when nan's were found
-    for sample_name, data in sample_data.items():
-        n_nonfinite = np.sum(~np.isfinite(data[variable_name]))
-        if n_nonfinite:
-            print(
-                f"{n_nonfinite} / {len(data)} of events in {sample_name} after {category} "
-                "selection are non-finite (nan or inf)",
-            )
+    for year, data in sample_data.items():
+        for sample_name, _data in data.items():
+            n_nonfinite = np.sum(~np.isfinite(_data[variable_name]))
+            if n_nonfinite:
+                print(
+                    f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
+                    "selection are non-finite (nan or inf)",
+                )
 
     # prepare the scaling values, signal is scaled to 1pb * br
-    scale = categories[category]["scale"]
-    signal_scale = scale * br_hh_bbtt
+    # scale = cat_data["scale"]
+    # signal_scale = scale * br_hh_bbtt
 
     # derive bin edges
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
     else:  # flat_s
         # get the signal values and weights
-        signal_process_names = [
-            process_name
-            for process_name in sample_map
-            if processes[process_name].get("signal", False)
-        ]
-        if len(signal_process_names) != 1:
-            raise Exception(
-                "other none or too many signal processes found to obtain flat_s binning: "
-                f"{signal_process_names}",
-            )
-        signal_process_name = signal_process_names[0]
-        signal_values = ak.concatenate([
-            sample_data[sample_name][variable_name]
-            for sample_name in sample_map[signal_process_name]
-        ], axis=0)
-        signal_weights = ak.concatenate([
-            sample_data[sample_name].full_weight * signal_scale
-            for sample_name in sample_map[signal_process_name]
-        ], axis=0)
+        signal_process_names = {
+            year: [
+                process_name
+                for process_name in _map
+                if processes[process_name].get("signal", False)
+            ]
+            for year, _map in sample_map.items()
+        }
+        for year, names in signal_process_names.items():
+            if len(names) != 1:
+                raise Exception(
+                    f"either none or too many signal processes found for year {year} to obtain flat_s binning: {names}",
+                )
+        signal_process_name = {year: names[0] for year, names in signal_process_names.items()}
+        signal_values = ak.concatenate(
+            sum(
+                ([
+                    data[sample_name][variable_name]
+                    for sample_name in sample_map[year][signal_process_name[year]]
+                ] for year, data in sample_data.items()),
+                [],
+            ),
+            axis=0,
+        )
+        signal_weights = ak.concatenate(
+            sum(
+                ([
+                    data[sample_name].full_weight * luminosities[year] * br_hh_bbtt
+                    for sample_name in sample_map[year][signal_process_name[year]]
+                ] for year, data in sample_data.items()),
+                [],
+            ),
+            axis=0,
+        )
         # apply axis limits and complain
         outlier_mask = (signal_values < x_min) | (signal_values > x_max)
         if ak.any(outlier_mask):
@@ -1349,61 +1301,73 @@ def _write_datacard(
     # write shapes
     #
 
+    # transpose the sample_map so that we have a "process -> year -> sample_names" mapping
+    process_map = defaultdict(dict)
+    for year, _map in sample_map.items():
+        for process_name, sample_names in _map.items():
+            process_map[process_name][year] = sample_names
+
     # fill histograms
     # (add zero bin offsets with 1e-5 and 100% error)
-    hists = {}
-    for process_name, sample_names in sample_map.items():
+    hists: dict[tuple[name, name], hist.Hist] = {}
+    for process_name, _map in process_map.items():
         # skip data
         if processes[process_name].get("data", False):
             continue
 
-        # create and fill the histogram
-        h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
-        _scale = signal_scale if processes[process_name].get("signal", False) else scale
-        for sample_name in sample_names:
-            h.fill(**{
-                variable_name: sample_data[sample_name][variable_name],
-                "weight": sample_data[sample_name].full_weight * _scale,
-            })
+        for year, sample_names in _map.items():
+            # create and fill the histogram
+            h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+            scale = luminosities[year]
+            if processes[process_name].get("signal", False):
+                scale *= br_hh_bbtt
+            for sample_name in sample_names:
+                h.fill(**{
+                    variable_name: sample_data[year][sample_name][variable_name],
+                    "weight": sample_data[year][sample_name].full_weight * scale,
+                })
 
-        # add epsilon values at positions where bin contents are not positive
-        nom = h.view().value
-        mask = nom <= 0
-        nom[mask] = 1.0e-5
-        h.view().variance[mask] = 1.0e-5
+            # add epsilon values at positions where bin contents are not positive
+            nom = h.view().value
+            mask = nom <= 0
+            nom[mask] = 1.0e-5
+            h.view().variance[mask] = 1.0e-5
 
-        # store it
-        hists[process_name] = h
+            # store it
+            hists[(year, process_name)] = h
 
     # actual qcd estimation
     if qcd_estimation:
-        qcd_hists = {}
+        qcd_hists: dict[str, dict[str, hist.Hist]] = defaultdict(dict)
         for region_name, _qcd_data in qcd_data.items():
-            # create a histogram that is filled with both data and negative background
-            h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
-            for sample_name, data in _qcd_data.items():
-                weight = 1
-                if not processes[sample_processes[sample_name]].get("data", False):
-                    weight = -1 * data.full_weight * scale
-                h.fill(**{variable_name: data[variable_name], "weight": weight})
-            qcd_hists[region_name] = h
+            for year, data in _qcd_data.items():
+                # create a histogram that is filled with both data and negative background
+                h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+                for sample_name, _data in data.items():
+                    weight = 1
+                    if not processes[sample_processes[year][sample_name]].get("data", False):
+                        weight = -1 * _data.full_weight * scale
+                    h.fill(**{variable_name: _data[variable_name], "weight": weight})
+                qcd_hists[year][region_name] = h
 
-        # ABCD method
-        # take shape from region "C"
-        h_qcd = qcd_hists["os_noniso"]
-        # get the intgral and its uncertainty from region "B"
-        num_val = qcd_hists["ss_iso"].sum().value
-        num_var = qcd_hists["ss_iso"].sum().variance
-        # get the intgral and its uncertainty from region "D"
-        denom_val = qcd_hists["ss_noniso"].sum().value
-        denom_var = qcd_hists["ss_noniso"].sum().variance
-        # stop if any yield is negative (due to more MC than data)
-        if num_val <= 0 or denom_val <= 0:
-            print(
-                f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
-                f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
-            )
-        else:
+        # ABCD method per year
+        for year, _qcd_hists in qcd_hists.items():
+            # take shape from region "C"
+            h_qcd = _qcd_hists["os_noniso"]
+            # get the intgral and its uncertainty from region "B"
+            num_val = _qcd_hists["ss_iso"].sum().value
+            num_var = _qcd_hists["ss_iso"].sum().variance
+            # get the intgral and its uncertainty from region "D"
+            denom_val = _qcd_hists["ss_noniso"].sum().value
+            denom_var = _qcd_hists["ss_noniso"].sum().variance
+            # stop if any yield is negative (due to more MC than data)
+            if num_val <= 0 or denom_val <= 0:
+                print(
+                    f"  skipping QCD estimation in ({category},{year},{spin},{mass}) due to negative yields "
+                    f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
+                )
+                qcd_estimation = False
+                break
             # create the normalization correction including uncorrelated uncertainty propagation
             corr_val = num_val / denom_val
             corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
@@ -1416,16 +1380,16 @@ def _write_datacard(
             # set negative values to epsilon values but keep potentially large uncertainties
             val[val <= 0] = 1.0e-5
             # store it
-            hists["QCD"] = h_qcd
+            hists[(year, "QCD")] = h_qcd
 
     # fake data using the sum of all backgrounds
-    hists["data_obs"] = (
+    hists[(None, "data_obs")] = (
         hist.Hist.new
         .Variable(bin_edges, name=variable_name)
         .Double()
     )
-    data_values = hists["data_obs"].view()
-    for process_name, h in hists.items():
+    data_values = hists[(None, "data_obs")].view()
+    for (year, process_name), h in hists.items():
         # add backgrounds
         if process_name != "data_obs" and not processes[process_name].get("signal", False):
             data_values += h.view().value
@@ -1433,16 +1397,28 @@ def _write_datacard(
 
     # gather rates
     rates = {
-        process_name: (h.sum() if process_name == "data_obs" else h.sum().value)
-        for process_name, h in hists.items()
+        (year, process_name): (h.sum() if process_name == "data_obs" else h.sum().value)
+        for (year, process_name), h in hists.items()
+    }
+
+    # create process names joining raw names and years
+    full_process_names = {
+        (year, process_name): (
+            "{1}_{0}{2}".format(year, *m.groups())
+            if (m := re.match(r"^(.+)(_h[^_]+)$", process_name))
+            else f"{process_name}_{year}"
+        )
+        for year, process_name in hists
+        if process_name != "data_obs"
     }
 
     # save nominal shapes
     # note: since /eos does not like write streams, first write to a tmp file and then copy
     def write(path):
         root_file = uproot.recreate(path)
-        for process_name, h in hists.items():
-            shape_name = shape_patterns["nom"].format(category=category, process=process_name)
+        for (year, process_name), h in hists.items():
+            full_name = process_name if year is None else full_process_names[(year, process_name)]
+            shape_name = shape_patterns["nom"].format(category=category, process=full_name)
             root_file[shape_name] = h
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
@@ -1475,37 +1451,52 @@ def _write_datacard(
     # observations
     blocks["observations"] = [
         ("bin", f"cat_{category}"),
-        ("observation", int(round(rates["data_obs"]))),
+        ("observation", int(round(rates[(None, "data_obs")]))),
     ]
     separators.add("observations")
 
     # expected rates
-    exp_processes = sorted(
+    exp_processes: list[tuple[str, str, str]] = sorted(
         [
-            process_name
-            for process_name in sample_map
+            (year, process_name, full_name)
+            for (year, process_name), full_name in full_process_names.items()
             if not processes[process_name].get("data", False)
         ],
-        key=lambda p: processes[p]["id"],
+        key=lambda p: processes[p[1]]["id"],
     )
-    if "QCD" in hists and "QCD" not in exp_processes:
-        exp_processes.append("QCD")
+    process_ids = {}
+    last_signal_id, last_background_id = 1, 0
+    for year, process_name, _ in exp_processes:
+        if processes[process_name].get("signal", False):
+            last_signal_id -= 1
+            process_id = last_signal_id
+        else:
+            last_background_id += 1
+            process_id = last_background_id
+        process_ids[(year, process_name)] = process_id
     blocks["rates"] = [
         ("bin", *([f"cat_{category}"] * len(exp_processes))),
-        ("process", *exp_processes),
-        ("process", *[processes[process_name]["id"] for process_name in exp_processes]),
-        ("rate", *[f"{rates[process_name]:.4f}" for process_name in exp_processes]),
+        ("process", *(full_name for _, _, full_name in exp_processes)),
+        ("process", *(process_ids[(year, process_name)] for year, process_name, _ in exp_processes)),
+        ("rate", *[f"{rates[(year, process_name)]:.4f}" for year, process_name, _ in exp_processes]),
     ]
     separators.add("rates")
 
     # tabular-style parameters
-    stat_model = categories[category]["stat_model"]
     blocks["tabular_parameters"] = []
     added_param_names = []
     for param_name, effects in stat_model.items():
         effect_line = []
-        for process_name in exp_processes:
+        for year, process_name, full_name in exp_processes:
             for process_pattern, effect in effects.items():
+                if isinstance(effect, dict):
+                    # the effect is a dict year_pattern -> effect
+                    for year_pattern, _effect in effect.items():
+                        if fnmatch(year, year_pattern):
+                            effect = _effect
+                            break
+                    else:
+                        effect = "-"
                 if fnmatch(process_name, process_pattern):
                     break
             else:
@@ -1622,185 +1613,3 @@ def align_rates_and_parameters(
     lines = align_lines(rates + parameters)
 
     return lines[:n_rate_lines], lines[n_rate_lines:]
-
-
-def main():
-    from argparse import ArgumentParser
-
-    csv = lambda s: [_s.strip() for _s in s.strip().split(",")]
-    csv_int = lambda s: list(map(int, csv(s)))
-
-    parser = ArgumentParser(
-        description="write datacards for the hh->bbtt analysis",
-    )
-    parser.add_argument(
-        "--spin",
-        "-s",
-        type=csv_int,
-        default="0",
-        help="comma-separated list of spins to use; default: 0",
-    )
-    parser.add_argument(
-        "--mass",
-        "-m",
-        type=csv_int,
-        default=",".join(map(str, masses)),
-        help="comma-separated list of masses to use; default: all masses",
-    )
-    parser.add_argument(
-        "--categories",
-        "-c",
-        type=csv,
-        default=(default_cats := "2017_*tau_resolved?b_os_iso,2017_*tau_boosted_os_iso,2017_*tau_vbf_os_iso"),
-        help=f"comma separated list of categories or patterns; default: {default_cats}",
-    )
-    parser.add_argument(
-        "--no-qcd",
-        action="store_true",
-        help="disable the QCD estimation; default: False",
-    )
-    parser.add_argument(
-        "--binning",
-        "-b",
-        choices=("equal", "flats"),
-        default="equal",
-        help="binning strategy to use; default: equal",
-    )
-    parser.add_argument(
-        "--n-bins",
-        "-n",
-        type=int,
-        default=10,
-        help="number of bins to use; default: 10",
-    )
-    parser.add_argument(
-        "--skim-directory",
-        default=os.environ["TN_SKIMS_2017"],
-        help="dnn evaluation directory; default: $TN_SKIMS_2017",
-    )
-    parser.add_argument(
-        "--eval-directory",
-        default="",
-        help="dnn evaluation directory; default: empty",
-    )
-    parser.add_argument(
-        "--variable",
-        "-v",
-        default="DNNoutSM_kl_1",
-        help="variable to use; can also contain '{spin}' and '{mass}'; default: DNNoutSM_kl_1",
-    )
-    parser.add_argument(
-        "--output-path",
-        "-o",
-        default=(default_path := os.getenv("DC_OUTPUT_PATH", "/eos/user/m/mrieger/hhres_dnn_datacards/cards")),
-        help=f"output directory; default: {default_path}",
-    )
-    parser.add_argument(
-        "--output-label",
-        "-l",
-        default=(default_label := "{binning}{n_bins}_{qcd_str}"),
-        help="output label (name of last directory); can also contain '{binning}', '{n_bins}', '{qcd_str}'; "
-        f"default: {default_label}",
-    )
-    parser.add_argument(
-        "--cache-directory",
-        default=(default_cache := os.getenv("DC_CACHE_PATH", "/eos/user/m/mrieger/hhres_dnn_datacards/cache")),
-        help=f"cache directory; default: {default_cache}",
-    )
-    parser.add_argument(
-        "--parallel-read",
-        "-r",
-        type=int,
-        default=4,
-        help="number of parallel processes to use for reading input files; default: 4",
-    )
-    parser.add_argument(
-        "--parallel-write",
-        "-w",
-        type=int,
-        default=4,
-        help="number of parallel processes to use for writing cards; default: 4",
-    )
-    parser.add_argument(
-        "--skip-existing",
-        action="store_true",
-        help="skip writing datacards that already exist; default: False",
-    )
-
-    args = parser.parse_args()
-
-    # buid the full output directory
-    output_directory = os.path.join(
-        args.output_path,
-        args.output_label.format(
-            binning=args.binning,
-            n_bins=args.n_bins,
-            qcd_str="noqcd" if args.no_qcd else "qcd",
-        ),
-    )
-
-    # prepare kwargs
-    kwargs = dict(
-        spin=args.spin,
-        mass=args.mass,
-        category=args.categories,
-        variable_pattern=args.variable,
-        skim_directory=args.skim_directory,
-        eval_directory=args.eval_directory,
-        output_directory=output_directory,
-        binning=(args.n_bins, 0.0, 1.0, "equal_distance" if args.binning == "equal" else "flat_s"),
-        qcd_estimation=not args.no_qcd,
-        n_parallel_read=args.parallel_read,
-        n_parallel_write=args.parallel_write,
-        cache_directory=args.cache_directory,
-        skip_existing=args.skip_existing,
-    )
-    print("writing datacards with arguments")
-    pprint.pprint(kwargs)
-    print("\n")
-
-    # write the datacards
-    write_datacards(**kwargs)
-
-
-# entry hook
-if __name__ == "__main__":
-    main()
-
-    # old instructions for manual adjustments
-    # for name, binning, variable_pattern, qcd_estimation in [
-    #     # ("equal10_dnn", (10, 0.0, 1.0, "equal_distance"), "DNNoutSM_kl_1", False),
-    #     # ("equal10_taunn", (10, 0.0, 1.0, "equal_distance"), "htt_class_hh", False),
-    #     # ("flats10_dnn", (10, 0.0, 1.0, "flat_s"), "DNNoutSM_kl_1", False),
-    #     # ("flats10_taunn", (10, 0.0, 1.0, "flat_s"), "htt_class_hh", False),
-    #     # ("equal20_qcd_dnn", (20, 0.0, 1.0, "equal_distance"), "DNNoutSM_kl_1", True),
-    #     # ("equal10_qcd_taunn", (10, 0.0, 1.0, "equal_distance"), "htt_class_hh", True),
-    #     # ("flats10_qcd_dnn", (10, 0.0, 1.0, "flat_s"), "DNNoutSM_kl_1", True),
-    #     # ("flats10_qcd_taunn", (10, 0.0, 1.0, "flat_s"), "htt_class_hh", True),
-    #     # ("equal10_qcd_taunn_param", (10, 0.0, 1.0, "equal_distance"), "htt_para_s{spin}_m{mass}_class_hh", True),
-    #     # ("equal20_qcd_taunn_param", (20, 0.0, 1.0, "equal_distance"), "htt_para_s{spin}_m{mass}_class_hh", True),
-    #     # ("flats10_qcd_taunn_param", (10, 0.0, 1.0, "flat_s"), "htt_para_s{spin}_m{mass}_class_hh", True),
-    #     # ("flats20_qcd_taunn_param", (20, 0.0, 1.0, "flat_s"), "htt_para_s{spin}_m{mass}_class_hh", True),
-    #     ("flats10_qcd_taunn_param_v2", (10, 0.0, 1.0, "flat_s"), "htt_para_v2_s{spin}_m{mass}_class_hh", True),
-    # ]:
-    #     write_datacards(
-    #         # all cards for spin 0
-    #         spin=0,
-    #         mass=masses,
-    #         # mass=[1000],
-    #         category=[
-    #             "2017_*tau_resolved?b_os_iso",
-    #             "2017_*tau_boosted_os_iso",
-    #             "2017_*tau_vbf_os_iso",
-    #             # "2017_*tau_resolved?bmwc_os_iso",
-    #             # "2017_*tau_boostedmwc_os_iso",
-    #         ],
-    #         variable_pattern=variable_pattern,
-    #         output_directory=f"/eos/user/m/mrieger/hhres_dnn_datacards/cards/{name}",
-    #         binning=binning,
-    #         qcd_estimation=qcd_estimation,
-
-    #         # common settings
-    #         n_parallel_read=6,
-    #         n_parallel_write=8,
-    #     )

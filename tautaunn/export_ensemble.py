@@ -85,6 +85,13 @@ def export_ensemble(
         cmsml.tensorflow.save_frozen_graph(
             os.path.join(ensemble_dir, "frozen.pb"),
             ensemble_model,
+            output_names=["Identity"],
+            variables_to_constants=True,
+        )
+        cmsml.tensorflow.save_frozen_graph(
+            os.path.join(ensemble_dir, "frozen.pb.txt"),
+            ensemble_model,
+            output_names=["Identity"],
             variables_to_constants=True,
         )
 

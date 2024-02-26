@@ -143,16 +143,22 @@ def add_column_aliases(data, aliases: list[tuple[str, str]]):
 
 
 def calc_new_columns(data, rules):
+    is_ak = isinstance(data, ak.Array)
     columns = []
     column_names = []
     for name, (input_columns, func) in rules.items():
-        if name in data.dtype.names:
+        if (is_ak and name in data.fields) or name in data.dtype.names:
             continue
         input_values = [columns[column_names.index(c)] if c in column_names else data[c] for c in input_columns]
         column = func(*input_values)
         columns.append(column)
         column_names.append(name)
-    data = rfn.rec_append_fields(data, list(rules.keys()), columns, dtypes=["<f4"] * len(columns))
+    # add new columns to data
+    if is_ak:
+        for field, col in zip(column_names, columns):
+            data = ak.with_field(data, col, field)
+    else:
+        data = rfn.rec_append_fields(data, column_names, columns, dtypes=["<f4"] * len(columns))
     return data
 
 
