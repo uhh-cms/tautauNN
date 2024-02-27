@@ -88,14 +88,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # klub aliases for systematic variations
         shape_systs = {
             "nominal": {},
-            "jec_up": {
-                "bjet1_pt": "bjet1_pt_jecUp",
-                "bjet2_pt": "bjet2_pt_jecUp",
-            },
-            "jec_down": {
-                "bjet1_pt": "bjet1_pt_jecDown",
-                "bjet2_pt": "bjet2_pt_jecDown",
-            },
+            # "mes_up": {
+            #     "m_dau1_pt_muup",
+            #     "m_dau2_pt_muup",
+            #     "m_dau1_mass_muup",
+            #     "m_dau2_mass_muup",
+            #     "METx_muup",
+            #     "METy_muup",
+            # },
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
@@ -298,7 +298,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description=(
             "binning to use; choices: flats, equal, ud (uncertainty-driven) "
             "ud_flats (uncertainty-driven with flat signal distribution), tt_dy_driven (tt+dy-driven) "
-            "default: flats")
+            "default: flats"),
     )
     n_bins = luigi.IntParameter(
         default=10,
