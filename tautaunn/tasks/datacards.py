@@ -89,12 +89,12 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         shape_systs = {
             "nominal": {},
             "mes_up": {
-                {"dau1_pt": "dau1_pt_muup"},
-                {"dau2_pt": "dau2_pt_muup"},
-                {"dau1_mass": "dau1_mass_muup"},
-                {"dau2_mass": "dau2_mass_muup"},
-                {"METx": "METx_muup"},
-                {"METy": "METy_muup"},
+                "dau1_pt": "dau1_pt_muup",
+                "dau2_pt": "dau2_pt_muup",
+                "dau1_mass": "dau1_mass_muup",
+                "dau2_mass": "dau2_mass_muup",
+                "METx": "METx_muup",
+                "METy": "METy_muup",
             },
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
