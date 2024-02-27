@@ -147,7 +147,10 @@ def calc_new_columns(data, rules):
     columns = []
     column_names = []
     for name, (input_columns, func) in rules.items():
-        if (is_ak and name in data.fields) or name in data.dtype.names:
+        if is_ak:
+            if name in data.fields:
+                continue
+        elif name in data.dtype.names:
             continue
         input_values = [columns[column_names.index(c)] if c in column_names else data[c] for c in input_columns]
         column = func(*input_values)
@@ -210,11 +213,16 @@ def calc_mass(pt, eta, phi, e):
 
 
 def phi_mpi_to_pi(phi):
+    is_ak = isinstance(phi, ak.Array)
     larger_pi = phi > math.pi
     smaller_pi = phi < -math.pi
     while np.any(larger_pi) or np.any(smaller_pi):
-        phi[larger_pi] -= 2 * math.pi
-        phi[smaller_pi] += 2 * math.pi
+        if is_ak:
+            np.asarray(phi)[larger_pi] -= 2 * math.pi
+            np.asarray(phi)[smaller_pi] += 2 * math.pi
+        else:
+            phi[larger_pi] -= 2 * math.pi
+            phi[smaller_pi] += 2 * math.pi
         larger_pi = phi > math.pi
         smaller_pi = phi < -math.pi
     return phi
