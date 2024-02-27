@@ -88,14 +88,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # klub aliases for systematic variations
         shape_systs = {
             "nominal": {},
-            # "mes_up": {
-            #     "m_dau1_pt_muup",
-            #     "m_dau2_pt_muup",
-            #     "m_dau1_mass_muup",
-            #     "m_dau2_mass_muup",
-            #     "METx_muup",
-            #     "METy_muup",
-            # },
+            "mes_up": {
+                {"dau1_pt": "dau1_pt_muup"},
+                {"dau2_pt": "dau2_pt_muup"},
+                {"dau1_mass": "dau1_mass_muup"},
+                {"dau2_mass": "dau2_mass_muup"},
+                {"METx": "METx_muup"},
+                {"METy": "METy_muup"},
+            },
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
