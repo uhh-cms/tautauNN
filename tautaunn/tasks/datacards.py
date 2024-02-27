@@ -203,10 +203,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
                     # add dynamic columns
                     syst_arr = calc_new_columns(syst_arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
-
                     # prepare model inputs
-                    cont_inputs = flatten(syst_arr[cont_input_names], np.float32)
-                    cat_inputs = flatten(syst_arr[cat_input_names], np.int32)
+                    cont_inputs = flatten(ak.to_numpy(syst_arr[cont_input_names]), np.float32)
+                    cat_inputs = flatten(ak.to_numpy(syst_arr[cat_input_names]), np.int32)
 
                     # add year
                     y = self.sample.year_flag
