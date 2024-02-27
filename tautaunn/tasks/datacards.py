@@ -198,7 +198,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     # insert aliases
                     syst_arr = arr
                     for src, dst in shape_systs[shape_name].items():
-                        if src in arr:
+                        if src in arr.fields:
                             syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
 
                     # add dynamic columns
