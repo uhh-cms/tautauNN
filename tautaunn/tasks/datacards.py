@@ -144,12 +144,12 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         dyn_names = sorted(dyn_names, key=list(cfg.dynamic_columns.keys()).index)
 
         # test: extend columns_to_read with systematic variations (only those that can be dropped in place)
-        for shape_name in shape_names:
+        for shape_name in shape_systs.keys():
             for src, dst in shape_systs[shape_name].items():
                 if src in columns_to_read:
                     columns_to_read.add(dst)
         # extend vectors
-        for shape_name in shape_systs_vectors:
+        for shape_name in shape_systs_vectors.keys():
             for src, dst in shape_systs_vectors[shape_name]["aliases"].items():
                 if src in columns_to_read:
                     columns_to_read.add(dst)
@@ -211,7 +211,6 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 # read columns and insert dynamic ones
                 arr = in_tree.arrays(list(columns_to_read), aliases=cfg.klub_aliases, library="ak")
                 # prepare the output tree structure if not done yet (in case this is the first fold)
-                from IPython import embed; embed()
                 tmp_output = tmp_outputs[output]
                 if tmp_output.exists():
                     # read existing output columns that already evaluated on a previous fold
@@ -225,20 +224,29 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
                 # expand vectors
                 syst_arr = arr
+                # we might have to remove some entries so keep track of what's lost
                 total_mask = np.ones(len(arr), dtype=bool)
-                for shape_name in shape_names:
-                    for src, dst in shape_systs_vectors[shape_name]["aliases"].items():
+                for shape_name in shape_systs_vectors.keys():
+                    for dst, src in shape_systs_vectors[shape_name]["aliases"].items():
                         if src in arr.fields:
                             vector = syst_arr[src]
                             # get bool mask of valid entries
                             mask = ak.count(vector, axis=1) == shape_systs_vectors[shape_name]["num_sources"]
                             mask = mask.to_numpy()
-                            # update total mask
-                            total_mask = np.logical_and(mask, total_mask)
+                            if np.any(~mask):
+                                # reduce syst_arr to only valid entries
+                                syst_arr = syst_arr[mask]
+                                print((f"removing {np.sum(~mask)/(len(mask)):.2%} "
+                                       f"due to {shape_name} vectors missing some syst variations"))
+                                # update total mask
+                                total_mask = np.logical_and(mask, total_mask)
                             vector = vector[mask] 
                             vector = vector.to_numpy()
                             for i in range(shape_systs_vectors[shape_name]["num_sources"]):
-                                syst_arr = ak.with_field(syst_arr, vector[:, i], dst + f"_{i}")
+                                syst_arr = ak.with_field(syst_arr, vector[:, i], dst + f"{shape_name}_{i}")
+                # end expand vectors
+                print((f"removed {np.sum(~total_mask)/(len(total_mask)):.2%} "
+                        f"due to some vectors missing some syst variations"))
 
                 for shape_name in shape_names:
                     # insert aliases
@@ -247,6 +255,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
 
                             
+                    from IPython import embed; embed()
                     # add dynamic columns
                     syst_arr = calc_new_columns(syst_arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
                     # prepare model inputs
