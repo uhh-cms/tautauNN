@@ -243,7 +243,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             vector = vector[mask] 
                             vector = vector.to_numpy()
                             for i in range(shape_systs_vectors[shape_name]["num_sources"]):
-                                syst_arr = ak.with_field(syst_arr, vector[:, i], dst + f"{shape_name}_{i}")
+                                syst_arr = ak.with_field(syst_arr, vector[:, i], dst + f"_{shape_name}_{i}")
                 # end expand vectors
                 print((f"removed {np.sum(~total_mask)/(len(total_mask)):.2%} "
                         f"due to some vectors missing some syst variations"))
