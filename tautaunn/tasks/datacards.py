@@ -85,10 +85,61 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 name += f"_{shape_name}"
             return name
 
-        # klub aliases for systematic variations (only those that can be dropped in place)
+        def calc_inputs(syst_arr, dyn_names, cfg, fold_index, models):
+            syst_arr = calc_new_columns(syst_arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
+            # prepare model inputs
+            cont_inputs = flatten(ak.to_numpy(syst_arr[cont_input_names]), np.float32)
+            cat_inputs = flatten(ak.to_numpy(syst_arr[cat_input_names]), np.int32)
+
+            # add year
+            y = self.sample.year_flag
+            cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+
+            # reserve column for mass
+            cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
+
+            # reserve column for spin (must be behind year!)
+            cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
+
+            # create a mask to only select events whose categorical features were seen during training
+            cat_mask = np.ones(len(arr), dtype=bool)
+            for i, name in enumerate(cat_input_names):
+                cat_mask &= np.isin(cat_inputs[:, i], np.unique(cfg.embedding_expected_inputs[name]))
+            self.publish_message(f"events passing cat_mask: {cat_mask.mean() * 100:.2f}%")
+            # merge with fold mask in case there are multiple models
+            eval_mask = cat_mask
+            if len(models) > 1:
+                eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
+            return cont_inputs, cat_inputs, eval_mask
+
+        def eval(model, cont_inputs, cat_inputs, spins, masses, eval_mask, class_names, shape_name, out_tree):
+            for spin in spins:
+                # insert spin
+                cat_inputs[:, -1] = int(spin)
+                for mass in masses:
+                    # insert mass
+                    cont_inputs[:, -1] = float(mass)
+
+                    # evaluate
+                    predictions = model([cont_inputs[eval_mask], cat_inputs[eval_mask]], training=False)
+
+                    # insert into output tree
+                    for i, class_name in enumerate(class_names.values()):
+                        # HARDCODED: skip dy
+                        # TODO: maybe also drop ttbar
+                        if class_name == "dy":
+                            continue
+                        field = col_name(mass, spin, class_name, shape_name)
+                        if field not in out_tree:
+                            out_tree[field] = -999.0 * np.ones(len(arr), dtype=np.float32)
+                        out_tree[field][eval_mask] = predictions[:, i]
+            return out_tree
+
+        # klub aliases for systematic variations
         shape_systs = {
-            "nominal": {},
-            "mes_up": {
+            #"nominal": {},
+            "mes_up": 
+                {"aliases": {
                 "dau1_pt": "dau1_pt_muup",
                 "dau2_pt": "dau2_pt_muup",
                 "dau1_mass": "dau1_mass_muup",
@@ -96,8 +147,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 "METx": "METx_muup",
                 "METy": "METy_muup",
             },
-        }
-        shape_systs_vectors = {
+                 "num_sources": 1,},
             "jes_up": {
                 "aliases": {
                     "bjet1_pt": "bjet1_pt_raw_jetup",
@@ -106,8 +156,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     "bjet2_mass": "bjet2_mass raw_jetup",
                     "METx": "METx_jetup",
                     "METy": "METy_jetup",
-                    },
-                "num_sources": 11
+                },
+                "num_sources": 11,
             },
             "jes_down": {
                 "aliases": {
@@ -118,8 +168,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     "METx": "METx_jetdown",
                     "METy": "METy_jetdown",
                 },
-                "num_sources": 11
-            }
+                "num_sources": 11,
+            },
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
@@ -149,10 +199,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 if src in columns_to_read:
                     columns_to_read.add(dst)
         # extend vectors
-        for shape_name in shape_systs_vectors.keys():
-            for src, dst in shape_systs_vectors[shape_name]["aliases"].items():
-                if src in columns_to_read:
-                    columns_to_read.add(dst)
+        #for shape_name in shape_systs_vectors.keys():
+            #for src, dst in shape_systs_vectors[shape_name]["aliases"].items():
+                #if src in columns_to_read:
+                    #columns_to_read.add(dst)
 
         # determine names of inputs
         cont_input_names = list(cfg.cont_feature_sets[self.cont_feature_set])
@@ -176,6 +226,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
 
         # callback to report progress
+        # this is of course wrong now because shape_names has to be multiplied
+        # by num_sources in the case of vectors.. but cba with that for now
         publish_progress = self.create_progress_callback(
             len(self.flat_folds) *
             len(self.branch_data) *
@@ -222,94 +274,60 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 else:
                     out_tree = {c: np.asarray(arr[c]) for c in cfg.klub_index_columns}
 
-                # expand vectors
-                syst_arr = arr
-                # we might have to remove some entries so keep track of what's lost
                 total_mask = np.ones(len(arr), dtype=bool)
-                for shape_name in shape_systs_vectors.keys():
-                    for dst, src in shape_systs_vectors[shape_name]["aliases"].items():
-                        if src in arr.fields:
-                            vector = syst_arr[src]
-                            # get bool mask of valid entries
-                            mask = ak.count(vector, axis=1) == shape_systs_vectors[shape_name]["num_sources"]
-                            mask = mask.to_numpy()
-                            if np.any(~mask):
-                                # reduce syst_arr to only valid entries
-                                syst_arr = syst_arr[mask]
-                                print((f"removing {np.sum(~mask)/(len(mask)):.2%} "
-                                       f"due to {shape_name} vectors missing some syst variations"))
-                                # update total mask
-                                total_mask = np.logical_and(mask, total_mask)
-                            vector = vector[mask] 
-                            vector = vector.to_numpy()
-                            for i in range(shape_systs_vectors[shape_name]["num_sources"]):
-                                syst_arr = ak.with_field(syst_arr, vector[:, i], dst + f"_{shape_name}_{i}")
-                # end expand vectors
-                print((f"removed {np.sum(~total_mask)/(len(total_mask)):.2%} "
-                        f"due to some vectors missing some syst variations"))
-
                 for shape_name in shape_names:
                     # insert aliases
-                    for dst, src in shape_systs[shape_name].items():
-                        if src in arr.fields:
-                            syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-
-                            
-                    from IPython import embed; embed()
-                    # add dynamic columns
-                    syst_arr = calc_new_columns(syst_arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
-                    # prepare model inputs
-                    cont_inputs = flatten(ak.to_numpy(syst_arr[cont_input_names]), np.float32)
-                    cat_inputs = flatten(ak.to_numpy(syst_arr[cat_input_names]), np.int32)
-
-                    # add year
-                    y = self.sample.year_flag
-                    cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
-
-                    # reserve column for mass
-                    cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
-
-                    # reserve column for spin (must be behind year!)
-                    cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
-
-                    # create a mask to only select events whose categorical features were seen during training
-                    cat_mask = np.ones(len(arr), dtype=bool)
-                    for i, name in enumerate(cat_input_names):
-                        cat_mask &= np.isin(cat_inputs[:, i], np.unique(cfg.embedding_expected_inputs[name]))
-                    self.publish_message(f"events passing cat_mask: {cat_mask.mean() * 100:.2f}%")
-
-                    # merge with fold mask in case there are multiple models
-                    eval_mask = cat_mask
-                    if len(models) > 1:
-                        eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
-
-                    # evaluate the data
-                    with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
-                        for spin in self.spins:
-                            # insert spin
-                            cat_inputs[:, -1] = int(spin)
-                            for mass in self.masses:
-                                # insert mass
-                                cont_inputs[:, -1] = float(mass)
-
-                                # evaluate
-                                predictions = model([cont_inputs[eval_mask], cat_inputs[eval_mask]], training=False)
-
-                                # insert into output tree
-                                for i, class_name in enumerate(class_names.values()):
-                                    # HARDCODED: skip dy
-                                    # TODO: maybe also drop ttbar
-                                    if class_name == "dy":
-                                        continue
-                                    field = col_name(mass, spin, class_name, shape_name)
-                                    if field not in out_tree:
-                                        out_tree[field] = -999.0 * np.ones(len(arr), dtype=np.float32)
-                                    out_tree[field][eval_mask] = predictions[:, i]
-
-                                # update progress
-                                publish_progress(progress_step)
-                                progress_step += 1
-
+                    syst_arr = arr
+                    if shape_systs[shape_name]["num_sources"] == 1:
+                        for dst, src in shape_systs[shape_name]["aliases"].items():
+                            if src in arr.fields:
+                                # easy case: just drop in the alias
+                                syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                        # evaluate the data
+                        with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
+                            out_tree = eval(model,cont_inputs, cat_inputs,
+                                            self.spins, self.masses,
+                                            eval_mask, class_names,
+                                            shape_name, out_tree)
+                            # update progress
+                            publish_progress(progress_step)
+                            progress_step += 1
+                    else:
+                        # access vectors
+                        for i in range(shape_systs[shape_name]["num_sources"]):
+                            for dst, src in shape_systs[shape_name]["aliases"].items():
+                                if src in arr.fields:
+                                    vector = syst_arr[src]
+                                    # get bool mask of valid entries
+                                    mask = ak.count(vector, axis=1) == shape_systs[shape_name]["num_sources"]
+                                    if np.any(~mask):
+                                        # reduce syst_arr to only valid entries
+                                        syst_arr = syst_arr[mask]
+                                        print((f"removing {np.sum(~mask)/(len(mask)):.2%} "
+                                            f"due to {shape_name} vectors missing some syst variations"))
+                                        # update total_mask
+                                        total_mask &= mask.to_numpy()
+                                    vector = vector[total_mask] 
+                                    vector = vector[mask]
+                                    vector = vector.to_numpy()
+                                    # insert the row of the vector into the syst_arr
+                                    syst_arr = ak.with_field(syst_arr, vector[:, i], dst)
+                                else:
+                                    continue
+                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                            eval_mask &= total_mask
+                            # further merge mask with total_mask
+                            # eval_mask &= total_mask
+                            # evaluate the data
+                            with self.publish_step(f"evaluating model for shape '{shape_name}_{i}' on {eval_mask.sum()} events ..."):
+                                out_tree = eval(model,cont_inputs, cat_inputs,
+                                                self.spins, self.masses,
+                                                eval_mask, class_names,
+                                                shape_name, out_tree)
+                        # update progress (messed up here because of the vectors)
+                        publish_progress(progress_step)
+                        progress_step += 1
                 # save the output tree
                 with tmp_output.dump(formatter="uproot", mode="recreate") as f:
                     f["hbtres"] = out_tree
