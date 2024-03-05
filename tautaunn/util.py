@@ -414,6 +414,7 @@ def create_model_name(*, model_name=None, model_prefix=None, model_suffix=None, 
         add("bs", "batch_size")
         add("op", "optimizer")
         add("lr", "learning_rate")
+        add("clr", "cycle_lr")
         add("year", "parameterize_year")
         add("spin", "parameterize_spin")
         add("mass", "parameterize_mass")

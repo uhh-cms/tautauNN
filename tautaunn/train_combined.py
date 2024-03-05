@@ -286,6 +286,7 @@ def train(
         dropout_rate=dropout_rate,
         batch_size=batch_size,
         learning_rate=learning_rate,
+        cycle_lr=cycle_lr,
         optimizer=optimizer,
         parameterize_year=parameterize_year,
         parameterize_spin=parameterize_spin,

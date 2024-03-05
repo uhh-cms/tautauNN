@@ -188,6 +188,8 @@ class TrainingParameters(Task):
             kwargs["lbn_set"] = self.lbn_set
         if self.background_weight != 1.0:
             kwargs["background_weight"] = self.background_weight
+        if self.cycle_lr:
+            kwargs["cycle_lr"] = self.cycle_lr
 
         return kwargs
 
