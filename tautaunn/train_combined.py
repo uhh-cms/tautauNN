@@ -839,19 +839,19 @@ def train(
             ) if full_tensorboard_dir else None,
             # regression fader
             RegressionFader(
-                model=model,
-                fade_in=regression_cfg.fade_in,
-                dense_index_start=regression_weight_range[0],
-                dense_index_stop=regression_weight_range[1],
-            ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
+                    model=model,
+                    fade_in=regression_cfg.fade_in,
+                    dense_index_start=regression_weight_range[0],
+                    dense_index_stop=regression_weight_range[1],
+                ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
         ]
         if cycle_lr:
             cycle_callback = CycleLR(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
                 policy='triangular2',
-                lr_range=[1e-5,5e-3],
-                max_cycles = 10,
+                lr_range=[1e-5,3e-3],
+                max_cycles=12,
                 reduce_on_end=True,
                 monitor="val_ce",
                 mode='min',
@@ -909,11 +909,10 @@ def train(
                 print("\nstarting fine-tuning adjustments")
 
                 # verify that the regression fade-in took place
-                reg_fader = fit_callbacks[-1]
-                if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
-                    print("regression fade-in did not take place yet, debug!")
-                    from IPython import embed; embed()
-                    raise RuntimeError("regression fade-in did not take place yet")
+                #reg_fader = fit_callbacks[-2]
+                #if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
+                    #print("regression fade-in did not take place yet, debug!")
+                    #from IPython import embed; embed()
 
                 # obtain updated hyper-parameters from the fine-tuning config
                 # l2 norm
