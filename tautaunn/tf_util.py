@@ -423,6 +423,8 @@ class CycleLR(tf.keras.callbacks.Callback):
             nls = {"nl": "\n"}
             nl = lambda: nls.pop("nl", "")
 
+            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
+            value = self.get_monitor_value(logs)
             # new best value?
             if self.best_metric is None or self.monitor_op(value, self.best_metric):
                 self.best_metric = value
