@@ -318,32 +318,31 @@ class CycleLR(tf.keras.callbacks.Callback):
         tf.keras.backend.set_value(self.model.optimizer.lr, self.calc_lr())
 
     def on_batch_end(self, epoch, logs=None):
-        logs = logs or {}
-        new_lr = self.calc_lr()
-        self.cycle_step += 1
-        # setdefault() adds the second argument in case the key doesn't exist
-        # if it does already exist, it does nothing
-        self.history.setdefault("lr", []).append(
-            tf.keras.backend.get_value(self.model.optimizer.lr))
-        tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+        if self.reduce_lr_and_stop == False:
+            logs = logs or {}
+            new_lr = self.calc_lr()
+            self.cycle_step += 1
+            # setdefault() adds the second argument in case the key doesn't exist
+            # if it does already exist, it does nothing
+            self.history.setdefault("lr", []).append(
+                tf.keras.backend.get_value(self.model.optimizer.lr))
+            tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
 
-        for k, v in logs.items():
-            self.history.setdefault(k, []).append(v)
+            for k, v in logs.items():
+                self.history.setdefault(k, []).append(v)
 
     def _reset_before_new_cycle(self) -> None:
         self.cycle_step = 0
         # for triangular policy, the LR range stays the same so nothing to be done here
         if self.cycle_count > 0:
             if self.policy == "triangular2":
-                if np.max(self.lr_range) > 4 * np.min(self.lr_range):
+                if np.max(self.lr_range) >= 6 * np.min(self.lr_range):
                     # reduce the top of lr_range to half it's value
                     self.lr_range[np.argmax(self.lr_range)] /= 2.
                     self.cycle_width = self.lr_range[1] - self.lr_range[0]
                     self.step_size = self.cycle_width / self.half_life
                     #new_lr = self.calc_lr()
                     #tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
-                else:
-                    return
     
     def _reset_for_fine_tuning(self) -> None:
         self.wait = 0
@@ -353,9 +352,9 @@ class CycleLR(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs):
 
         if self.reduce_lr_and_stop == False:
-
             if self.cycle_step == self.steps:
                 self.cycle_count += 1
+                print(self.cycle_count)
                 self._reset_before_new_cycle()
 
             # add the current learning rate to the logs
@@ -389,8 +388,19 @@ class CycleLR(tf.keras.callbacks.Callback):
             if self.cycle_count < 1:
                 return
 
-            # within patience?
-            if self.wait <= self.es_patience:
+            if self.cycle_count == self.max_cycles:
+                print("\n Max cycles reached, stopping cycleLR")
+                if self.reduce_on_end:
+                    self.reduce_lr_and_stop = True
+                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                    print(f"\n Current lr_range {self.lr_range}")
+                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}\n")
+                    # set the lr to the mid of the current lr range
+                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+                    self.wait = 0
+                    return
+
+            if self.wait <= self.lr_patience:
                 return
 
             # repeat cycling?
@@ -404,42 +414,11 @@ class CycleLR(tf.keras.callbacks.Callback):
                     )
                 return
 
-            if self.cycle_count == self.max_cycles:
-                if self.reduce_on_end:
-                    self.reduce_lr_and_stop = True
-                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
-                    print(f"\n Current lr_range {self.lr_range}")
-                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
-                    # set the lr to the mid of the current lr range
-                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
-                    self.wait = 0
-                    return
-
-            if self.reduce_on_end:
-                # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
-                self.reduce_lr_and_stop = True
-                print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
-                print(f"\n Current lr_range {self.lr_range}")
-                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
-                # set the lr to the mid of the current lr range
-                tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
-                self.wait = 0
-                return
-
             # stop training completely
             self.model.stop_training = True
             if self.verbose >= 1:
                 print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
         else:
-            # add the current learning rate to the logs
-            logs = logs or {}
-            logs["lr"] = tf.keras.backend.get_value(self.model.optimizer.lr)
-
-            # do nothing when no metric is available yet
-            value = self.get_monitor_value(logs)
-            if value is None:
-                return
-
             # helper to get a newline only for the first invocation
             nls = {"nl": "\n"}
             nl = lambda: nls.pop("nl", "")
@@ -458,10 +437,6 @@ class CycleLR(tf.keras.callbacks.Callback):
 
             # no improvement, increase wait counter
             self.wait += 1
-
-            #
-            # lr monitoring
-            #
 
             if self.wait <= self.lr_patience:
                 return
@@ -494,11 +469,6 @@ class CycleLR(tf.keras.callbacks.Callback):
                         f"from now on checking early stopping with patience {self.es_patience}",
                     )
 
-            # do nothing if es is not yet to be monitored
-            if epoch < self.es_start_epoch:
-                self.wait = 0
-                return
-
             # within patience?
             if self.wait <= self.es_patience:
                 return
@@ -509,9 +479,10 @@ class CycleLR(tf.keras.callbacks.Callback):
                 print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
     def on_epoch_begin(self, epoch, logs=None):
-        if self.cycle_step == 0 and self.cycle_count > 0:
-            print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
-            print(f"\n Starting new cycle with lr_range: {self.lr_range}")
+        if (self.cycle_step == 0) and (self.cycle_count > 0):
+            if self.reduce_lr_and_stop == False:
+                print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
+                print(f"\n Starting new cycle with lr_range: {self.lr_range}")
 
     def restore_best_weights(self) -> bool:
         if self.best_weights is None:
@@ -529,227 +500,6 @@ class CycleLR(tf.keras.callbacks.Callback):
         if value is None:
             print_msg(f"{self.__class__.__name__}: metric '{self.monitor}' not available, found {','.join(list(logs))}")
         return value
-
-
-class LRFinder(tf.keras.callbacks.Callback):
-    # mostly taken from https://github.com/titu1994/keras-one-cycle/blob/master/clr.py
-    def __init__(
-        self,
-        num_samples,
-        batch_size,
-        use_validation_data: bool = False,
-        dataset_valid: tf.data.Dataset | None = None,
-        num_val_batches: int | None = None,
-        lr_scale: str = "exp",
-        lr_bounds=(1e-5, 1e-2),
-        save_dir=None,
-        verbose=False,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-
-        self.num_samples = num_samples
-        self.batch_size = batch_size
-        self.use_validation_data = use_validation_data
-        self.dataset_valid = dataset_valid
-        self.num_val_batches = num_val_batches
-        self.lr_scale = lr_scale
-        self.lr_bounds = lr_bounds
-        self.save_dir = save_dir
-        self.verbose = verbose
-
-        if self.use_validation_data and any([ (i is None) for i in (self.dataset_valid, self.num_val_batches)]):
-            raise ValueError("dataset_valid and num_val_batches must be given if use_validation_data is True")
-        if any([not (i == None) for i in (self.num_val_batches, self.dataset_valid)]) and not self.use_validation_data:
-            raise ValueError("num_val_batches and/or dataset_valid passed, but use_validation_data is False")
-
-        self.num_batches_ = self.num_samples // batch_size
-        print(f"num_batches: {self.num_batches_}")
-        self.current_lr = self.lr_bounds[0]
-
-        if lr_scale == "exp":
-            self.lr_multiplier_ = (lr_bounds[-1] / float(lr_bounds[0])) ** (
-                1. / float(self.num_batches_))
-        else:
-            extra_batch = int((self.num_samples % batch_size) != 0)
-            self.lr_multiplier_ = np.linspace(
-                self.lr_bounds[0], self.lr_bounds[-1], num=self.num_batches_ + extra_batch)
-
-        self.current_batch_ = 0
-        self.current_epoch_ = 0
-        self.best_loss_ = 1e6
-        self.best_ce_ = 1e6
-        self.running_loss = 0.
-        self.history = {}
-
-    def on_train_begin(self, logs):
-        self.current_epoch_ = 1
-        tf.keras.backend.set_value(self.model.optimizer.lr, self.lr_bounds[0])
-
-    def on_batch_begin(self, batch, logs):
-        self.current_batch_ += 1
-
-    def on_batch_end(self, batch, logs):
-
-        # we're only training for one epoch so the magic happens here
-
-        if self.current_epoch_ > 1:
-            return
-        if self.use_validation_data:
-            values = self.model.evaluate(x=self.dataset_valid,
-                steps=50,
-                return_dict=True,
-                #workers=10,
-                #use_multiprocessing=True,
-                verbose=False)
-            running_loss = values['loss']
-            running_ce = values['ce']
-        else:
-            running_loss = logs['loss']
-            running_ce = logs['ce']
-
-        if running_loss < self.best_loss_ or self.current_batch_ == 1:
-            self.best_loss_ = running_loss
-
-        if running_ce < self.best_ce_ or self.current_batch_ == 1:
-            self.best_ce_ = running_ce
-
-        current_lr = tf.keras.backend.get_value(self.model.optimizer.lr)
-
-        self.history.setdefault("running_loss_", []).append(running_loss)
-        self.history.setdefault("running_ce_", []).append(running_ce)
-
-        if self.lr_scale == "exp":
-            self.history.setdefault("log_lrs", []).append(np.log10(current_lr))
-        else:
-            self.history.setdefault("log_lrs", []).append(current_lr)
-
-        # compute the lr for the next batch and update the optimizer lr
-        if self.lr_scale == "exp":
-            current_lr *= self.lr_multiplier_
-        else:
-            current_lr = self.lr_multiplier_[self.current_batch_ - 1]
-
-        tf.keras.backend.set_value(self.model.optimizer.lr, current_lr)
-
-        # save the other metrics as well
-        for k, v in logs.items():
-            self.history.setdefault(k, []).append(v)
-
-        if self.verbose:
-            print(" - LRFinder: val_loss: %1.4f - lr = %1.8f " % (values['loss'], current_lr))
-            print(" - LRFinder: val_ce: %1.4f - lr = %1.8f " % (values['ce'], current_lr))
-
-    def on_epoch_end(self, epoch, logs=None):
-        # basically just saves the history
-        if self.save_dir is not None and self.current_epoch_ <= 1:
-            if not os.path.exists(self.save_dir):
-                os.makedirs(self.save_dir)
-
-            losses_path = os.path.join(self.save_dir, "losses.npy")
-            lrs_path = os.path.join(self.save_dir, "lrs.npy")
-
-            np.save(losses_path, self.losses)
-            np.save(lrs_path, self.lrs)
-
-            if self.verbose:
-                print("\tLR Finder : Saved the losses and learning rate values in path : {%s}" % (self.save_dir))
-
-        self.current_epoch_ += 1
-
-    def plot_schedule(self, clip_beginning=None, clip_ending=None):
-        """
-        Plots the schedule from the callback itself.
-
-        # Arguments:
-            clip_beginning: Integer or None. If positive integer, it will
-                remove the specified portion of the loss graph to remove the large
-                loss values in the beginning of the graph.
-            clip_ending: Integer or None. If negative integer, it will
-                remove the specified portion of the ending of the loss graph to
-                remove the sharp increase in the loss values at high learning rates.
-        """
-        try:
-            import matplotlib.pyplot as plt
-            plt.style.use("seaborn-white")
-        except ImportError:
-            print("Matplotlib not found. Please use `pip install matplotlib` first.")
-            return
-
-        if clip_beginning is not None and clip_beginning < 0:
-            clip_beginning = -clip_beginning
-
-        if clip_ending is not None and clip_ending > 0:
-            clip_ending = -clip_ending
-
-        losses = self.losses
-        lrs = self.lrs
-
-        if clip_beginning:
-            losses = losses[clip_beginning:]
-            lrs = lrs[clip_beginning:]
-
-        if clip_ending:
-            losses = losses[:clip_ending]
-            lrs = lrs[:clip_ending]
-
-        plt.plot(lrs, losses)
-        plt.title("Learning rate vs Loss")
-        plt.xlabel("learning rate")
-        plt.ylabel("loss")
-        plt.show()
-
-    @classmethod
-    def plot_schedule_from_file(
-            cls,
-            directory,
-            clip_beginning=None,
-            clip_endding=None,
-    ):
-        """
-        Plots the schedule from the saved numpy arrays of the loss and learning
-        rate values in the specified directory.
-
-        # Arguments:
-            directory: String. Path to the directory where the serialized numpy
-                arrays of the loss and learning rates are saved.
-            clip_beginning: Integer or None. If positive integer, it will
-                remove the specified portion of the loss graph to remove the large
-                loss values in the beginning of the graph.
-            clip_endding: Integer or None. If negative integer, it will
-                remove the specified portion of the ending of the loss graph to
-                remove the sharp increase in the loss values at high learning rates.
-        """
-        try:
-            import matplotlib.pyplot as plt
-            plt.style.use("seaborn-white")
-        except ImportError:
-            print("Matplotlib not found. Please use `pip install matplotlib` first.")
-            return
-
-        losses, lrs = cls.restore_schedule_from_dir(
-            directory,
-            clip_beginning=clip_beginning,
-            clip_endding=clip_endding,
-        )
-
-        if losses is None or lrs is None:
-            return
-        else:
-            plt.plot(lrs, losses)
-            plt.title("Learning rate vs Loss")
-            plt.xlabel("learning rate")
-            plt.ylabel("loss")
-            plt.show()
-
-    @property
-    def lrs(self):
-        return np.array(self.history["log_lrs"])
-
-    @property
-    def losses(self):
-        return np.array(self.history["running_loss_"])
-
 
 class ReduceLRAndStop(tf.keras.callbacks.Callback):
 
