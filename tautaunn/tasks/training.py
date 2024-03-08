@@ -255,7 +255,6 @@ class Training(TrainingParameters):
             learning_rate_patience=self.learning_rate_patience,
             early_stopping_patience=self.early_stopping_patience,
             cycle_lr=self.cycle_lr,
-            max_epochs=self.max_epochs,
             validate_every=self.validate_every,
             parameterize_year=True,
             parameterize_spin=True,
