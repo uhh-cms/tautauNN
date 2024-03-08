@@ -137,17 +137,72 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         # klub aliases for systematic variations
         shape_systs = {
-            #"nominal": {},
-            "mes_up": 
+            "nominal": {"aliases": {}, "num_sources": 1},
+            # mes can be ignored for now
+            #"mes_up": 
+                #{"aliases": {
+                #"dau1_pt": "dau1_pt_muup",
+                #"dau2_pt": "dau2_pt_muup",
+                #"dau1_mass": "dau1_mass_muup",
+                #"dau2_mass": "dau2_mass_muup",
+                #"METx": "METx_muup",
+                #"METy": "METy_muup",
+            #},
+                 #"num_sources": 1,},
+            #"mes_down":
+                #{"aliases": {
+                #"dau1_pt": "dau1_pt_mudown",
+                #"dau2_pt": "dau2_pt_mudown",
+                #"dau1_mass": "dau1_mass_mudown",
+                #"dau2_mass": "dau2_mass_mudown",
+                #"METx": "METx_mudown",
+                #"METy": "METy_mudown",
+            #},
+                 #"num_sources": 1,},
+            # electron energy scale has 2 sources (DM 0 and 1)
+            "ees_up":
                 {"aliases": {
-                "dau1_pt": "dau1_pt_muup",
-                "dau2_pt": "dau2_pt_muup",
-                "dau1_mass": "dau1_mass_muup",
-                "dau2_mass": "dau2_mass_muup",
-                "METx": "METx_muup",
-                "METy": "METy_muup",
+                "dau1_pt": "dau1_pt_eleup",
+                "dau2_pt": "dau2_pt_eleup",
+                "dau1_mass": "dau1_mass_eleup",
+                "dau2_mass": "dau2_mass_eleup",
+                "METx": "METx_eleup",
+                "METy": "METy_eleup",
             },
-                 "num_sources": 1,},
+                 "num_sources": 2,},
+            "ees_down":
+                {"aliases": {
+                "dau1_pt": "dau1_pt_eledown",
+                "dau2_pt": "dau2_pt_eledown",
+                "dau1_mass": "dau1_mass_eledown",
+                "dau2_mass": "dau2_mass_eledown",
+                "METx": "METx_eledown",
+                "METy": "METy_eledown",
+            },
+                 "num_sources": 2,},
+            # tau energy scale has 4 sources (DM 0, 1, 10, 11)
+            "tes_up":
+                {"aliases": {
+                "dau1_pt": "dau1_pt_tauup",
+                "dau2_pt": "dau2_pt_tauup",
+                "dau1_mass": "dau1_mass_tauup",
+                "dau2_mass": "dau2_mass_tauup",
+                "METx": "METx_tauup",
+                "METy": "METy_tauup",
+            },
+                 "num_sources": 4,},
+            "tes_down":
+                {"aliases": {
+                "dau1_pt": "dau1_pt_taudown",
+                "dau2_pt": "dau2_pt_taudown",
+                "dau1_mass": "dau1_mass_taudown",
+                "dau2_mass": "dau2_mass_taudown",
+                "METx": "METx_taudown",
+                "METy": "METy_taudown",
+            },
+                 "num_sources": 4,},
+            # jet energy scale has 11 sources (https://twiki.cern.ch/twiki/bin/viewauth/CMS/JECUncertaintySources#)
+            # maybe we can reduce this set (HF probably isn't needed in our case)
             "jes_up": {
                 "aliases": {
                     "bjet1_pt": "bjet1_pt_raw_jetup",
