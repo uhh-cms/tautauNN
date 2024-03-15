@@ -379,7 +379,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                                 out_tree = eval(model,cont_inputs, cat_inputs,
                                                 self.spins, self.masses,
                                                 eval_mask, class_names,
-                                                shape_name, out_tree)
+                                                f"{shape_name}_{i}", out_tree)
                         # update progress (messed up here because of the vectors)
                         publish_progress(progress_step)
                         progress_step += 1
