@@ -38,7 +38,7 @@ import uproot
 import hist
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, metnomu_et_cuts
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
 from tautaunn.binning_algorithms import uncertainty_driven, tt_dy_driven, flat_signal_ud
 
 
@@ -327,89 +327,85 @@ def selector(
     return decorator
 
 
+@selector(
+    needs=["pairType", "dau1_deepTauVsJet", "dau1_iso", "dau1_eleMVAiso"],
+    str_repr="((pairType == 0) & (dau1_iso < 0.15)) | ((pairType == 1) & (dau1_eleMVAiso == 1)) | ((pairType == 2) & (dau1_deepTauVsJet >= 5))",  # noqa
+)
+def sel_iso_first_lep(array: ak.Array) -> ak.Array:
+    return (
+        ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
+        ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
+        ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
+    )
+
+
+@selector(
+    needs=["isLeptrigger", "isMETTrigger", "isSingleTauTrigger",],
+    str_repr="((isLeptrigger == 1) | ((isMETtrigger == 1) | (isSingleTauTrigger == 1))",
+)
+def sel_trigger(array: ak.Array) -> ak.Array:
+    return ((array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1))
+
+
+@selector(
+    needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
+    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & (nbjetscand > 1)",  # noqa
+)
+def sel_baseline(array: ak.Array) -> ak.Array:
+    return (
+        sel_trigger(array) &
+        # including cut on first isolated lepton to reduce memory footprint
+        # (note that this is not called "baseline" anymore by KLUB standards)
+        sel_iso_first_lep(array) &
+        (array.nleps == 0) &
+        (array.nbjetscand > 1)
+    )
+
+
+@selector(
+    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
+)
+def sel_region_os_iso(array: ak.Array) -> ak.Array:
+    return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet >= 5)
+
+
+@selector(
+    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
+)
+def sel_region_ss_iso(array: ak.Array) -> ak.Array:
+    return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet >= 5)
+
+
+@selector(
+    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
+)
+def sel_region_os_noniso(array: ak.Array) -> ak.Array:
+    return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+
+
+@selector(
+    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
+)
+def sel_region_ss_noniso(array: ak.Array) -> ak.Array:
+    return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+
+
+region_sels = [
+    sel_region_os_iso,
+    sel_region_ss_iso,
+    sel_region_os_noniso,
+    sel_region_ss_noniso,
+]
+
+
+region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
+
+
 def category_factory(
     year: str,
     channel: str,
 ) -> dict[str, Callable]:
     pair_type = channels[channel]
-
-
-    @selector(
-        needs=["pairType", "dau1_deepTauVsJet", "dau1_iso", "dau1_eleMVAiso"],
-        str_repr="((pairType == 0) & (dau1_iso < 0.15)) | ((pairType == 1) & (dau1_eleMVAiso == 1)) | ((pairType == 2) & (dau1_deepTauVsJet >= 5))",  # noqa
-    )
-    def sel_iso_first_lep(array: ak.Array) -> ak.Array:
-        return (
-            ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
-            ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
-            ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
-        )
-
-
-    @selector(
-        needs=["pairType", "isLeptrigger", "isMETtriggerNoThresh", "metnomu_et", "isSingleTauTrigger",],
-        str_repr="(((pairType == 0) | (pairType == 1)) & ((isLeptrigger == 1) | ((isMETtriggerNoThresh == 1) & (metnomu_et > 180))) | ((pairType == 2) & ((isLepTrigger == 1) | ((isMETtriggerNoThresh == 1) & (metnomu_et > 180)) | (isSingleTauTrigger == 1))))",
-    )
-    def sel_trigger(array: ak.Array) -> ak.Array:
-        return (
-            (((array.pairType == 0) | (array.pairType == 1)) & ((array.isLeptrigger == 1) | ((array.isMETtriggerNoThresh == 1) & (array.metnomu_et > metnomu_et_cuts[year]))) |
-            ((array.pairType == 2) & ((array.isLeptrigger == 1) | ((array.isMETtriggerNoThresh == 1) & (array.metnomu_et > metnomu_et_cuts[year])) | (array.isSingleTauTrigger == 1))))
-        )
-
-
-    @selector(
-        needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
-        str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & (nbjetscand > 1)",  # noqa
-    )
-    def sel_baseline(array: ak.Array) -> ak.Array:
-        return (
-            sel_trigger(array) &
-            # including cut on first isolated lepton to reduce memory footprint
-            # (note that this is not called "baseline" anymore by KLUB standards)
-            sel_iso_first_lep(array) &
-            (array.nleps == 0) &
-            (array.nbjetscand > 1)
-        )
-
-
-    @selector(
-        needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-    )
-    def sel_region_os_iso(array: ak.Array) -> ak.Array:
-        return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet >= 5)
-
-
-    @selector(
-        needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-    )
-    def sel_region_ss_iso(array: ak.Array) -> ak.Array:
-        return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet >= 5)
-
-
-    @selector(
-        needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-    )
-    def sel_region_os_noniso(array: ak.Array) -> ak.Array:
-        return sel_iso_first_lep(array) & (array.isOS != 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
-
-
-    @selector(
-        needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-    )
-    def sel_region_ss_noniso(array: ak.Array) -> ak.Array:
-        return sel_iso_first_lep(array) & (array.isOS == 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
-
-
-    region_sels = [
-        sel_region_os_iso,
-        sel_region_ss_iso,
-        sel_region_os_noniso,
-        sel_region_ss_noniso,
-    ]
-
-
-    region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
-
 
     @selector(needs=["pairType"])
     def sel_channel(array: ak.Array) -> ak.Array:
