@@ -88,9 +88,9 @@ btag_wps = {
 
 metnomu_et_cuts = {
     "2016APV": 160,
-    "2016": 160, 
-    "2017": 180, 
-    "2018": 180, 
+    "2016": 160,
+    "2017": 180,
+    "2018": 180,
 }
 
 masses = [
@@ -229,7 +229,7 @@ def select_samples(*patterns):
 
 # note that graviton samples in 2016APV and 2016 are different from 2017 and 2018
 train_masses_central = "320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750"
-train_masses_all = "250|260|270|280|300|320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750|2000|2500|3000"
+train_masses_all = "250|260|270|280|300|320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750|2000|2500|3000"  # noqa
 sample_sets = {
     "default_2016APV": (samples_default_2016APV := select_samples(
         rf"^2016APV_ggF_Radion_m({train_masses_all})$",
@@ -493,16 +493,17 @@ selection_sets = {
         ]
         for year, w in btag_wps.items()
     },
-    "new_skims_baseline":{
-        year: ["nleps == 0",
-               "(nbjetscand > 1 | isBoosted == 1)",
-               (
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 0)) | ",
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 1)) | ",
-               f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]}) | isSingleTauTrigger ) & (pairType == 2))",
-               )
-               ]
-               for year in metnomu_et_cuts
+    "new_skims_baseline": {
+        year: [
+            "nleps == 0",
+            "(nbjetscand > 1 | isBoosted == 1)",
+            (
+                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 0)) | ",  # noqa
+                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 1)) | ",  # noqa
+                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]}) | isSingleTauTrigger ) & (pairType == 2))",  # noqa
+            ),
+        ]
+        for year in metnomu_et_cuts
     }
 }
 

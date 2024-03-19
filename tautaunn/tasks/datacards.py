@@ -213,7 +213,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     cat_inputs = np.append(cat_inputs, y * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
 
                     # reserve column for mass
-                    cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)
+                    cont_inputs = np.append(cont_inputs, -1 * np.ones(len(cont_inputs), dtype=np.float32)[..., None], axis=1)  # noqa
 
                     # reserve column for spin (must be behind year!)
                     cat_inputs = np.append(cat_inputs, -1 * np.ones(len(cat_inputs), dtype=np.int32)[..., None], axis=1)
