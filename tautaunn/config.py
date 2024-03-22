@@ -519,6 +519,23 @@ klub_index_columns = [
     "lumi",
 ]
 
+klub_category_columns = [
+    "bjet1_bID_deepFlavor",
+    "bjet2_bID_deepFlavor",
+    "pairType",
+    "dau1_iso",
+    "dau1_deepTauVsJet",
+    "dau1_eleMVAiso",
+    "isLeptrigger",
+    "isMETtrigger",
+    "nleps",
+    "nbjetscand",
+    "isBoosted",
+    "isVBF",
+    "VBFjj_mass",
+    "VBFjj_deltaEta",
+]
+
 dynamic_columns = {
     # columns needed for rotation
     (rot_phi := "dau_phi"): (
