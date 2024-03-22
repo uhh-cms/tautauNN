@@ -66,8 +66,13 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
+        #return law.SiblingFileCollection({
+            #num: self.local_target(f"output_{num}.root")
+            #for num in self.branch_data
+        #})
         return law.SiblingFileCollection({
-            num: self.local_target(f"output_{num}.root")
+            num: {f"nominal_{num}": self.local_target(f"output_nominal_{num}.root"),
+                  f"shapes_{num}": self.local_target(f"output_shapes_{num}.root")} 
             for num in self.branch_data
         })
 
@@ -85,11 +90,11 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 name += f"_{shape_name}"
             return name
 
-        def calc_inputs(syst_arr, dyn_names, cfg, fold_index, models):
-            syst_arr = calc_new_columns(syst_arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
+        def calc_inputs(arr, dyn_names, cfg, fold_index, models):
+            arr = calc_new_columns(arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
             # prepare model inputs
-            cont_inputs = flatten(ak.to_numpy(syst_arr[cont_input_names]), np.float32)
-            cat_inputs = flatten(ak.to_numpy(syst_arr[cat_input_names]), np.int32)
+            cont_inputs = flatten(ak.to_numpy(arr[cont_input_names]), np.float32)
+            cat_inputs = flatten(ak.to_numpy(arr[cat_input_names]), np.int32)
 
             # add year
             y = self.sample.year_flag
@@ -112,7 +117,11 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
             return cont_inputs, cat_inputs, eval_mask
 
-        def eval(model, cont_inputs, cat_inputs, spins, masses, eval_mask, class_names, shape_name, out_tree):
+        def eval(model, cont_inputs, cat_inputs,
+                 spins, masses, eval_mask, class_names,
+                 shape_name, out_tree, cat_mask: ak.Array | None = None):
+            if cat_mask is not None:
+                cat_mask = cat_mask.to_numpy()
             for spin in spins:
                 # insert spin
                 cat_inputs[:, -1] = int(spin)
@@ -131,34 +140,93 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             continue
                         field = col_name(mass, spin, class_name, shape_name)
                         if field not in out_tree:
-                            out_tree[field] = -999.0 * np.ones(len(arr), dtype=np.float32)
-                        out_tree[field][eval_mask] = predictions[:, i]
+                            if cat_mask is not None:
+                                pred_arr = -1 * np.ones(len(cat_mask), dtype=np.float32)
+                                # for all events within the final cats, also check
+                                # if they have the expected categorical inputs
+                                cat_mask[cat_mask == True] = eval_mask
+                                pred_arr[cat_mask] = predictions[:, i]
+                            else:
+                                pred_arr = -1* np.ones(len(eval_mask), dtype=np.float32)
+                                pred_arr[eval_mask] = predictions[:, i]
+                        out_tree[field] = pred_arr
             return out_tree
 
+        def sel_iso_first_lep(array: ak.Array) -> ak.Array:
+            return (
+                ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
+                ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
+                ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
+            )
+
+        def sel_trigger(array: ak.Array) -> ak.Array:
+            return ((array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1))
+
+        def sel_baseline(array: ak.Array) -> ak.Array:
+            return (
+                sel_trigger(array) &
+                # including cut on first isolated lepton to reduce memory footprint
+                # (note that this is not called "baseline" anymore by KLUB standards)
+                sel_iso_first_lep(array) &
+                (array.nleps == 0) &
+                (array.nbjetscand > 1)
+            )
+        def sel_boosted(array: ak.Array) -> ak.Array:
+            return array.isBoosted == 1
+
+        def sel_btag_m_first(array: ak.Array, year: str) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) |
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
+            )
+        def sel_vbf(array: ak.Array) -> ak.Array:
+            return (
+                (array.isVBF == 1) &
+                (array.VBFjj_mass > 500) &
+                (array.VBFjj_deltaEta > 3)
+            )
+
+        def sel_btag_m(array: ak.Array, year: str) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) &
+                (array.bjet2_bID_deepFlavor < cfg.btag_wps[year]["medium"])
+            ) | (
+                (array.bjet1_bID_deepFlavor < cfg.btag_wps[year]["medium"]) &
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
+            )
+
+        def sel_btag_mm(array: ak.Array, year: str) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) &
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
+            )
+
+        def sel_btag_ll(array: ak.Array, year: str) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["loose"]) &
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["loose"])
+            )
+
+        def sel_cats(array: ak.Array, year: str) -> ak.Array:
+            return ((
+                sel_baseline(array) &
+                sel_btag_m(array, year) &
+                ~sel_boosted(array) &
+                ~(sel_vbf(array) & sel_btag_m_first(array, year))
+            ) | (
+                sel_baseline(array) &
+                sel_btag_mm(array, year) &
+                ~sel_boosted(array) &
+                ~(sel_vbf(array) & sel_btag_m_first(array, year))
+            ) | (
+                sel_baseline(array) &
+                sel_btag_ll(array, year) &
+                sel_boosted(array) &
+                ~(sel_vbf(array) & sel_btag_m_first(array, year))
+            ))
         # klub aliases for systematic variations
         shape_systs = {
             "nominal": {"aliases": {}, "num_sources": 1},
-            # mes can be ignored for now
-            #"mes_up": 
-                #{"aliases": {
-                #"dau1_pt": "dau1_pt_muup",
-                #"dau2_pt": "dau2_pt_muup",
-                #"dau1_mass": "dau1_mass_muup",
-                #"dau2_mass": "dau2_mass_muup",
-                #"METx": "METx_muup",
-                #"METy": "METy_muup",
-            #},
-                 #"num_sources": 1,},
-            #"mes_down":
-                #{"aliases": {
-                #"dau1_pt": "dau1_pt_mudown",
-                #"dau2_pt": "dau2_pt_mudown",
-                #"dau1_mass": "dau1_mass_mudown",
-                #"dau2_mass": "dau2_mass_mudown",
-                #"METx": "METx_mudown",
-                #"METy": "METy_mudown",
-            #},
-                 #"num_sources": 1,},
             # electron energy scale has 2 sources (DM 0 and 1)
             "ees_up":
                 {"aliases": {
@@ -238,6 +306,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         if self.lbn_cfg is not None:
             columns_to_read |= set(self.lbn_cfg.input_features) - {None}
         columns_to_read |= set(cfg.klub_index_columns)
+        columns_to_read |= set(cfg.klub_category_columns)
         # expand dynamic columns, keeping track of those that are needed
         all_dyn_names = set(cfg.dynamic_columns)
         dyn_names = set()
@@ -299,10 +368,15 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # prepare outputs that will first be created in a temporary location and then moved eventually
         output_collection = self.output()
         tmp_outputs = {
-            output: law.LocalFileTarget(is_tmp="root")
-            for output in output_collection.targets.values()
-            if not output.exists()
+            num: {output: law.LocalFileTarget(is_tmp="root")
+                  for output in output_dict.values() if not output.exists()}
+            for num, output_dict in output_collection.targets.items()
         }
+        #tmp_outputs = {
+            #output: law.LocalFileTarget(is_tmp="root")
+            #for output in output_collection.targets.values()
+            #if not output.exists()
+        #}
 
         # loop over models to keep only one in memory at a time
         for fold_index, inps in models.items():
@@ -310,7 +384,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 model = inps["saved_model"].load(formatter="tf_saved_model")
 
             # loop over files
-            for num, output in output_collection.targets.items():
+            for num, output_dict in output_collection.targets.items():
                 # load the input tree
                 skim_file = self.get_skim_file(num)
                 in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
@@ -318,82 +392,119 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 # read columns and insert dynamic ones
                 arr = in_tree.arrays(list(columns_to_read), aliases=cfg.klub_aliases, library="ak")
                 # prepare the output tree structure if not done yet (in case this is the first fold)
-                tmp_output = tmp_outputs[output]
-                if tmp_output.exists():
-                    # read existing output columns that already evaluated on a previous fold
-                    out_tree = tmp_output.load(formatter="uproot")["hbtres"].arrays()
-                    out_tree = {
-                        field: np.asarray(out_tree[field])
-                        for field in out_tree.fields
-                    }
-                else:
-                    out_tree = {c: np.asarray(arr[c]) for c in cfg.klub_index_columns}
+                for key, output in output_dict.items():
+                    tmp_output = tmp_outputs[num][output]
+                    if tmp_output.exists():
+                        # read existing output columns that already evaluated on a previous fold
+                        out_tree = tmp_output.load(formatter="uproot")["hbtres"].arrays()
+                        out_tree = {
+                            field: np.asarray(out_tree[field])
+                            for field in out_tree.fields
+                        }
+                    else:
+                        out_tree = {c: np.asarray(arr[c]) for c in cfg.klub_index_columns}
 
-                total_mask = np.ones(len(arr), dtype=bool)
-                for shape_name in shape_names:
-                    # insert aliases
-                    syst_arr = arr
-                    if shape_systs[shape_name]["num_sources"] == 1:
-                        for dst, src in shape_systs[shape_name]["aliases"].items():
-                            if src in arr.fields:
-                                # easy case: just drop in the alias
-                                syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                    if "nominal" in key:
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index, models)
                         # evaluate the data
-                        with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
+                        with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
                             out_tree = eval(model,cont_inputs, cat_inputs,
                                             self.spins, self.masses,
                                             eval_mask, class_names,
-                                            shape_name, out_tree)
-                            # update progress
-                            publish_progress(progress_step)
-                            progress_step += 1
-                    else:
-                        # access vectors
-                        for i in range(shape_systs[shape_name]["num_sources"]):
-                            for dst, src in shape_systs[shape_name]["aliases"].items():
-                                if src in arr.fields:
-                                    vector = syst_arr[src]
-                                    # get bool mask of valid entries
-                                    mask = ak.count(vector, axis=1) == shape_systs[shape_name]["num_sources"]
-                                    if np.any(~mask):
-                                        # reduce syst_arr to only valid entries
-                                        syst_arr = syst_arr[mask]
-                                        print((f"removing {np.sum(~mask)/(len(mask)):.2%} "
-                                            f"due to {shape_name} vectors missing some syst variations"))
-                                        # update total_mask
-                                        total_mask &= mask.to_numpy()
-                                    vector = vector[total_mask] 
-                                    vector = vector[mask]
-                                    vector = vector.to_numpy()
-                                    # insert the row of the vector into the syst_arr
-                                    syst_arr = ak.with_field(syst_arr, vector[:, i], dst)
-                                else:
-                                    continue
-                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
-                            eval_mask &= total_mask
-                            # further merge mask with total_mask
-                            # eval_mask &= total_mask
-                            # evaluate the data
-                            with self.publish_step(f"evaluating model for shape '{shape_name}_{i}' on {eval_mask.sum()} events ..."):
-                                out_tree = eval(model,cont_inputs, cat_inputs,
-                                                self.spins, self.masses,
-                                                eval_mask, class_names,
-                                                f"{shape_name}_{i}", out_tree)
-                        # update progress (messed up here because of the vectors)
-                        publish_progress(progress_step)
-                        progress_step += 1
-                # save the output tree
-                with tmp_output.dump(formatter="uproot", mode="recreate") as f:
-                    f["hbtres"] = out_tree
+                                            "nominal", out_tree)
+
+                        # save the output tree
+                        with tmp_output.dump(formatter="uproot", mode="recreate") as f:
+                            f["hbtres"] = out_tree
+                    elif "shapes" in key:
+                        # create array of length arr to paste passing events into later
+                        total_mask = np.ones(len(arr), dtype=bool)
+                        # reduce array to only events that are in resolved1b, resolved2b or boosted category
+                        if self.sample.year_flag == 0: # 2016APV
+                            year = "2016APV"
+                            cat_mask = sel_cats(arr, year)
+                            self.publish_message(f"events falling into categories: {ak.mean(cat_mask) * 100:.2f}%")
+                            syst_arr = arr[cat_mask]
+                        elif self.sample.year_flag == 1: # 2016
+                            year = "2016"
+                            cat_mask = sel_cats(arr, year)
+                            self.publish_message(f"events falling into categories: {ak.mean(cat_mask) * 100:.2f}%")
+                            syst_arr = arr[cat_mask]
+                        elif self.sample.year_flag == 2: # 2017
+                            year = "2017"
+                            cat_mask = sel_cats(arr, year)
+                            self.publish_message(f"events falling into categories: {ak.mean(cat_mask) * 100:.2f}%")
+                            syst_arr = arr[cat_mask]
+                        elif self.sample.year_flag == 3: # 2018
+                            year = "2018"
+                            cat_mask = sel_cats(arr, year)
+                            self.publish_message(f"events falling into categories: {ak.mean(cat_mask) * 100:.2f}%")
+                            syst_arr = arr[cat_mask]
+
+                        for shape_name in shape_names:
+                            if shape_systs[shape_name]["num_sources"] == 1:
+                                for dst, src in shape_systs[shape_name]["aliases"].items():
+                                    if src in arr.fields:
+                                        # easy case: just drop in the alias
+                                        syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
+                                cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                                # evaluate the data
+                                with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
+                                    out_tree = eval(model,cont_inputs, cat_inputs,
+                                                    self.spins, self.masses,
+                                                    eval_mask, class_names,
+                                                    shape_name, out_tree, cat_mask)
+                                    # update progress
+                                    publish_progress(progress_step)
+                                    progress_step += 1
+                            else:
+                                total_mask = np.ones(len(syst_arr), dtype=bool)
+                                # access vectors
+                                for i in range(shape_systs[shape_name]["num_sources"]):
+                                    for dst, src in shape_systs[shape_name]["aliases"].items():
+                                        if src in arr.fields:
+                                            vector = syst_arr[src]
+                                            # get bool mask of valid entries
+                                            mask = ak.count(vector, axis=1) == shape_systs[shape_name]["num_sources"]
+                                            if np.any(~mask):
+                                                # reduce syst_arr to only valid entries
+                                                syst_arr = syst_arr[mask]
+                                                print((f"removing {np.sum(~mask)/(len(mask)):.2%} "
+                                                    f"due to {shape_name} vectors missing some syst variations"))
+                                                # update total_mask
+                                                total_mask &= mask.to_numpy()
+                                            vector = vector[total_mask] 
+                                            vector = vector[mask]
+                                            vector = vector.to_numpy()
+                                            # insert the row of the vector into the syst_arr
+                                            syst_arr = ak.with_field(syst_arr, vector[:, i], dst)
+                                        else:
+                                            continue
+                                    cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                                    eval_mask &= total_mask
+                                    # further merge mask with total_mask
+                                    # eval_mask &= total_mask
+                                    # evaluate the data
+                                    with self.publish_step(f"evaluating model for shape '{shape_name}_{i}' on {eval_mask.sum()} events ..."):
+                                        out_tree = eval(model,cont_inputs, cat_inputs,
+                                                        self.spins, self.masses,
+                                                        eval_mask, class_names,
+                                                        f"{shape_name}_{i}", out_tree, cat_mask)
+                                # update progress (messed up here because of the vectors)
+                                publish_progress(progress_step)
+                                progress_step += 1
+                        # save the output tree
+                        with tmp_output.dump(formatter="uproot", mode="recreate") as f:
+                            f["hbtres"] = out_tree
 
         # free memory
         del models
 
         # move the temporary outputs to the final location, optionally inserting the original tree
         output_collection.dir.touch()
-        for output, tmp_output in tmp_outputs.items():
-            tmp_output.move_to_local(output)
+        for num, output_dict in tmp_outputs.items():
+            for output, tmp_output in output_dict.items():
+                tmp_output.move_to_local(output)
 
 
 class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask):
