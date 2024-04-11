@@ -86,6 +86,13 @@ btag_wps = {
     },
 }
 
+pnet_wps = {
+    "2016APV": 0.9088,
+    "2016": 0.9137,
+    "2017": 0.9105,
+    "2018": 0.9172,
+}
+
 metnomu_et_cuts = {
     "2016APV": 160,
     "2016": 160,
@@ -107,7 +114,7 @@ class Sample:
     Example:
     - name: "ggF_Radion_m350"
     - skim_name: "2016APV_ggF_Radion_m350"
-    - directory_name: "SKIM_ggF_Radion_m350"
+    - directory_name: same as name, only existing for backwards compatibility
     - year: "2016APV"  (this is more like a "campaign")
     - year_int: 2016
     - year_flag: 0
@@ -141,8 +148,8 @@ class Sample:
         return f"{self.year}_{self.name}"
 
     @property
-    def directory_name(self):
-        return f"SKIM_{self.name}"
+    def directory_name(self) -> str:
+        return self.name
 
     @property
     def year_int(self) -> int:
@@ -163,41 +170,25 @@ class Sample:
         )
 
 
-# Note that two things are different in 2016APV and 2016 w.r.t. 2017 and 2018:
-# - Graviton samples miss "Bulk" in the name
-# - buggy DY suffix, "To" -> "to" in PtZ 250, 400 and 650
 all_samples = [
     *[
-        Sample(f"ggF_{res_name}_m{mass}", year=year, spin=spin, mass=float(mass))
-        for year in ["2016APV", "2016"]
-        for spin, res_name in [(0, "Radion"), (2, "Graviton")]
-        for mass in masses
-    ],
-    *[
-        Sample(f"ggF_{res_name}_m{mass}", year=year, spin=spin, mass=float(mass))
-        for year in ["2017", "2018"]
-        for spin, res_name in [(0, "Radion"), (2, "BulkGraviton")]
+        Sample(f"{res_name}{mass}", year=year, spin=spin, mass=float(mass))
+        for year in luminosities.keys()
+        for spin, res_name in [(0, "Rad"), (2, "Grav")]
         for mass in masses
     ],
     *[
         Sample(f"TT_{tt_channel}Lep", year=year)
         for year in luminosities.keys()
-        for tt_channel in ["fully", "semi"]
+        for tt_channel in ["Fully", "Semi"]
     ],
     *[
-        Sample(f"DY_amc_{dy_suffix}", year=year)
-        for year in ["2016APV", "2016"]
+        Sample(f"DY_{dy_suffix}", year=year)
+        for year in luminosities.keys()
         for dy_suffix in [
-            "incl", "0j", "1j", "2j",
-            "PtZ_0To50", "PtZ_50To100", "PtZ_100To250", "PtZ_250to400", "PtZ_400to650", "PtZ_650toInf",
-        ]
-    ],
-    *[
-        Sample(f"DY_amc_{dy_suffix}", year=year)
-        for year in ["2017", "2018"]
-        for dy_suffix in [
-            "incl", "0j", "1j", "2j",
-            "PtZ_0To50", "PtZ_50To100", "PtZ_100To250", "PtZ_250To400", "PtZ_400To650", "PtZ_650ToInf",
+            "Incl",
+            "0J", "1J", "2J",
+            "PtZ0To50", "PtZ100To250", "PtZ250To400", "PtZ400To650", "PtZ50To100", "PtZ650ToInf",
         ]
     ],
     *[
@@ -227,39 +218,40 @@ def select_samples(*patterns):
     return samples
 
 
-# note that graviton samples in 2016APV and 2016 are different from 2017 and 2018
 train_masses_central = "320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750"
 train_masses_all = "250|260|270|280|300|320|350|400|450|500|550|600|650|700|750|800|850|900|1000|1250|1500|1750|2000|2500|3000"  # noqa
 sample_sets = {
     "default_2016APV": (samples_default_2016APV := select_samples(
-        rf"^2016APV_ggF_Radion_m({train_masses_all})$",
-        rf"^2016APV_ggF_Graviton_m({train_masses_all})$",
-        r"^2016APV_DY_amc_PtZ_.*$",
-        r"^2016APV_TT_(fully|semi)Lep$",
+        rf"^2016APV_Rad({train_masses_all})$",
+        rf"^2016APV_Grav({train_masses_all})$",
+        r"^2016APV_DY_PtZ.*$",
+        r"^2016APV_TT_(Fully|Semi)Lep$",
         r"^2016APV_ttHToTauTau*$",
     )),
+    # TODO: adjust to actual 2016
     "default_2016": (samples_default_2016 := select_samples(
-        rf"^2016_ggF_Radion_m({train_masses_all})$",
-        rf"^2016_ggF_Graviton_m({train_masses_all})$",
-        r"^2016_DY_amc_PtZ_.*$",
-        r"^2016_TT_(fully|semi)Lep$",
+        rf"^2016_Rad({train_masses_all})$",
+        rf"^2016_Grav({train_masses_all})$",
+        r"^2016_DY_PtZ.*$",
+        r"^2016_TT_(Fully|Semi)Lep$",
         r"^2016_ttHToTauTau*$",
     )),
     "default_2016all": samples_default_2016APV + samples_default_2016,
     "default_2017": (samples_default_2017 := select_samples(
-        rf"^2017_ggF_Radion_m({train_masses_all})$",
-        rf"^2017_ggF_BulkGraviton_m({train_masses_all})$",
-        r"^2017_DY_amc_PtZ_.*$",
-        r"^2017_TT_(fully|semi)Lep$",
+        rf"^2017_Rad({train_masses_all})$",
+        rf"^2017_Grav({train_masses_all})$",
+        r"^2017_DY_PtZ.*$",
+        r"^2017_TT_(Fully|Semi)Lep$",
         r"^2017_ttHToTauTau*$",
     )),
     "default_2018": (samples_default_2018 := select_samples(
-        rf"^2018_ggF_Radion_m({train_masses_all})$",
-        rf"^2018_ggF_BulkGraviton_m({train_masses_all})$",
-        r"^2018_DY_amc_PtZ_.*$",
-        r"^2018_TT_(fully|semi)Lep$",
+        rf"^2018_Rad({train_masses_all})$",
+        rf"^2018_Grav({train_masses_all})$",
+        r"^2018_DY_PtZ.*$",
+        r"^2018_TT_(Fully|Semi)Lep$",
         r"^2018_ttHToTauTau*$",
     )),
+    "default_1617": samples_default_2016APV + samples_default_2016 + samples_default_2017,
     "default": samples_default_2016APV + samples_default_2016 + samples_default_2017 + samples_default_2018,
     "test": select_samples(
         "2017_ggF_BulkGraviton_m500",
@@ -270,18 +262,20 @@ sample_sets = {
     ),
 }
 
+# label information
+# (sample patterns are evaluated on top of those selected by sample_sets)
 label_sets = {
     "binary": {
-        0: {"name": "Signal", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        0: {"name": "Signal", "sample_patterns": [r"^201\d.*_(Rad|Grav)\d+$"]},
         1: {"name": "Background", "sample_patterns": ["201*_DY*", "201*_TT*"]},
     },
     "multi3": {
-        0: {"name": "HH", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        0: {"name": "HH", "sample_patterns": [r"^201\d.*_(Rad|Grav)\d+$"]},
         1: {"name": "TT", "sample_patterns": ["201*_TT*"]},
         2: {"name": "DY", "sample_patterns": ["201*_DY*"]},
     },
     "multi4": {
-        0: {"name": "HH", "sample_patterns": ["201*_ggF_Radion*", r"^201\d.*_ggF_(Bulk)?Graviton_m.+$"]},
+        0: {"name": "HH", "sample_patterns": [r"^201\d.*_(Rad|Grav)\d+$"]},
         1: {"name": "DY", "sample_patterns": ["201*_DY*"]},
         2: {"name": "TT", "sample_patterns": ["201*_TT*"]},
         3: {"name": "TTH", "sample_patterns": ["201*_ttHToTauTau*"]},
@@ -409,6 +403,30 @@ cont_feature_sets = {
             ]
         ],
     ],
+    "default_daurot_fatjet": [
+        "met_px", "met_py",
+        "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_masked_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "HHbtag",
+            ]
+        ],
+        *[
+            f"fatjet_masked_{feat}"
+            for feat in [
+                "px", "py", "pz", "e",
+            ]
+        ],
+    ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -454,6 +472,9 @@ cat_feature_sets = {
     "default": [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
     ],
+    "default_pnet": [
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "pass_pnet",
+    ],
     "full": (cat_features_full := [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx",
     ]),
@@ -465,7 +486,6 @@ cat_feature_sets = {
 # selection sets can be strings, lists (which will be AND joined) or dictionaries with years mapping to strings or lists
 # (in the latter case, the training script will choose the year automatically based on the sample)
 selection_sets = {
-    # TODO: the isLeptrigger condition will change with the new trigger strategy!
     "baseline": (baseline_selection := [
         "nbjetscand > 1",
         "nleps == 0",
@@ -493,18 +513,25 @@ selection_sets = {
         ]
         for year, w in btag_wps.items()
     },
-    "new_skims_baseline": {
+    "new_baseline": {
         year: [
             "nleps == 0",
-            "(nbjetscand > 1 | isBoosted == 1)",
+            "isOS == 1",
+            "dau2_deepTauVsJet >= 5",
+            # TODO: this used "isBoosted == 1" previously, but now we are using the pnet score to effectively recover
+            # events that had a fatjet but failed the loose pnet cut
+            # NOTE: if we change the selection to avoid inverted pnet SFs, the phase space will be identical, but the
+            # decision on which jet / fatjet features are disabled will be different
+            f"((nbjetscand > 1) | (fatjet_particleNetMDJetTags_probXbb >= {wp}))",
+            "((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
             (
-                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 0)) | ",  # noqa
-                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]})) & (pairType == 1)) | ",  # noqa
-                f"((isLeptrigger == 1) | (isMETtriggerNoThresh & metnomu_et > {metnomu_et_cuts[year]}) | isSingleTauTrigger ) & (pairType == 2))",  # noqa
+                "((pairType == 0) & (dau1_iso < 0.15)) | "
+                "((pairType == 1) & (dau1_eleMVAiso == 1)) | "
+                "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
             ),
         ]
-        for year in metnomu_et_cuts
-    }
+        for year, wp in pnet_wps.items()
+    },
 }
 
 klub_aliases: dict[str, str] = {
@@ -530,6 +557,15 @@ dynamic_columns = {
         )),
     ),
     # actual columns
+    "pass_pnet": (
+        pass_pnet_cols := ("year_flag", "fatjet_particleNetMDJetTags_probXbb"),
+        (lambda year_flag, pnet: (
+            ((year_flag == 0) & (pnet >= pnet_wps["2016APV"])) |
+            ((year_flag == 1) & (pnet >= pnet_wps["2016"])) |
+            ((year_flag == 2) & (pnet >= pnet_wps["2017"])) |
+            ((year_flag == 3) & (pnet >= pnet_wps["2018"]))
+        )),
+    ),
     "dmet_resp_px": (
         ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", rot_phi),
         (lambda x, y, p: np.cos(-p) * x - np.sin(-p) * y),
@@ -678,6 +714,50 @@ dynamic_columns = {
         ("bjet2_pt", "bjet2_eta"),
         (lambda a, b: a * np.sinh(b)),
     ),
+    # bjet values masked by pass_pnet: when 1, features are set to "missing" values
+    **{
+        f"bjet{i}_masked_{f}": (
+            (f"bjet{i}_{f}", "pass_pnet"),
+            (lambda v, pass_pnet: np.where(pass_pnet == 1, d, v)),
+        )
+        for i in [1, 2]
+        for f, d in [
+            ("e", 0.0),
+            ("px", 0.0),
+            ("py", 0.0),
+            ("pz", 0.0),
+            ("btag_deepFlavor", -1.0),
+            ("cID_deepFlavor", -1.0),
+            ("CvsB", -1.0),
+            ("CvsL", -1.0),
+            ("HHbtag", -1.0),
+        ]
+    },
+    # fatjet features
+    "fatjet_dphi": (
+        ("fatjet_phi", rot_phi),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
+    "fatjet_px": (
+        ("fatjet_pt", "fatjet_dphi"),
+        (lambda a, b: a * np.cos(b)),
+    ),
+    "fatjet_py": (
+        ("fatjet_pt", "fatjet_dphi"),
+        (lambda a, b: a * np.sin(b)),
+    ),
+    "fatjet_pz": (
+        ("fatjet_pt", "fatjet_eta"),
+        (lambda a, b: a * np.sinh(b)),
+    ),
+    # fat jet values masked by pass_pnet: when not 1, all features are set to 0
+    **{
+        f"fatjet_masked_{f}": (
+            (f"fatjet_{f}", "pass_pnet"),
+            (lambda v, pass_pnet: np.where(pass_pnet == 1, v, 0.0)),
+        )
+        for f in ["e", "px", "py", "pz"]
+    },
     "dibjet_deltaR": (
         ("bjet1_phi", "bjet2_phi", "bjet1_eta", "bjet2_eta"),
         (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
@@ -800,7 +880,7 @@ dynamic_columns = {
     # "ditau_deltaR_x_sv_pt":(
     #     ("ditau_deltaR", "tauH_SVFIT_pt"),
     #     (lambda a, b: a*b)
-    # )
+    # ),
 }
 
 embedding_expected_inputs = {
@@ -812,6 +892,7 @@ embedding_expected_inputs = {
     "spin": [0, 2],
     "year": [0, 1, 2, 3],
     "isBoosted": [0, 1],
+    "pass_pnet": [0, 1],
     "top_mass_idx": [0, 1, 2, 3],
 }
 

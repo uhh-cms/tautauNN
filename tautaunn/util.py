@@ -30,14 +30,23 @@ from law.util import human_duration
 epsilon = 1e-6
 
 
-def _load_root_file_impl(file_name: str, features: list[str], selections: str) -> tuple[np.recarray, float, str] | str:
+def _load_root_file_impl(
+    sample,
+    file_name: str,
+    features: list[str],
+    selections: str,
+) -> tuple[np.recarray, float, str] | str:
     from tautaunn.config import klub_aliases
+
+    # remove year_flag if requested since it is stored based on the sample data
+    features = [f for f in features if f != "year_flag"]
 
     with uproot.open(file_name) as f:
         if "HTauTauTree" not in f or "h_eff" not in f:
             return file_name
         tree = f["HTauTauTree"]
         ak_array = tree.arrays(features, cut=selections, aliases=klub_aliases, library="ak")
+        ak_array = ak.with_field(ak_array, sample.year_flag, "year_flag")
         ak_array = ak.with_field(ak_array, 1.0, "sum_weights")
         rec = ak_array.to_numpy()
         return rec, f["h_eff"].values()[0], file_name
@@ -66,7 +75,7 @@ def load_sample_root(data_dir, sample, features, selections, max_events=-1, cach
 
         # load files in parallel
         n_files_seen = 0
-        pool_args = [(file_name, features, selections) for file_name in file_names]
+        pool_args = [(sample, file_name, features, selections) for file_name in file_names]
         t0 = time.perf_counter()
         with Pool(n_threads) as pool:
             for result in pool.imap(_load_root_file_impl_mp, pool_args):

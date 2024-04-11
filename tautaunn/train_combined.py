@@ -336,15 +336,15 @@ def train(
     assert len(combined_cat_input_names) == len(set(combined_cat_input_names))
 
     # hack: load all features to use just a single cache, and select the ones to use afterwards
-    all_combined_cont_input_names = ["met_px", "met_py", "met_et", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py", "met_cov00", "met_cov01", "met_cov11", "ditau_deltaphi", "ditau_deltaeta", "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso", "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_pnet_bb", "bjet1_pnet_cc", "bjet1_pnet_b", "bjet1_pnet_c", "bjet1_pnet_g", "bjet1_pnet_uds", "bjet1_pnet_pu", "bjet1_pnet_undef", "bjet1_HHbtag", "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag", "top1_mass", "top2_mass", "W_distance", "Z_distance", "H_distance", "tauH_e", "tauH_px", "tauH_py", "tauH_pz", "bH_e", "bH_px", "bH_py", "bH_pz", "HH_e", "HH_px", "HH_py", "HH_pz", "HHKin_mass", "HHKin_chi2", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"]  # noqa
-    all_combined_cat_input_names = ["pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx"]  # noqa
-    assert all(name in all_combined_cont_input_names for name in combined_cont_input_names)
-    assert all(name in all_combined_cat_input_names for name in combined_cat_input_names)
-    needed_combined_cont_input_names = combined_cont_input_names
-    needed_combined_cat_input_names = combined_cat_input_names
-    combined_cont_input_names = all_combined_cont_input_names
-    combined_cat_input_names = all_combined_cat_input_names
-    # end
+    # all_combined_cont_input_names = ["met_px", "met_py", "met_et", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py", "met_cov00", "met_cov01", "met_cov11", "ditau_deltaphi", "ditau_deltaeta", "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso", "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_pnet_bb", "bjet1_pnet_cc", "bjet1_pnet_b", "bjet1_pnet_c", "bjet1_pnet_g", "bjet1_pnet_uds", "bjet1_pnet_pu", "bjet1_pnet_undef", "bjet1_HHbtag", "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag", "top1_mass", "top2_mass", "W_distance", "Z_distance", "H_distance", "tauH_e", "tauH_px", "tauH_py", "tauH_pz", "bH_e", "bH_px", "bH_py", "bH_pz", "HH_e", "HH_px", "HH_py", "HH_pz", "HHKin_mass", "HHKin_chi2", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"]  # noqa
+    # all_combined_cat_input_names = ["pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx"]  # noqa
+    # assert all(name in all_combined_cont_input_names for name in combined_cont_input_names)
+    # assert all(name in all_combined_cat_input_names for name in combined_cat_input_names)
+    # needed_combined_cont_input_names = combined_cont_input_names
+    # needed_combined_cat_input_names = combined_cat_input_names
+    # combined_cont_input_names = all_combined_cont_input_names
+    # combined_cat_input_names = all_combined_cat_input_names
+    # # end
 
     # determine which columns to read
     columns_to_read = set()
@@ -403,10 +403,10 @@ def train(
             parameterize_mass_any,
             parameterize_spin_any,
             # hack: fixed sets
-            # regression_set,
-            "default",
-            # lbn_set,
-            "test5",
+            regression_set,
+            # "default",
+            lbn_set,
+            # "test5",
             # end
             n_folds,
             fold_index,
@@ -508,28 +508,28 @@ def train(
             with open(cache_file, "wb") as f:
                 pickle.dump(cache_data, f)
 
-    # hack: reduce inputs to needed ones as per the above hack
-    needed_cont_indices = get_indices(all_combined_cont_input_names, needed_combined_cont_input_names)
-    needed_cat_indices = get_indices(all_combined_cat_input_names, needed_combined_cat_input_names)
-    if parameterize_mass_any:
-        needed_cont_indices.append(-1)
-    if parameterize_spin_any and parameterize_year_any:
-        needed_cat_indices += [-2, -1]
-    elif parameterize_spin_any or parameterize_year_any:
-        needed_cat_indices.append(-1)
-    cont_inputs_train = [inp[:, needed_cont_indices] for inp in cont_inputs_train]
-    cont_inputs_valid = [inp[:, needed_cont_indices] for inp in cont_inputs_valid]
-    cat_inputs_train = [inp[:, needed_cat_indices] for inp in cat_inputs_train]
-    cat_inputs_valid = [inp[:, needed_cat_indices] for inp in cat_inputs_valid]
-    combined_cont_input_names = needed_combined_cont_input_names
-    combined_cat_input_names = needed_combined_cat_input_names
-    del all_combined_cont_input_names
-    del all_combined_cat_input_names
-    del needed_combined_cont_input_names
-    del needed_combined_cat_input_names
-    del needed_cont_indices
-    del needed_cat_indices
-    # end
+    # # hack: reduce inputs to needed ones as per the above hack
+    # needed_cont_indices = get_indices(all_combined_cont_input_names, needed_combined_cont_input_names)
+    # needed_cat_indices = get_indices(all_combined_cat_input_names, needed_combined_cat_input_names)
+    # if parameterize_mass_any:
+    #     needed_cont_indices.append(-1)
+    # if parameterize_spin_any and parameterize_year_any:
+    #     needed_cat_indices += [-2, -1]
+    # elif parameterize_spin_any or parameterize_year_any:
+    #     needed_cat_indices.append(-1)
+    # cont_inputs_train = [inp[:, needed_cont_indices] for inp in cont_inputs_train]
+    # cont_inputs_valid = [inp[:, needed_cont_indices] for inp in cont_inputs_valid]
+    # cat_inputs_train = [inp[:, needed_cat_indices] for inp in cat_inputs_train]
+    # cat_inputs_valid = [inp[:, needed_cat_indices] for inp in cat_inputs_valid]
+    # combined_cont_input_names = needed_combined_cont_input_names
+    # combined_cat_input_names = needed_combined_cat_input_names
+    # del all_combined_cont_input_names
+    # del all_combined_cat_input_names
+    # del needed_combined_cont_input_names
+    # del needed_combined_cat_input_names
+    # del needed_cont_indices
+    # del needed_cat_indices
+    # # end
 
     # compute batch weights that ensures that each class is equally represented in each batch
     # and that samples within a class are weighted according to their yield
@@ -579,6 +579,11 @@ def train(
         np.sum(np.concatenate([inp**2 * bw / inp.shape[0] for inp, bw in dnn_input_gen()]), axis=0) /
         sum(batch_weights)
     ) - dnn_cont_input_means**2
+
+    # finite check
+    if np.any(~np.isfinite(dnn_cont_input_means)) or np.any(~np.isfinite(dnn_cont_input_vars)):
+        print("WARNING: non-finite means or variances detected in continuous inputs, starting debugger")
+        from IPython import embed; embed()  # noqa
 
     # get lists of embedded feature values
     possible_cat_input_values = [deepcopy(embedding_expected_inputs[name]) for name in cat_input_names]
@@ -811,7 +816,6 @@ def train(
                         self.fadein_lbn_factor.assign(1.0)
                     print(f"\n{self.name}: fix fade-in factor at 1.0")
 
-
         # from tautaunn.tf_util import LRFinder
         # x_train_lr_find = dataset_train.get_n_batches(500)
         # lr_callback = LRFinder(
@@ -912,8 +916,6 @@ def train(
                 # verify that the regression fade-in took place
                 reg_fader = fit_callbacks[-1]
                 if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
-                    print("regression fade-in did not take place yet, debug!")
-                    from IPython import embed; embed()
                     raise RuntimeError("regression fade-in did not take place yet")
 
                 # obtain updated hyper-parameters from the fine-tuning config
