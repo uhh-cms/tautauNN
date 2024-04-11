@@ -31,14 +31,14 @@ class TrainingParameters(Task):
     )
     units = law.CSVParameter(
         cls=luigi.IntParameter,
-        default=5 * (128,),
-        description="number of units per layer; default: 128,128,128,128,128",
+        default=8 * (128,),
+        description="number of units per layer; default: 128,128,128,128,128,128,128,128",
         brace_expand=True,
     )
     connection_type = luigi.ChoiceParameter(
-        default="fcn",
+        default="dense",
         choices=["fcn", "res", "dense"],
-        description="connection type between layers; choices: fcn,res,dense; default: fcn",
+        description="connection type between layers; choices: fcn,res,dense; default: dense",
     )
     activation = luigi.Parameter(
         default="elu",
@@ -61,9 +61,9 @@ class TrainingParameters(Task):
         description="batch size; default: 4096",
     )
     optimizer = luigi.ChoiceParameter(
-        default="adam",
+        default="adamw",
         choices=["adam", "adamw"],
-        description="the optimizer the use; choices: adam,adamw; default: adam",
+        description="the optimizer the use; choices: adam,adamw; default: adamw",
     )
     learning_rate = luigi.FloatParameter(
         default=3e-3,
@@ -104,9 +104,9 @@ class TrainingParameters(Task):
         description="validate every n batches; default: 500",
     )
     selection_set = luigi.ChoiceParameter(
-        default="baseline",
+        default="new_baseline",
         choices=list(cfg.selection_sets.keys()),
-        description="name of selection set; default: baseline",
+        description="name of selection set; default: new_baseline",
     )
     label_set = luigi.ChoiceParameter(
         default="multi3",
@@ -119,24 +119,24 @@ class TrainingParameters(Task):
         description="name of sample set; default: default",
     )
     cont_feature_set = luigi.ChoiceParameter(
-        default="reg",
+        default="default_daurot_fatjet",
         choices=list(cfg.cont_feature_sets.keys()),
-        description="name of continuous feature set; default: reg",
+        description="name of continuous feature set; default: default_daurot_fatjet",
     )
     cat_feature_set = luigi.ChoiceParameter(
-        default="reg",
+        default="default_pnet",
         choices=list(cfg.cat_feature_sets.keys()),
-        description="name of categorical feature set; default: reg",
+        description="name of categorical feature set; default: default_pnet",
     )
     regression_set = luigi.ChoiceParameter(
-        default=law.NO_STR,
+        default="v3_lbn_ft_lt20_lr1",  # TODO: update to new training
         choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
-        description="name of a regression set to use; default: empty",
+        description="name of a regression set to use; default: v3_lbn_ft_lt20_lr1",
     )
     lbn_set = luigi.ChoiceParameter(
-        default=law.NO_STR,
+        default="default_daurot_fatjet",
         choices=[law.NO_STR] + list(cfg.lbn_sets.keys()),
-        description="name of a LBN set to use; default: empty",
+        description="name of a LBN set to use; default: default_daurot_fatjet",
     )
     skip_tensorboard = luigi.BoolParameter(
         default=False,

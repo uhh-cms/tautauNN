@@ -1132,4 +1132,17 @@ lbn_sets = {
         boost_mode="pairs",
         n_particles=10,
     ),
+    "default_daurot_fatjet": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_masked_e", "bjet1_masked_px", "bjet1_masked_py", "bjet1_masked_pz",
+            "bjet2_masked_e", "bjet2_masked_px", "bjet2_masked_py", "bjet2_masked_pz",
+            "fatjet_masked_e", "fatjet_masked_px", "fatjet_masked_py", "fatjet_masked_pz",
+            None, "met_px", "met_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=10,
+    ),
 }
