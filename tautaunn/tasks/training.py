@@ -129,9 +129,9 @@ class TrainingParameters(Task):
         description="name of categorical feature set; default: default_pnet",
     )
     regression_set = luigi.ChoiceParameter(
-        default="v3_lbn_ft_lt20_lr1",  # TODO: update to new training
+        default="v4pre_lbn_ft_lt20_lr1",
         choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
-        description="name of a regression set to use; default: v3_lbn_ft_lt20_lr1",
+        description="name of a regression set to use; default: v4pre_lbn_ft_lt20_lr1",
     )
     lbn_set = luigi.ChoiceParameter(
         default="default_daurot_fatjet",
