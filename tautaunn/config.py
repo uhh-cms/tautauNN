@@ -1006,6 +1006,24 @@ regression_sets = {
             "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-1,
         },
     ),
+    "v4_1fold": (reg_set_v4pre := RegressionSet(
+        model_files={
+            # just one fold 
+            0: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")
+        },
+        cont_feature_set="default_daurot_fatjet",
+        cat_feature_set="default_pnet",
+        parameterize_year=True,
+        parameterize_spin=True,
+        parameterize_mass=True,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        fade_in=(150, 20),
+        fine_tune=None,
+        feed_lbn=False,
+    )),
     "v4pre": (reg_set_v4pre := RegressionSet(
         model_files={
             # TODO: update path to pre model file
