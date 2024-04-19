@@ -340,26 +340,13 @@ def sel_iso_first_lep(array: ak.Array) -> ak.Array:
 
 
 @selector(
-    needs=["pairType", "isLeptrigger", "isMETtriggerNoThresh", "metnomu_et", "isSingleTauTrigger",],
-    str_repr="(((pairType == 0) | (pairType == 1)) & ((isLeptrigger == 1) | ((isMETtriggerNoThresh == 1) & (metnomu_et > 180))) | ((pairType == 2) & ((isLepTrigger == 1) | ((isMETtriggerNoThresh == 1) & (metnomu_et > 180)) | (isSingleTauTrigger == 1))))",
+    needs=["isLeptrigger", "isMETtrigger", "isSingleTauTrigger",],
+    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTauTrigger == 1))",
 )
 def sel_trigger(array: ak.Array) -> ak.Array:
     return (
-        (((array.pairType == 0) | (array.pairType == 1)) & ((array.isLeptrigger == 1) | ((array.isMETtriggerNoThresh == 1) & (array.metnomu_et > 180))) |
-         ((array.pairType == 2) & ((array.isLeptrigger == 1) | ((array.isMETtriggerNoThresh == 1) & (array.metnomu_et > 180)) | (array.isSingleTauTrigger == 1))))
+        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1)
     )
-
-
-# old trigger selection
-#@selector(
-#    needs=["pairType", "isLeptrigger"],
-#    str_repr="(((pairType == 0) | (pairType == 1)) & (isLeptrigger == 1)) | (pairType == 2)",
-#)
-#def sel_trigger(array: ak.Array) -> ak.Array:
-#    return (
-#        (((array.pairType == 0) | (array.pairType == 1)) & (array.isLeptrigger == 1)) |
-#        (array.pairType == 2)
-#    )
 
 
 @selector(
