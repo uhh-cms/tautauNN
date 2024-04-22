@@ -49,10 +49,8 @@ def get_all_skim_names() -> dict[str, list[str]]:
     # note: VBF signals are skipped!
     return {
         year: [
-            d[5:] for d in os.listdir(skim_dir)
+            d for d in os.listdir(skim_dir)
             if (
-                d.startswith("SKIM_") and
-                not re.match(r"^.*VBF_(BulkGraviton|Graviton|Radion).*$", d) and
                 os.path.isdir(os.path.join(skim_dir, d))
             )
         ]
