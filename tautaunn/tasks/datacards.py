@@ -38,6 +38,8 @@ class EvaluationParameters(MultiFoldParameters):
 
 class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
+    nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
+
     @property
     def chunk_size(self):
         return 1
@@ -66,17 +68,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
-        # return law.SiblingFileCollection({
-        # num: self.local_target(f"output_{num}.root")
-        # for num in self.branch_data
-        # })
-        return law.SiblingFileCollection({
-            num: {
+        targets = {}
+        for num in self.branch_data:
+            targets[num] = {
                 "nominal": self.local_target(f"output_{num}_nominal.root"),
-                "shapes": self.local_target(f"output_{num}_shapes.root"),
             }
-            for num in self.branch_data
-        })
+            if not self.nominal_only:
+                targets[num]["shapes"] = self.local_target(f"output_{num}_shapes.root")
+        return law.SiblingFileCollection(targets)
 
     @law.decorator.safe_output
     def run(self):
@@ -145,10 +144,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             pred_arr = -1 * np.ones(len(eval_mask), dtype=np.float32)
                             pred_arr[eval_mask] = predictions[:, i]
                         out_tree[field] = pred_arr
-            return out_tree
 
         def sel_trigger(array: ak.Array) -> ak.Array:
-            return ((array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1))
+            return ((array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1))
 
         def sel_btag_m(array: ak.Array, year: str) -> ak.Array:
             return (
@@ -167,7 +165,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         def sel_pnet_l(array: ak.Array, year: str) -> ak.Array:
             return (
-                (array.fatjet_particleNetMDJetTags_score > cfg.pnet_wps[year]["loose"])
+                (array.fatjet_particleNetMDJetTags_score > cfg.pnet_wps[year])
             )
 
         def sel_cats(array: ak.Array, year: str) -> ak.Array:
@@ -228,14 +226,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # jes has 11 sources
         jes_dict = {
             f"jes_{src}_{ud}": {
-                "bjet1_pt": f"bjet1_pt_jet{ud}_{src}",
-                "bjet1_e": f"bjet1_e_jet{ud}_{src}",
-                "bjet2_pt": f"bjet2_pt_jet{ud}_{src}",
-                "bjet2_e": f"bjet2_e_jet{ud}_{src}",
-                "fatjet_pt": f"fatjet_pt_jet{ud}_{src}",
-                "fatjet_e": f"fatjet_e_jet{ud}_{src}",
-                "METx": f"METx_jet{ud}_{src}",
-                "METy": f"METy_jet{ud}_{src}",
+                # "bjet1_pt": f"bjet1_pt_jet{ud}{src}",
+                # "bjet1_e": f"bjet1_e_jet{ud}{src}",
+                # "bjet2_pt": f"bjet2_pt_jet{ud}{src}",
+                # "bjet2_e": f"bjet2_e_jet{ud}{src}",
+                "fatjet_pt": f"fatjet_pt_jet{ud}{src}",
+                "fatjet_e": f"fatjet_e_jet{ud}{src}",
+                "METx": f"METx_jet{ud}{src}",
+                "METy": f"METy_jet{ud}{src}",
             }
             for ud in ["up", "down"] for src in range(1, 12)
         }
@@ -335,7 +333,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
                 # read columns and insert dynamic ones
                 arr = in_tree.arrays(
-                    list(columns_to_read),
+                    list(columns_to_read - {"year_flag"}),
                     aliases=cfg.klub_aliases,
                     library="ak",
                 )
@@ -359,20 +357,20 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                         cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index, models)
                         # evaluate the data
                         with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                            out_tree = eval(model, cont_inputs, cat_inputs,
-                                            self.spins, self.masses,
-                                            eval_mask, class_names,
-                                            "nominal", out_tree)
+                            eval(
+                                model, cont_inputs, cat_inputs,
+                                self.spins, self.masses,
+                                eval_mask, class_names,
+                                "nominal", out_tree,
+                            )
 
-                        # save the output tree
-                        with tmp_output.dump(formatter="uproot", mode="recreate") as f:
-                            f["hbtres"] = out_tree
                     else:  # shapes
                         # reduce array to only events that are in resolved1b, resolved2b or boosted category
                         category_mask = sel_cats(arr, self.sample.year)
                         self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
                         syst_arr = arr[category_mask]
-
+                        if not tmp_output.exists():
+                            out_tree = {c: a[category_mask] for c, a in out_tree.items()}
                         for shape_name in shape_names:
                             for dst, src in shape_systs[shape_name].items():
                                 if src in arr.fields:
@@ -380,17 +378,25 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
                             # evaluate the data
                             with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
-                                out_tree = eval(model, cont_inputs, cat_inputs,
-                                                self.spins, self.masses,
-                                                eval_mask, class_names,
-                                                shape_name, out_tree)
+                                eval(
+                                    model, cont_inputs, cat_inputs,
+                                    self.spins, self.masses,
+                                    eval_mask, class_names,
+                                    shape_name, out_tree,
+                                )
                                 # update progress
                                 publish_progress(progress_step)
                                 progress_step += 1
 
                     # save the output tree
                     with tmp_output.dump(formatter="uproot", mode="recreate") as f:
-                        f["hbtres"] = out_tree
+                        try:
+                            f["hbtres"] = out_tree
+                        except:
+                            import traceback
+                            traceback.print_exc()
+                            from IPython import embed
+                            embed()
 
         # free memory
         del models

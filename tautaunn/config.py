@@ -548,6 +548,7 @@ klub_index_columns = [
 klub_category_columns = [
     "pairType",
     "nleps",
+    "nbjetscand",
     "bjet1_bID_deepFlavor",
     "bjet2_bID_deepFlavor",
     "isBoosted",
@@ -1018,7 +1019,7 @@ regression_sets = {
     ),
     "v4_1fold": (reg_set_v4pre := RegressionSet(
         model_files={
-            # just one fold 
+            # just one fold
             0: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")
         },
         cont_feature_set="default_daurot_fatjet",
