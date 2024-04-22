@@ -71,7 +71,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             #for num in self.branch_data
         #})
         return law.SiblingFileCollection({
-            num: {f"nominal_{num}": self.local_target(f"output_{num}_nominal.root")},
+            num: {f"nominal_{num}": self.local_target(f"output_{num}_nominal.root"),
                   f"shapes_{num}": self.local_target(f"output_{num}_shapes.root")}
             for num in self.branch_data
         })
