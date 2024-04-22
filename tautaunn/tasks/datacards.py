@@ -71,8 +71,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # for num in self.branch_data
         # })
         return law.SiblingFileCollection({
-            num: {f"nominal_{num}": self.local_target(f"output_{num}_nominal.root"),
-                  f"shapes_{num}": self.local_target(f"output_{num}_shapes.root")}
+            num: {
+                "nominal": self.local_target(f"output_{num}_nominal.root"),
+                "shapes": self.local_target(f"output_{num}_shapes.root"),
+            }
             for num in self.branch_data
         })
 
@@ -117,9 +119,11 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
             return cont_inputs, cat_inputs, eval_mask
 
-        def eval(model, cont_inputs, cat_inputs,
-                 spins, masses, eval_mask, class_names,
-                 shape_name, out_tree):
+        def eval(
+            model, cont_inputs, cat_inputs,
+            spins, masses, eval_mask, class_names,
+            shape_name, out_tree,
+        ):
             for spin in spins:
                 # insert spin
                 cat_inputs[:, -1] = int(spin)
@@ -235,7 +239,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             },
             **ees_dict,
             **tes_dict,
-            **jes_dict
+            **jes_dict,
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
@@ -304,8 +308,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # prepare outputs that will first be created in a temporary location and then moved eventually
         output_collection = self.output()
         tmp_outputs = {
-            num: {output: law.LocalFileTarget(is_tmp="root")
-                  for output in output_dict.values() if not output.exists()}
+            num: {
+                output: law.LocalFileTarget(is_tmp="root")
+                for output in output_dict.values() if not output.exists()
+            }
             for num, output_dict in output_collection.targets.items()
         }
 
@@ -330,6 +336,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
                 # prepare the output tree structure if not done yet (in case this is the first fold)
                 for key, output in output_dict.items():
+                    assert key in ["nominal", "shapes"]
                     tmp_output = tmp_outputs[num][output]
                     if tmp_output.exists():
                         # read existing output columns that already evaluated on a previous fold
@@ -353,48 +360,30 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                         # save the output tree
                         with tmp_output.dump(formatter="uproot", mode="recreate") as f:
                             f["hbtres"] = out_tree
-                    elif "shapes" in key:
+                    else:  # shapes
                         # reduce array to only events that are in resolved1b, resolved2b or boosted category
-                        if self.sample.year_flag == 0:  # 2016APV
-                            year = "2016APV"
-                            category_mask = sel_cats(arr, year)
-                            self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                            syst_arr = arr[category_mask]
-                        elif self.sample.year_flag == 1:  # 2016
-                            year = "2016"
-                            category_mask = sel_cats(arr, year)
-                            self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                            syst_arr = arr[category_mask]
-                        elif self.sample.year_flag == 2:  # 2017
-                            year = "2017"
-                            category_mask = sel_cats(arr, year)
-                            self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                            syst_arr = arr[category_mask]
-                        elif self.sample.year_flag == 3:  # 2018
-                            year = "2018"
-                            category_mask = sel_cats(arr, year)
-                            self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                            syst_arr = arr[category_mask]
+                        category_mask = sel_cats(arr, self.sample.year)
+                        self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
+                        syst_arr = arr[category_mask]
 
                         for shape_name in shape_names:
-                            # if shape_systs[shape_name]["num_sources"] == 1:
                             for dst, src in shape_systs[shape_name].items():
                                 if src in arr.fields:
-                                    # easy case: just drop in the alias
                                     syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-                                cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
-                                # evaluate the data
-                                with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
-                                    out_tree = eval(model, cont_inputs, cat_inputs,
-                                                    self.spins, self.masses,
-                                                    eval_mask, class_names,
-                                                    shape_name, out_tree)
-                                    # update progress
-                                    publish_progress(progress_step)
-                                    progress_step += 1
-                        # save the output tree
-                        with tmp_output.dump(formatter="uproot", mode="recreate") as f:
-                            f["hbtres"] = out_tree
+                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+                            # evaluate the data
+                            with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
+                                out_tree = eval(model, cont_inputs, cat_inputs,
+                                                self.spins, self.masses,
+                                                eval_mask, class_names,
+                                                shape_name, out_tree)
+                                # update progress
+                                publish_progress(progress_step)
+                                progress_step += 1
+
+                    # save the output tree
+                    with tmp_output.dump(formatter="uproot", mode="recreate") as f:
+                        f["hbtres"] = out_tree
 
         # free memory
         del models
