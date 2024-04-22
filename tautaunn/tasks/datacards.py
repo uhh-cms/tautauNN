@@ -192,7 +192,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         # ees has 2 sources
         ees_dict = {
-            f"ele{ud}_{dm}": {
+            f"ees_{dm}_{ud}": {
                 "dau1_pt": f"dau1_pt_ele{ud}_{dm}",
                 "dau1_e": f"dau1_e_ele{ud}_{dm}",
                 "dau2_pt": f"dau2_pt_ele{ud}_{dm}",
@@ -204,7 +204,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
         # tes has 4 sources
         tes_dict = {
-            f"tau{ud}_{dm}": {
+            f"tes_{dm}_{ud}": {
                 "dau1_pt": f"dau1_pt_tau{ud}_{dm}",
                 "dau1_e": f"dau1_e_tau{ud}_{dm}",
                 "dau2_pt": f"dau2_pt_tau{ud}_{dm}",
@@ -214,13 +214,26 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             }
             for ud in ["up", "down"] for dm in ["DM0", "DM1", "DM10", "DM11"]
         }
+        mes_dict = {
+            f"mes_{ud}": {
+                "dau1_pt": f"dau1_pt_mu{ud}",
+                "dau1_e": f"dau1_e_mu{ud}",
+                "dau2_pt": f"dau2_pt_mu{ud}",
+                "dau2_e": f"dau2_e_mu{ud}",
+                "METx": f"METx_mu{ud}",
+                "METy": f"METy_mu{ud}",
+            }
+            for ud in ["up", "down"]
+        }
         # jes has 11 sources
         jes_dict = {
-            f"jet{ud}_{src}": {
-                "dau1_pt": f"dau1_pt_jet{ud}_{src}",
-                "dau1_e": f"dau1_e_jet{ud}_{src}",
-                "dau2_pt": f"dau2_pt_jet{ud}_{src}",
-                "dau2_e": f"dau2_e_jet{ud}_{src}",
+            f"jes_{src}_{ud}": {
+                "bjet1_pt": f"bjet1_pt_jet{ud}_{src}",
+                "bjet1_e": f"bjet1_e_jet{ud}_{src}",
+                "bjet2_pt": f"bjet2_pt_jet{ud}_{src}",
+                "bjet2_e": f"bjet2_e_jet{ud}_{src}",
+                "fatjet_pt": f"fatjet_pt_jet{ud}_{src}",
+                "fatjet_e": f"fatjet_e_jet{ud}_{src}",
                 "METx": f"METx_jet{ud}_{src}",
                 "METy": f"METy_jet{ud}_{src}",
             }
@@ -229,16 +242,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         # klub aliases for systematic variations
         shape_systs = {
-            "nominal": {
-                "dau1_pt": "dau1_pt",
-                "dau1_e": "dau1_e",
-                "dau2_pt": "dau2_pt",
-                "dau2_e": "dau2_e",
-                "METx": "METx",
-                "METy": "METy",
-            },
+            "nominal": {},
             **ees_dict,
             **tes_dict,
+            **mes_dict,
             **jes_dict,
         }
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
