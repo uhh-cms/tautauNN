@@ -321,7 +321,17 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
 
                 # read columns and insert dynamic ones
+<<<<<<< HEAD
                 arr = in_tree.arrays(list(columns_to_read), aliases=cfg.klub_aliases, library="ak")
+=======
+                arr = in_tree.arrays(
+                    list(columns_to_read),
+                    aliases=cfg.klub_aliases,
+                    library="ak",
+                )
+                arr = ak.with_field(arr, self.sample.year_flag, "year_flag")
+
+>>>>>>> 0f89fb8 (add year_flag to ak arrays)
                 # prepare the output tree structure if not done yet (in case this is the first fold)
                 for key, output in output_dict.items():
                     tmp_output = tmp_outputs[num][output]
