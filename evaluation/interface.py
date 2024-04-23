@@ -83,7 +83,8 @@ class NNInterface(object):
         dau2_dm: int,
         dau1_charge: int,
         dau2_charge: int,
-        pass_pnet: bool,  # whether a fatjet exists whose particleNetMDJetTags_probXbb scores passes the loose cut
+        has_bjet_pair: int,  # whether the event has a bjet pair (same as nbjetscand > 1)
+        is_boosted: int,  # whether the event has a fatjet
         # continuous input features
         met_px: float,
         met_py: float,
@@ -94,20 +95,15 @@ class NNInterface(object):
         dau1_px: float,
         dau1_py: float,
         dau1_pz: float,
-        dau1_dxy: float,
-        dau1_dz: float,
         dau2_e: float,
         dau2_px: float,
         dau2_py: float,
         dau2_pz: float,
-        dau2_dxy: float,
-        dau2_dz: float,
         bjet1_e: float,
         bjet1_px: float,
         bjet1_py: float,
         bjet1_pz: float,
         bjet1_btag_df: float,  # prob_b + prob_bb + prob_blep
-        bjet1_ctag_df: float,  # prob_c
         bjet1_cvsb: float,  # prob_c / (prob_c + prob_b + prob_bb + prob_blep)
         bjet1_cvsl: float,  # prob_c / (prob_c + prob_uds + prob_g)
         bjet1_hhbtag: float,
@@ -116,7 +112,6 @@ class NNInterface(object):
         bjet2_py: float,
         bjet2_pz: float,
         bjet2_btag_df: float,
-        bjet2_ctag_df: float,
         bjet2_cvsb: float,
         bjet2_cvsl: float,
         bjet2_hhbtag: float,
@@ -137,32 +132,36 @@ class NNInterface(object):
         met_px, met_py = rotate_to_phi(phi_lep, met_px, met_py)
         dau1_px, dau1_py = rotate_to_phi(phi_lep, dau1_px, dau1_py)
         dau2_px, dau2_py = rotate_to_phi(phi_lep, dau2_px, dau2_py)
-        if pass_pnet:
-            fatjet_px, fatjet_py = rotate_to_phi(phi_lep, fatjet_px, fatjet_py)
-            # set bjet features to defaults
-            bjet1_e, bjet1_px, bjet1_py, bjet1_pz = 4 * (0.0,)
-            bjet2_e, bjet2_px, bjet2_py, bjet2_pz = 4 * (0.0,)
-            bjet1_btag_df, bjet1_ctag_df, bjet1_cvsb, bjet1_cvsl, bjet1_hhbtag = 5 * (-1.0,)
-            bjet2_btag_df, bjet2_ctag_df, bjet2_cvsb, bjet2_cvsl, bjet2_hhbtag = 5 * (-1.0,)
-        else:
+
+        # rotate bjets if existing or set all features to defaults
+        if has_bjet_pair:
             bjet1_px, bjet1_py = rotate_to_phi(phi_lep, bjet1_px, bjet1_py)
             bjet2_px, bjet2_py = rotate_to_phi(phi_lep, bjet2_px, bjet2_py)
-            # set fatjet features to defaults
+        else:
+            bjet1_e, bjet1_px, bjet1_py, bjet1_pz = 4 * (0.0,)
+            bjet2_e, bjet2_px, bjet2_py, bjet2_pz = 4 * (0.0,)
+            bjet1_btag_df, bjet1_cvsb, bjet1_cvsl, bjet1_hhbtag = 4 * (-1.0,)
+            bjet2_btag_df, bjet2_cvsb, bjet2_cvsl, bjet2_hhbtag = 4 * (-1.0,)
+
+        # rotate fatjet if existing or set all features to defaults
+        if is_boosted:
+            fatjet_px, fatjet_py = rotate_to_phi(phi_lep, fatjet_px, fatjet_py)
+        else:
             fatjet_e, fatjet_px, fatjet_py, fatjet_pz = 4 * (0.0,)
 
         # build input tensors
         cont_inputs = [
             met_px, met_py, met_cov00, met_cov01, met_cov11,
-            dau1_px, dau1_py, dau1_pz, dau1_e, dau1_dxy, dau1_dz,
-            dau2_px, dau2_py, dau2_pz, dau2_e, dau2_dxy, dau2_dz,
-            bjet1_px, bjet1_py, bjet1_pz, bjet1_e, bjet1_btag_df, bjet1_ctag_df, bjet1_cvsb, bjet1_cvsl, bjet1_hhbtag,
-            bjet2_px, bjet2_py, bjet2_pz, bjet2_e, bjet2_btag_df, bjet2_ctag_df, bjet2_cvsb, bjet2_cvsl, bjet2_hhbtag,
+            dau1_px, dau1_py, dau1_pz, dau1_e,
+            dau2_px, dau2_py, dau2_pz, dau2_e,
+            bjet1_px, bjet1_py, bjet1_pz, bjet1_e, bjet1_btag_df, bjet1_cvsb, bjet1_cvsl, bjet1_hhbtag,
+            bjet2_px, bjet2_py, bjet2_pz, bjet2_e, bjet2_btag_df, bjet2_cvsb, bjet2_cvsl, bjet2_hhbtag,
             fatjet_px, fatjet_py, fatjet_pz, fatjet_e,
             mass,
         ]
-        cat_inputs = [
-            pair_type, dau1_dm, dau2_dm, dau1_charge, dau2_charge, int(pass_pnet), era.value, spin,
-        ]
+        cat_inputs = list(map(int, [
+            pair_type, dau1_dm, dau2_dm, dau1_charge, dau2_charge, is_boosted, has_bjet_pair, era.value, spin,
+        ]))
         cont_inputs = tf.constant([cont_inputs], dtype=tf.float32)
         cat_inputs = tf.constant([cat_inputs], dtype=tf.int32)
 
@@ -188,7 +187,8 @@ if __name__ == "__main__":
         dau2_dm=0,
         dau1_charge=1,
         dau2_charge=-1,
-        pass_pnet=False,
+        has_bjet_pair=True,
+        is_boosted=False,
         met_px=230.0,
         met_py=-50.0,
         met_cov00=40000.0,
@@ -198,20 +198,15 @@ if __name__ == "__main__":
         dau1_px=10.0,
         dau1_py=90.0,
         dau1_pz=-30.0,
-        dau1_dxy=0.005,
-        dau1_dz=0.018,
         dau2_e=75.0,
         dau2_px=20.0,
         dau2_py=-80.0,
         dau2_pz=5.0,
-        dau2_dxy=0.0045,
-        dau2_dz=0.016,
         bjet1_e=95.0,
         bjet1_px=50.0,
         bjet1_py=60.0,
         bjet1_pz=-10.0,
         bjet1_btag_df=0.9,
-        bjet1_ctag_df=0.43,
         bjet1_cvsb=0.1,
         bjet1_cvsl=0.5,
         bjet1_hhbtag=1.11,
@@ -220,7 +215,6 @@ if __name__ == "__main__":
         bjet2_py=-60.0,
         bjet2_pz=40.0,
         bjet2_btag_df=0.8,
-        bjet2_ctag_df=0.3,
         bjet2_cvsb=0.05,
         bjet2_cvsl=0.4,
         bjet2_hhbtag=0.98,
