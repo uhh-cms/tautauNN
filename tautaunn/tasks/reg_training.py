@@ -61,9 +61,9 @@ class RegTrainingParameters(Task):
         description="batch size; default: 4096",
     )
     optimizer = luigi.ChoiceParameter(
-        default="adam",
+        default="adamw",
         choices=["adam", "adamw"],
-        description="the optimizer the use; choices: adam,adamw; default: adam",
+        description="the optimizer the use; choices: adam,adamw; default: adamw",
     )
     learning_rate = luigi.FloatParameter(
         default=3e-3,
@@ -100,9 +100,9 @@ class RegTrainingParameters(Task):
         description="validate every n batches; default: 500",
     )
     selection_set = luigi.ChoiceParameter(
-        default="baseline",
+        default="new_baseline",
         choices=list(cfg.selection_sets.keys()),
-        description="name of selection set; default: baseline",
+        description="name of selection set; default: new_baseline",
     )
     label_set = luigi.ChoiceParameter(
         default="multi4",
@@ -115,14 +115,14 @@ class RegTrainingParameters(Task):
         description="name of sample set; default: default",
     )
     cont_feature_set = luigi.ChoiceParameter(
-        default="default_daurot",
+        default="default_daurot_fatjet",
         choices=list(cfg.cont_feature_sets.keys()),
-        description="name of continuous feature set; default: default_daurot",
+        description="name of continuous feature set; default: default_daurot_fatjet",
     )
     cat_feature_set = luigi.ChoiceParameter(
-        default="default",
+        default="default_extended",
         choices=list(cfg.cat_feature_sets.keys()),
-        description="name of categorical feature set; default: default",
+        description="name of categorical feature set; default: default_extended",
     )
     skip_tensorboard = luigi.BoolParameter(
         default=False,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import functools
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -407,14 +406,14 @@ cont_feature_sets = {
         *[
             f"dau{i}_{feat}"
             for i in [1, 2]
-            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+            for feat in ["px", "py", "pz", "e"]  # "dxy", "dz"
         ],
         *[
             f"bjet{i}_masked_{feat}"
             for i in [1, 2]
             for feat in [
                 "px", "py", "pz", "e",
-                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "btag_deepFlavor", "CvsB", "CvsL",
                 "HHbtag",
             ]
         ],
@@ -473,6 +472,10 @@ cat_feature_sets = {
     "default_pnet": [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "pass_pnet",
     ],
+    "default_extended": [
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
+        "has_bjet1", "has_bjet2",
+    ],
     "full": (cat_features_full := [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx",
     ]),
@@ -511,25 +514,18 @@ selection_sets = {
         ]
         for year, w in btag_wps.items()
     },
-    "new_baseline": {
-        year: [
-            "nleps == 0",
-            "isOS == 1",
-            "dau2_deepTauVsJet >= 5",
-            # TODO: this used "isBoosted == 1" previously, but now we are using the pnet score to effectively recover
-            # events that had a fatjet but failed the loose pnet cut
-            # NOTE: if we change the selection to avoid inverted pnet SFs, the phase space will be identical, but the
-            # decision on which jet / fatjet features are disabled will be different
-            f"((nbjetscand > 1) | (fatjet_particleNetMDJetTags_probXbb >= {wp}))",
-            "((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
-            (
-                "((pairType == 0) & (dau1_iso < 0.15)) | "
-                "((pairType == 1) & (dau1_eleMVAiso == 1)) | "
-                "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
-            ),
-        ]
-        for year, wp in pnet_wps.items()
-    },
+    "new_baseline": [
+        "nleps == 0",
+        "isOS == 1",
+        "dau2_deepTauVsJet >= 5",
+        "((nbjetscand > 1) | (isBoosted == 1))",
+        "((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
+        (
+            "((pairType == 0) & (dau1_iso < 0.15)) | "
+            "((pairType == 1) & (dau1_eleMVAiso == 1)) | "
+            "((pairType == 2) & (dau1_deepTauVsJet >= 5))"
+        ),
+    ],
 }
 
 klub_aliases: dict[str, str] = {
@@ -555,7 +551,7 @@ klub_category_columns = [
     "isLeptrigger",
     "isMETtrigger",
     "isSingleTautrigger",
-    "fatjet_particleNetMDJetTags_score"
+    "fatjet_particleNetMDJetTags_score",
 ]
 
 dynamic_columns = {
@@ -576,6 +572,18 @@ dynamic_columns = {
             ((year_flag == 2) & (pnet >= pnet_wps["2017"])) |
             ((year_flag == 3) & (pnet >= pnet_wps["2018"]))
         )),
+    ),
+    "has_bjet1": (
+        ("nbjetscand",),
+        (lambda n: n >= 1),
+    ),
+    "has_bjet2": (
+        ("nbjetscand",),
+        (lambda n: n >= 2),
+    ),
+    "has_bjet_pair": (
+        ("nbjetscand",),
+        (lambda n: n >= 2),
     ),
     "dmet_resp_px": (
         ("DeepMET_ResponseTune_px", "DeepMET_ResponseTune_py", rot_phi),
@@ -725,11 +733,11 @@ dynamic_columns = {
         ("bjet2_pt", "bjet2_eta"),
         (lambda a, b: a * np.sinh(b)),
     ),
-    # bjet values masked by pass_pnet: when 1, features are set to "missing" values
+    # masked bjet features: when 1, features are set to "missing" values
     **{
         f"bjet{i}_masked_{f}": (
-            (f"bjet{i}_{f}", "pass_pnet"),
-            (lambda v, pass_pnet: np.where(pass_pnet == 1, d, v)),
+            (f"bjet{i}_{f}", "has_bjet_pair"),
+            (lambda d: (lambda v, has_bjet: np.where(has_bjet, v, d)))(d),  # closure against context leak
         )
         for i in [1, 2]
         for f, d in [
@@ -761,11 +769,11 @@ dynamic_columns = {
         ("fatjet_pt", "fatjet_eta"),
         (lambda a, b: a * np.sinh(b)),
     ),
-    # fat jet values masked by pass_pnet: when not 1, all features are set to 0
+    # masked fat jet features: when not 1, all features are set to 0
     **{
         f"fatjet_masked_{f}": (
-            (f"fatjet_{f}", "pass_pnet"),
-            (lambda v, pass_pnet: np.where(pass_pnet == 1, v, 0.0)),
+            (f"fatjet_{f}", "isBoosted"),
+            (lambda v, isBoosted: np.where(isBoosted, v, 0.0)),
         )
         for f in ["e", "px", "py", "pz"]
     },
@@ -905,6 +913,8 @@ embedding_expected_inputs = {
     "isBoosted": [0, 1],
     "pass_pnet": [0, 1],
     "top_mass_idx": [0, 1, 2, 3],
+    "has_bjet1": [0, 1],
+    "has_bjet2": [0, 1],
 }
 
 
@@ -1020,7 +1030,7 @@ regression_sets = {
     "v4_1fold": (reg_set_v4pre := RegressionSet(
         model_files={
             # just one fold
-            0: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")
+            0: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), "new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
         },
         cont_feature_set="default_daurot_fatjet",
         cat_feature_set="default_pnet",
@@ -1038,11 +1048,11 @@ regression_sets = {
     "v4pre": (reg_set_v4pre := RegressionSet(
         model_files={
             # TODO: update path to pre model file
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_baseline_test/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_skims_test/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
             for fold in range(5)
         },
         cont_feature_set="default_daurot_fatjet",
-        cat_feature_set="default_pnet",
+        cat_feature_set="default_extended",
         parameterize_year=True,
         parameterize_spin=True,
         parameterize_mass=True,

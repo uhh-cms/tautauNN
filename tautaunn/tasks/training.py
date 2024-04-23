@@ -124,9 +124,9 @@ class TrainingParameters(Task):
         description="name of continuous feature set; default: default_daurot_fatjet",
     )
     cat_feature_set = luigi.ChoiceParameter(
-        default="default_pnet",
+        default="default_extended",
         choices=list(cfg.cat_feature_sets.keys()),
-        description="name of categorical feature set; default: default_pnet",
+        description="name of categorical feature set; default: default_extended",
     )
     regression_set = luigi.ChoiceParameter(
         default="v4pre_lbn_ft_lt20_lr1",
