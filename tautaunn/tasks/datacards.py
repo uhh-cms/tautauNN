@@ -43,12 +43,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
     @property
     def chunk_size(self):
         return 1
+        # TODO: update?
         if re.match("^.*(TT_semiLep|TT_fullyLep|ttHToTauTau|TTZToQQ|201).*$", self.sample.name):
             return 1
         return 2
 
     @property
     def priority(self):
+        # TODO: update?
         # higher priority value = picked earlier by scheduler
         if re.match("^.*(TT_semiLep|TT_fullyLep|ttHToTauTau|TTZToQQ).*$", self.sample.name):
             return 10
@@ -68,20 +70,23 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
-        targets = {}
-        for num in self.branch_data:
-            targets[num] = {
-                "nominal": self.local_target(f"output_{num}_nominal.root"),
-            }
+        def targets(num):
+            targets = {"nominal": self.local_target(f"output_{num}_nominal.root")}
             if not self.nominal_only:
-                targets[num]["shapes"] = self.local_target(f"output_{num}_shapes.root")
-        return law.SiblingFileCollection(targets)
+                targets["shapes"] = self.local_target(f"output_{num}_shapes.root")
+            return targets
+
+        return law.SiblingFileCollection({num: targets(num) for num in self.branch_data})
 
     @law.decorator.safe_output
     def run(self):
         # set inter and intra op parallelism threads of tensorflow
         tf.config.threading.set_inter_op_parallelism_threads(1)
         tf.config.threading.set_intra_op_parallelism_threads(1)
+
+        # prepare input models
+        models = dict(self.input().items())
+        assert len(models) == 1 or set(models.keys()) == set(range(self.n_folds))
 
         # helpers
         flatten = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
@@ -91,7 +96,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 name += f"_{shape_name}"
             return name
 
-        def calc_inputs(arr, dyn_names, cfg, fold_index, models):
+        def calc_inputs(arr, dyn_names, cfg, fold_index):
             arr = calc_new_columns(arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
             # prepare model inputs
             cont_inputs = flatten(np.asarray(arr[cont_input_names]), np.float32)
@@ -112,17 +117,17 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             for i, name in enumerate(cat_input_names):
                 cat_mask &= np.isin(cat_inputs[:, i], np.unique(cfg.embedding_expected_inputs[name]))
             self.publish_message(f"events passing cat_mask: {cat_mask.mean() * 100:.2f}%")
+
             # merge with fold mask in case there are multiple models
             eval_mask = cat_mask
             if len(models) > 1:
                 eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
+
             return cont_inputs, cat_inputs, eval_mask
 
-        def eval(
-            model, cont_inputs, cat_inputs,
-            spins, masses, eval_mask, class_names,
-            shape_name, out_tree,
-        ):
+        def predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree):
+            spins = self.spins if self.sample.spin < 0 else [self.sample.spin]
+            masses = self.masses if self.sample.mass < 0 else [self.sample.mass]
             for spin in spins:
                 # insert spin
                 cat_inputs[:, -1] = int(spin)
@@ -151,9 +156,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         def sel_btag_m(array: ak.Array, year: str) -> ak.Array:
             return (
                 (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) &
-                (array.bjet2_bID_deepFlavor < cfg.btag_wps[year]["medium"])
+                (array.bjet2_bID_deepFlavor <= cfg.btag_wps[year]["medium"])
             ) | (
-                (array.bjet1_bID_deepFlavor < cfg.btag_wps[year]["medium"]) &
+                (array.bjet1_bID_deepFlavor <= cfg.btag_wps[year]["medium"]) &
                 (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
             )
 
@@ -163,30 +168,37 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
             )
 
+        def sel_first_lep(array: ak.Array) -> ak.Array:
+            return (
+                ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
+                ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
+                ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
+            )
+
         def sel_pnet_l(array: ak.Array, year: str) -> ak.Array:
             return (
                 (array.fatjet_particleNetMDJetTags_score > cfg.pnet_wps[year])
             )
 
         def sel_cats(array: ak.Array, year: str) -> ak.Array:
-            return ((
-                sel_trigger(array) &
+            return (
                 (array.nleps == 0) &
-                (array.nbjetscand > 1) &
-                sel_btag_m(array, year) &
-                ~(array.isBoosted == 1)  # res1b
-            ) | (
+                sel_first_lep(array) &
                 sel_trigger(array) &
-                (array.nleps == 0) &
-                (array.nbjetscand > 1) &
-                sel_btag_mm(array, year) &
-                ~(array.isBoosted == 1)  # res2b
-            ) | (
-                sel_trigger(array) &
-                (array.nleps == 0) &
-                (array.isBoosted == 1) &
-                sel_pnet_l(array, year)
-            ))
+                (
+                    (  # boosted (pnet cut left out to be looser)
+                        (array.isBoosted == 1)
+                    ) |
+                    (  # res1b (no ~isBoosted cut to be looser)
+                        (array.nbjetscand > 1) &
+                        sel_btag_m(array, year)
+                    ) |
+                    (  # res2b (no ~isBoosted cut to be looser)
+                        (array.nbjetscand > 1) &
+                        sel_btag_mm(array, year)
+                    )
+                )
+            )
 
         # ees has 2 sources
         ees_dict = {
@@ -198,7 +210,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 "METx": f"METx_ele{ud}_{dm}",
                 "METy": f"METy_ele{ud}_{dm}",
             }
-            for ud in ["up", "down"] for dm in ["DM0", "DM1"]
+            for ud in ["up", "down"]
+            for dm in ["DM0", "DM1"]
         }
         # tes has 4 sources
         tes_dict = {
@@ -210,7 +223,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 "METx": f"METx_tau{ud}_{dm}",
                 "METy": f"METy_tau{ud}_{dm}",
             }
-            for ud in ["up", "down"] for dm in ["DM0", "DM1", "DM10", "DM11"]
+            for ud in ["up", "down"]
+            for dm in ["DM0", "DM1", "DM10", "DM11"]
         }
         mes_dict = {
             f"mes_{ud}": {
@@ -235,7 +249,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 "METx": f"METx_jet{ud}{src}",
                 "METy": f"METy_jet{ud}{src}",
             }
-            for ud in ["up", "down"] for src in range(1, 12)
+            for ud in ["up", "down"]
+            for src in range(1, 12)
         }
 
         # klub aliases for systematic variations
@@ -354,36 +369,35 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                         out_tree = {c: np.asarray(arr[c]) for c in cfg.klub_index_columns}
 
                     if "nominal" in key:
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index, models)
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
                         # evaluate the data
                         with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                            eval(
-                                model, cont_inputs, cat_inputs,
-                                self.spins, self.masses,
-                                eval_mask, class_names,
-                                "nominal", out_tree,
-                            )
+                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
 
                     else:  # shapes
                         # reduce array to only events that are in resolved1b, resolved2b or boosted category
                         category_mask = sel_cats(arr, self.sample.year)
                         self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
                         syst_arr = arr[category_mask]
+
+                        # the initial output tree was created for all events, so reduce it once
                         if not tmp_output.exists():
                             out_tree = {c: a[category_mask] for c, a in out_tree.items()}
+
                         for shape_name in shape_names:
+                            # apply systematic variations via aliases
                             for dst, src in shape_systs[shape_name].items():
                                 if src in arr.fields:
                                     syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index, models)
+
+                            # get inputs
+                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
+
                             # evaluate the data
-                            with self.publish_step(f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ..."):
-                                eval(
-                                    model, cont_inputs, cat_inputs,
-                                    self.spins, self.masses,
-                                    eval_mask, class_names,
-                                    shape_name, out_tree,
-                                )
+                            with self.publish_step(
+                                f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
+                            ):
+                                predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
                                 # update progress
                                 publish_progress(progress_step)
                                 progress_step += 1
