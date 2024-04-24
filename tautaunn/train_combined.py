@@ -335,17 +335,6 @@ def train(
     assert len(combined_cont_input_names) == len(set(combined_cont_input_names))
     assert len(combined_cat_input_names) == len(set(combined_cat_input_names))
 
-    # hack: load all features to use just a single cache, and select the ones to use afterwards
-    # all_combined_cont_input_names = ["met_px", "met_py", "met_et", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py", "met_cov00", "met_cov01", "met_cov11", "ditau_deltaphi", "ditau_deltaeta", "dau1_px", "dau1_py", "dau1_pz", "dau1_e", "dau1_dxy", "dau1_dz", "dau1_iso", "dau2_px", "dau2_py", "dau2_pz", "dau2_e", "dau2_dxy", "dau2_dz", "dau2_iso", "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e", "bjet1_btag_deepFlavor", "bjet1_cID_deepFlavor", "bjet1_pnet_bb", "bjet1_pnet_cc", "bjet1_pnet_b", "bjet1_pnet_c", "bjet1_pnet_g", "bjet1_pnet_uds", "bjet1_pnet_pu", "bjet1_pnet_undef", "bjet1_HHbtag", "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e", "bjet2_btag_deepFlavor", "bjet2_cID_deepFlavor", "bjet2_pnet_bb", "bjet2_pnet_cc", "bjet2_pnet_b", "bjet2_pnet_c", "bjet2_pnet_g", "bjet2_pnet_uds", "bjet2_pnet_pu", "bjet2_pnet_undef", "bjet2_HHbtag", "top1_mass", "top2_mass", "W_distance", "Z_distance", "H_distance", "tauH_e", "tauH_px", "tauH_py", "tauH_pz", "bH_e", "bH_px", "bH_py", "bH_pz", "HH_e", "HH_px", "HH_py", "HH_pz", "HHKin_mass", "HHKin_chi2", "tauH_SVFIT_mass", "tauH_SVFIT_pt", "bjet1_CvsL", "bjet1_CvsB", "bjet2_CvsL", "bjet2_CvsB"]  # noqa
-    # all_combined_cat_input_names = ["pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx"]  # noqa
-    # assert all(name in all_combined_cont_input_names for name in combined_cont_input_names)
-    # assert all(name in all_combined_cat_input_names for name in combined_cat_input_names)
-    # needed_combined_cont_input_names = combined_cont_input_names
-    # needed_combined_cat_input_names = combined_cat_input_names
-    # combined_cont_input_names = all_combined_cont_input_names
-    # combined_cat_input_names = all_combined_cat_input_names
-    # # end
-
     # determine which columns to read
     columns_to_read = set()
     for name in combined_cont_input_names + combined_cat_input_names:
@@ -456,11 +445,23 @@ def train(
 
             # add year, spin and mass if given
             if parameterize_year_any:
-                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.year_flag)[:, None], axis=1)
+                cat_inputs = np.append(
+                    cat_inputs,
+                    (np.ones(n_events, dtype=np.int32) * sample.year_flag)[:, None],
+                    axis=1,
+                )
             if parameterize_mass_any:
-                cont_inputs = np.append(cont_inputs, (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None], axis=1)
+                cont_inputs = np.append(
+                    cont_inputs,
+                    (np.ones(n_events, dtype=np.float32) * sample.mass)[:, None],
+                    axis=1,
+                )
             if parameterize_spin_any:
-                cat_inputs = np.append(cat_inputs, (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None], axis=1)
+                cat_inputs = np.append(
+                    cat_inputs,
+                    (np.ones(n_events, dtype=np.int32) * sample.spin)[:, None],
+                    axis=1,
+                )
 
             # lookup all number of events used during training using event number and fold indices
             last_digit = rec["EventNumber"] % n_folds
@@ -507,29 +508,6 @@ def train(
             os.makedirs(os.path.dirname(cache_file), exist_ok=True)
             with open(cache_file, "wb") as f:
                 pickle.dump(cache_data, f)
-
-    # # hack: reduce inputs to needed ones as per the above hack
-    # needed_cont_indices = get_indices(all_combined_cont_input_names, needed_combined_cont_input_names)
-    # needed_cat_indices = get_indices(all_combined_cat_input_names, needed_combined_cat_input_names)
-    # if parameterize_mass_any:
-    #     needed_cont_indices.append(-1)
-    # if parameterize_spin_any and parameterize_year_any:
-    #     needed_cat_indices += [-2, -1]
-    # elif parameterize_spin_any or parameterize_year_any:
-    #     needed_cat_indices.append(-1)
-    # cont_inputs_train = [inp[:, needed_cont_indices] for inp in cont_inputs_train]
-    # cont_inputs_valid = [inp[:, needed_cont_indices] for inp in cont_inputs_valid]
-    # cat_inputs_train = [inp[:, needed_cat_indices] for inp in cat_inputs_train]
-    # cat_inputs_valid = [inp[:, needed_cat_indices] for inp in cat_inputs_valid]
-    # combined_cont_input_names = needed_combined_cont_input_names
-    # combined_cat_input_names = needed_combined_cat_input_names
-    # del all_combined_cont_input_names
-    # del all_combined_cat_input_names
-    # del needed_combined_cont_input_names
-    # del needed_combined_cat_input_names
-    # del needed_cont_indices
-    # del needed_cat_indices
-    # # end
 
     # compute batch weights that ensures that each class is equally represented in each batch
     # and that samples within a class are weighted according to their yield
@@ -828,43 +806,42 @@ def train(
         # lr_callback.plot_schedule()
 
         # callbacks
-        fit_callbacks = [
+        fit_callbacks = {
             # tensorboard
-            tf.keras.callbacks.TensorBoard(
+            "tensorboard": tf.keras.callbacks.TensorBoard(
                 log_dir=full_tensorboard_dir,
                 histogram_freq=1,
                 write_graph=True,
                 profile_batch=(500, 1500) if run_profiler else 0,
             ) if full_tensorboard_dir else None,
             # confusion matrix and output plots
-            LivePlotWriter(
+            "liveplotter": LivePlotWriter(
                 log_dir=full_tensorboard_dir,
                 class_names=list(class_names.values()),
                 validate_every=validate_every,
             ) if full_tensorboard_dir else None,
             # regression fader
-            reg_fader := (RegressionFader(
+            "reg_fader": RegressionFader(
                 model=model,
                 fade_in=regression_cfg.fade_in,
                 dense_index_start=regression_weight_range[0],
                 dense_index_stop=regression_weight_range[1],
-            ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None),
-        ]
+            ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
+        }
         if cycle_lr:
-            cycle_callback = CycleLR(
+            lres_callback = CycleLR(
                 steps_per_epoch=validate_every,
                 epoch_per_cycle=5,
-                policy='triangular2',
+                policy="triangular2",
                 lr_range=[1e-5, 5e-3],
                 max_cycles=10,
                 reduce_on_end=True,
                 monitor="val_ce",
-                mode='min',
+                mode="min",
                 invert=True,
                 es_patience=early_stopping_patience,
                 verbose=2,
             )
-            fit_callbacks.append(cycle_callback)
         else:
             # learning rate dropping followed by early stopping, optionally followed by enabling fine-tuning
             lres_callback = ReduceLRAndStop(
@@ -876,7 +853,7 @@ def train(
                 es_patience=early_stopping_patience,
                 verbose=1,
             )
-            fit_callbacks.append(lres_callback)
+        fit_callbacks["lres"] = lres_callback
 
         # some logs
         model.summary()
@@ -904,7 +881,7 @@ def train(
                 steps_per_epoch=validate_every,
                 validation_freq=1,
                 validation_steps=dataset_valid.batches_per_cycle,
-                callbacks=list(filter(None, fit_callbacks)),
+                callbacks=list(filter(None, fit_callbacks.values())),
             )
 
             # fine tuning
@@ -914,7 +891,7 @@ def train(
                 print("\nstarting fine-tuning adjustments")
 
                 # verify that the regression fade-in took place
-                if tf.keras.backend.get_value(reg_fader.fadein_factor) != 1:
+                if tf.keras.backend.get_value(fit_callbacks["reg_fader"].fadein_factor) != 1:
                     raise RuntimeError("regression fade-in did not take place yet")
 
                 # obtain updated hyper-parameters from the fine-tuning config
@@ -975,10 +952,7 @@ def train(
                 model.optimizer.iterations.assign(opt1.iterations)
 
                 # reset learning rate and early stopping monitor
-                if cycle_lr:
-                    cycle_callback._reset_for_fine_tuning()
-                else:
-                    lres_callback._reset_for_fine_tuning()
+                lres_callback._reset_for_fine_tuning()
 
                 print(f"\nenabled fine-tuning of {reg_model.name} layers")
 
@@ -991,7 +965,7 @@ def train(
                     steps_per_epoch=validate_every,
                     validation_freq=1,
                     validation_steps=dataset_valid.batches_per_cycle,
-                    callbacks=list(filter(None, fit_callbacks[:-1])),  # drop the regression fader
+                    callbacks=list(filter(None, (cb for key, cb in fit_callbacks.items() if key != "reg_fader"))),
                 )
 
             t_end = time.perf_counter()
@@ -1011,10 +985,7 @@ def train(
                 return
             print("")
         # manually restore best weights
-        if cycle_lr:
-            cycle_callback.restore_best_weights()
-        else:
-            lres_callback.restore_best_weights()
+        lres_callback.restore_best_weights()
         print(f"training took {human_duration(seconds=t_end - t_start)}")
 
         # perform one final validation round for verification of the best model
@@ -1109,10 +1080,10 @@ def train(
     if not skip_shap_plots:
         # this only takes the first batch for now since that already takes soo long
         x_val = np.hstack([np.concatenate(cont_inputs_valid, axis=0), np.concatenate(cat_inputs_valid, axis=0)])
-        y_val = np.concatenate(labels_valid, axis=0)
+        # y_val = np.concatenate(labels_valid, axis=0)
         event_weights_val = np.concatenate(event_weights_valid, axis=0)
 
-        #x_val, y_val, weights = dataset_valid.get_validation_data()
+        # x_val, y_val, weights = dataset_valid.get_validation_data()
         feature_names = cont_input_names + cat_input_names
 
         def caller(X, model=model, n_cont=len(cont_input_names)):

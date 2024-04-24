@@ -400,13 +400,13 @@ cont_feature_sets = {
             ]
         ],
     ],
-    "default_daurot_fatjet": [
+    "default_daurot_fatjet": (cont_features_daurot_fatjet := [
         "met_px", "met_py",
         "met_cov00", "met_cov01", "met_cov11",
         *[
             f"dau{i}_{feat}"
             for i in [1, 2]
-            for feat in ["px", "py", "pz", "e"]  # "dxy", "dz"
+            for feat in ["px", "py", "pz", "e"]
         ],
         *[
             f"bjet{i}_masked_{feat}"
@@ -423,6 +423,10 @@ cont_feature_sets = {
                 "px", "py", "pz", "e",
             ]
         ],
+    ]),
+    "default_daurot_fatjet_old": cont_features_daurot_fatjet + [
+        "dau1_dxy", "dau1_dz", "dau2_dxy", "dau2_dz",
+        "bjet1_masked_cID_deepFlavor", "bjet2_masked_cID_deepFlavor",
     ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
@@ -552,6 +556,9 @@ klub_category_columns = [
     "isMETtrigger",
     "isSingleTautrigger",
     "fatjet_particleNetMDJetTags_score",
+    "dau1_iso",
+    "dau1_eleMVAiso",
+    "dau1_deepTauVsJet",
 ]
 
 dynamic_columns = {
@@ -1045,10 +1052,10 @@ regression_sets = {
         fine_tune=None,
         feed_lbn=False,
     )),
-    "v4pre": (reg_set_v4pre := RegressionSet(
+    "v5": (reg_set_v5 := RegressionSet(
         model_files={
             # TODO: update path to pre model file
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"new_skims_test/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_extended_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
             for fold in range(5)
         },
         cont_feature_set="default_daurot_fatjet",
@@ -1064,7 +1071,7 @@ regression_sets = {
         fine_tune=None,
         feed_lbn=False,
     )),
-    "v4pre_lbn_ft_lt20_lr1": reg_set_v4pre.copy(
+    "v5_lbn_ft_lt20_lr1": reg_set_v5.copy(
         feed_lbn=True,
         fine_tune={
             "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
