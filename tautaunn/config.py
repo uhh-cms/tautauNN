@@ -428,6 +428,11 @@ cont_feature_sets = {
         "dau1_dxy", "dau1_dz", "dau2_dxy", "dau2_dz",
         "bjet1_masked_cID_deepFlavor", "bjet2_masked_cID_deepFlavor",
     ],
+    "default_daurot_composite": cont_features_daurot_fatjet + [
+        "htt_e", "htt_px", "htt_py", "htt_pz",
+        "hbb_masked_e", "hbb_masked_px", "hbb_masked_py", "hbb_masked_pz",
+        "hh_masked_e", "hh_masked_px", "hh_masked_py", "hh_masked_pz",
+    ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -479,6 +484,10 @@ cat_feature_sets = {
     "default_extended": [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
         "has_bjet1", "has_bjet2",
+    ],
+    "default_extended_pair": [
+        "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted",
+        "has_bjet_pair",
     ],
     "full": (cat_features_full := [
         "pairType", "dau1_decayMode", "dau2_decayMode", "dau1_charge", "dau2_charge", "isBoosted", "top_mass_idx",
@@ -672,6 +681,13 @@ dynamic_columns = {
         ("dau2_px", "dau2_py", "dau2_pz", "dau2_e"),
         (lambda x, y, z, e: np.sqrt(e ** 2 - (x ** 2 + y ** 2 + z ** 2))),
     ),
+    **{
+        f"htt_{f}": (
+            (f"dau1_{f}", f"dau2_{f}"),
+            (lambda f1, f2: f1 + f2),
+        )
+        for f in ["e", "px", "py", "pz"]
+    },
     "ditau_deltaphi": (
         ("dau1_dphi", "dau2_dphi"),
         (lambda a, b: np.abs(phi_mpi_to_pi(a - b))),
@@ -744,7 +760,7 @@ dynamic_columns = {
     **{
         f"bjet{i}_masked_{f}": (
             (f"bjet{i}_{f}", "has_bjet_pair"),
-            (lambda d: (lambda v, has_bjet: np.where(has_bjet, v, d)))(d),  # closure against context leak
+            (lambda d: (lambda v, has_bjet_pair: np.where(has_bjet_pair, v, d)))(d),  # closure against context leak
         )
         for i in [1, 2]
         for f, d in [
@@ -784,6 +800,23 @@ dynamic_columns = {
         )
         for f in ["e", "px", "py", "pz"]
     },
+    # masked hbb features, which refer to the bb pair if the pair exists and otherwise to the fat jet
+    **{
+        f"hbb_masked_{f}": (
+            (f"bjet1_masked_{f}", f"bjet2_masked_{f}", f"fatjet_masked_{f}", "has_bjet_pair"),
+            (lambda f1, f2, ff, has_bjet_pair: np.where(has_bjet_pair, f1 + f2, ff)),
+        )
+        for f in ["e", "px", "py", "pz"]
+    },
+    # masked hh features
+    **{
+        f"hh_masked_{f}": (
+            (f"htt_{f}", f"hbb_masked_{f}"),
+            (lambda f1, f2: f1 + f2),
+        )
+        for f in ["e", "px", "py", "pz"]
+    },
+    # other high-level variables that were tested
     "dibjet_deltaR": (
         ("bjet1_phi", "bjet2_phi", "bjet1_eta", "bjet2_eta"),
         (lambda a, b, c, d: np.sqrt(np.abs(phi_mpi_to_pi(a - b))**2 + np.abs(c - d)**2)),
@@ -922,6 +955,7 @@ embedding_expected_inputs = {
     "top_mass_idx": [0, 1, 2, 3],
     "has_bjet1": [0, 1],
     "has_bjet2": [0, 1],
+    "has_bjet_pair": [0, 1],
 }
 
 
@@ -1211,6 +1245,22 @@ lbn_sets = {
             "bjet1_masked_e", "bjet1_masked_px", "bjet1_masked_py", "bjet1_masked_pz",
             "bjet2_masked_e", "bjet2_masked_px", "bjet2_masked_py", "bjet2_masked_pz",
             "fatjet_masked_e", "fatjet_masked_px", "fatjet_masked_py", "fatjet_masked_pz",
+            None, "met_px", "met_py", None,
+        ],
+        output_features=["E", "pt", "eta", "m", "pair_cos"],
+        boost_mode="pairs",
+        n_particles=10,
+    ),
+    "default_daurot_fatjet_composite": LBNSet(
+        input_features=[
+            "dau1_e", "dau1_px", "dau1_py", "dau1_pz",
+            "dau2_e", "dau2_px", "dau2_py", "dau2_pz",
+            "bjet1_masked_e", "bjet1_masked_px", "bjet1_masked_py", "bjet1_masked_pz",
+            "bjet2_masked_e", "bjet2_masked_px", "bjet2_masked_py", "bjet2_masked_pz",
+            "fatjet_masked_e", "fatjet_masked_px", "fatjet_masked_py", "fatjet_masked_pz",
+            "htt_e", "htt_px", "htt_py", "htt_pz",
+            "hbb_masked_e", "hbb_masked_px", "hbb_masked_py", "hbb_masked_pz",
+            "hh_masked_e", "hh_masked_px", "hh_masked_py", "hh_masked_pz",
             None, "met_px", "met_py", None,
         ],
         output_features=["E", "pt", "eta", "m", "pair_cos"],
