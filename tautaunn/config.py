@@ -431,7 +431,8 @@ cont_feature_sets = {
     "default_daurot_composite": cont_features_daurot_fatjet + [
         "htt_e", "htt_px", "htt_py", "htt_pz",
         "hbb_masked_e", "hbb_masked_px", "hbb_masked_py", "hbb_masked_pz",
-        "hh_masked_e", "hh_masked_px", "hh_masked_py", "hh_masked_pz",
+        "htthbb_masked_e", "htthbb_masked_px", "htthbb_masked_py", "htthbb_masked_pz",
+        "httfatjet_masked_e", "httfatjet_masked_px", "httfatjet_masked_py", "httfatjet_masked_pz",
     ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
@@ -803,16 +804,24 @@ dynamic_columns = {
     # masked hbb features, which refer to the bb pair if the pair exists and otherwise to the fat jet
     **{
         f"hbb_masked_{f}": (
-            (f"bjet1_masked_{f}", f"bjet2_masked_{f}", f"fatjet_masked_{f}", "has_bjet_pair"),
-            (lambda f1, f2, ff, has_bjet_pair: np.where(has_bjet_pair, f1 + f2, ff)),
+            (f"bjet1_masked_{f}", f"bjet2_masked_{f}", "has_bjet_pair"),
+            (lambda f1, f2, has_bjet_pair: np.where(has_bjet_pair, f1 + f2, 0.0)),
         )
         for f in ["e", "px", "py", "pz"]
     },
-    # masked hh features
+    # masked htthbb features
     **{
-        f"hh_masked_{f}": (
-            (f"htt_{f}", f"hbb_masked_{f}"),
-            (lambda f1, f2: f1 + f2),
+        f"htthbb_masked_{f}": (
+            (f"htt_{f}", f"hbb_masked_{f}", "has_bjet_pair"),
+            (lambda f1, f2, has_bjet_pair: np.where(has_bjet_pair, f1 + f2, 0.0)),
+        )
+        for f in ["e", "px", "py", "pz"]
+    },
+    # masked httfatjet features
+    **{
+        f"httfatjet_masked_{f}": (
+            (f"htt_{f}", f"fatjet_masked_{f}", "isBoosted"),
+            (lambda f1, f2, isBoosted: np.where(isBoosted, f1 + f2, 0.0)),
         )
         for f in ["e", "px", "py", "pz"]
     },
@@ -1086,14 +1095,14 @@ regression_sets = {
         fine_tune=None,
         feed_lbn=False,
     )),
-    "v5": (reg_set_v5 := RegressionSet(
+    "v6": (reg_set_v6 := RegressionSet(
         model_files={
             # TODO: update path to pre model file
             fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_extended_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
             for fold in range(5)
         },
-        cont_feature_set="default_daurot_fatjet",
-        cat_feature_set="default_extended",
+        cont_feature_set="default_daurot_composite",
+        cat_feature_set="default_extended_pair",
         parameterize_year=True,
         parameterize_spin=True,
         parameterize_mass=True,
@@ -1105,7 +1114,7 @@ regression_sets = {
         fine_tune=None,
         feed_lbn=False,
     )),
-    "v5_lbn_ft_lt20_lr1": reg_set_v5.copy(
+    "v6_lbn_ft_lt20_lr1": reg_set_v6.copy(
         feed_lbn=True,
         fine_tune={
             "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
@@ -1259,8 +1268,8 @@ lbn_sets = {
             "bjet2_masked_e", "bjet2_masked_px", "bjet2_masked_py", "bjet2_masked_pz",
             "fatjet_masked_e", "fatjet_masked_px", "fatjet_masked_py", "fatjet_masked_pz",
             "htt_e", "htt_px", "htt_py", "htt_pz",
-            "hbb_masked_e", "hbb_masked_px", "hbb_masked_py", "hbb_masked_pz",
-            "hh_masked_e", "hh_masked_px", "hh_masked_py", "hh_masked_pz",
+            "htthbb_masked_e", "htthbb_masked_px", "htthbb_masked_py", "htthbb_masked_pz",
+            "httfatjet_masked_e", "httfatjet_masked_px", "httfatjet_masked_py", "httfatjet_masked_pz",
             None, "met_px", "met_py", None,
         ],
         output_features=["E", "pt", "eta", "m", "pair_cos"],

@@ -115,14 +115,14 @@ class RegTrainingParameters(Task):
         description="name of sample set; default: default",
     )
     cont_feature_set = luigi.ChoiceParameter(
-        default="default_daurot_fatjet",
+        default="default_daurot_composite",
         choices=list(cfg.cont_feature_sets.keys()),
-        description="name of continuous feature set; default: default_daurot_fatjet",
+        description="name of continuous feature set; default: default_daurot_composite",
     )
     cat_feature_set = luigi.ChoiceParameter(
-        default="default_extended",
+        default="default_extended_pair",
         choices=list(cfg.cat_feature_sets.keys()),
-        description="name of categorical feature set; default: default_extended",
+        description="name of categorical feature set; default: default_extended_pair",
     )
     skip_tensorboard = luigi.BoolParameter(
         default=False,

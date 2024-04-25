@@ -124,9 +124,9 @@ class TrainingParameters(Task):
         description="name of continuous feature set; default: default_daurot_composite",
     )
     cat_feature_set = luigi.ChoiceParameter(
-        default="default_extended",
+        default="default_extended_pair",
         choices=list(cfg.cat_feature_sets.keys()),
-        description="name of categorical feature set; default: default_extended",
+        description="name of categorical feature set; default: default_extended_pair",
     )
     regression_set = luigi.ChoiceParameter(
         default="v5_lbn_ft_lt20_lr1",
