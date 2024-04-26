@@ -571,6 +571,22 @@ klub_category_columns = [
     "dau1_deepTauVsJet",
 ]
 
+shapes_extra_columns = [
+    "pairType",
+    "nbjetscand",
+    "bjet1_bID_deepFlavor",
+    "bjet2_bID_deepFlavor",
+    "isBoosted",
+    "fatjet_particleNetMDJetTags_score",
+    "dau1_iso",
+    "dau1_eleMVAiso",
+    "dau1_deepTauVsJet",
+    *[f"{obj}{i}_{val}"
+      for obj in ["dau", "bjet"]
+      for i in [1, 2] for val in ["pt", "eta"]],
+    *[f"fatjet_{val}" for val in ["pt", "eta"]],
+]
+
 dynamic_columns = {
     # columns needed for rotation
     (rot_phi := "dau_phi"): (
@@ -1098,7 +1114,7 @@ regression_sets = {
     "v6": (reg_set_v6 := RegressionSet(
         model_files={
             # TODO: update path to pre model file
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_extended_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final_features3/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")
             for fold in range(5)
         },
         cont_feature_set="default_daurot_composite",
