@@ -389,9 +389,20 @@ class CycleLR(tf.keras.callbacks.Callback):
             if self.cycle_count < 1:
                 return
 
-            # within patience?
-            if self.wait <= self.es_patience:
-                return
+            if self.cycle_count == self.max_cycles:
+                if self.reduce_on_end:
+                    self.reduce_lr_and_stop = True
+                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
+                    print(f"\n Current lr_range {self.lr_range}")
+                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
+                    # set the lr to the mid of the current lr range
+                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+                    self.wait = 0
+                    return
+                else:
+                    self.model.stop_training = True
+                    if self.verbose >= 1:
+                        print_msg(f"{nl()}{self.__class__.__name__}: early stopping triggered")
 
             # repeat cycling?
             if callable(self.repeat_func) and self.repeat_func(self, logs):
@@ -404,26 +415,8 @@ class CycleLR(tf.keras.callbacks.Callback):
                     )
                 return
 
-            if self.cycle_count == self.max_cycles:
-                if self.reduce_on_end:
-                    self.reduce_lr_and_stop = True
-                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
-                    print(f"\n Current lr_range {self.lr_range}")
-                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
-                    # set the lr to the mid of the current lr range
-                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
-                    self.wait = 0
-                    return
-
-            if self.reduce_on_end:
-                # switch to the mid of the current lr range and continue without cycling anymore and normal early stopping
-                self.reduce_lr_and_stop = True
-                print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
-                print(f"\n Current lr_range {self.lr_range}")
-                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
-                # set the lr to the mid of the current lr range
-                tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
-                self.wait = 0
+            # within patience?
+            if self.wait <= self.es_patience:
                 return
 
             # stop training completely
@@ -510,8 +503,9 @@ class CycleLR(tf.keras.callbacks.Callback):
 
     def on_epoch_begin(self, epoch, logs=None):
         if self.cycle_step == 0 and self.cycle_count > 0:
-            print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
-            print(f"\n Starting new cycle with lr_range: {self.lr_range}")
+            if not self.reduce_lr_and_stop:
+                print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
+                print(f"\n Starting new cycle with lr_range: {self.lr_range}")
 
     def restore_best_weights(self) -> bool:
         if self.best_weights is None:
