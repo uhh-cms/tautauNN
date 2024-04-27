@@ -38,7 +38,7 @@ import uproot
 import hist
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
 
 
 #
@@ -74,7 +74,7 @@ processes = OrderedDict({
     },
     "DY": {
         "id": 3,
-        "sample_patterns": ["DY_amc_*"],
+        "sample_patterns": ["DY_*"],
     },
     "W": {
         "id": 4,
@@ -143,39 +143,34 @@ processes = OrderedDict({
     **{
         f"ggf_spin_{spin}_mass_{mass}_hbbhtt": {
             "id": 0,
-            "sample_patterns": [f"ggF_{resonance}_m{mass}"],
+            "sample_patterns": [f"{resonance}{mass}"],
             "spin": spin,
             "mass": mass,
             "signal": True,
         }
         for mass in masses
-        for spin, resonance in zip(spins, ["Radion", "*Graviton"])
+        for spin, resonance in zip(spins, ["Rad", "Grav"])
     },
     "data_mu": {
-        "sample_patterns": ["SingleMuon_Run201*", "Mu_201*"],
+        "sample_patterns": ["Muon*"],
         "data": True,
         "channels": ["mutau"],
     },
     "data_egamma": {
-        "sample_patterns": ["EGamma_Run201*", "Ele_201*"],
+        "sample_patterns": ["EGamma*"],
         "data": True,
         "channels": ["etau"],
     },
     "data_tau": {
-        "sample_patterns": ["Tau_Run201*", "Tau_201*"],
+        "sample_patterns": ["Tau*"],
         "data": True,
         "channels": ["tautau"],
     },
-    # "data_mumu": {
-    #     "sample_patterns": ["DoubleMuon_Run2017*"],
-    #     "data": True,
-    #     "channels": ["mutau", "etau", "tautau"],
-    # },
-    # "data_met": {
-    #     "sample_patterns": ["MET_Run2017*"],
-    #     "data": True,
-    #     "channels": ["mutau", "etau", "tautau"],
-    # },
+    "data_met": {
+        "sample_patterns": ["MET*"],
+        "data": True,
+        "channels": ["mutau", "etau", "tautau"],
+    },
 })
 stat_model = {
     "BR_hbb": {
@@ -263,6 +258,16 @@ def merge_dicts(*dicts):
     return merged
 
 
+def sample_name_to_skim_dir(sample_name: str) -> str:
+    # this used to be f"SKIM_{sample_name}"
+    return sample_name
+
+
+def dir_is_skim_dir(dir_name: str) -> bool:
+    # without the gone SKIM_ prefix we can no longer check this
+    return True
+
+
 def make_list(x):
     return list(x) if isinstance(x, (list, tuple, set)) else [x]
 
@@ -316,30 +321,19 @@ def sel_iso_first_lep(array: ak.Array, **kwargs) -> ak.Array:
     )
 
 
-# the isLeptrigger was needed only for etau and mutau at some point
-# @selector(
-#     needs=["pairType", "isLeptrigger"],
-#     str_repr="(((pairType == 0) | (pairType == 1)) & (isLeptrigger == 1)) | (pairType == 2)",
-# )
-# def sel_trigger(array: ak.Array, **kwargs) -> ak.Array:
-#     return (
-#         (((array.pairType == 0) | (array.pairType == 1)) & (array.isLeptrigger == 1)) |
-#         (array.pairType == 2)
-#     )
-
-
-# now it is needed for all channels
 @selector(
-    needs=["isLeptrigger"],
-    str_repr="isLeptrigger == 1",
+    needs=["isLeptrigger", "isMETtrigger", "isSingleTautrigger"],
+    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
 )
 def sel_trigger(array: ak.Array, **kwargs) -> ak.Array:
-    return array.isLeptrigger == 1
+    return (
+        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1)
+    )
 
 
 @selector(
-    needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
-    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & (nbjetscand > 1)",  # noqa
+    needs=[sel_trigger, sel_iso_first_lep, "nleps", "nbjetscand", "isBoosted"],
+    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & ((nbjetscand > 1) | (isBoosted == 1))",  # noqa
 )
 def sel_baseline(array: ak.Array, **kwargs) -> ak.Array:
     return (
@@ -348,7 +342,7 @@ def sel_baseline(array: ak.Array, **kwargs) -> ak.Array:
         # (note that this is not called "baseline" anymore by KLUB standards)
         sel_iso_first_lep(array, **kwargs) &
         (array.nleps == 0) &
-        (array.nbjetscand > 1)
+        ((array.nbjetscand > 1) | (array.isBoosted == 1))
     )
 
 
@@ -356,28 +350,46 @@ def sel_baseline(array: ak.Array, **kwargs) -> ak.Array:
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
 def sel_region_os_iso(array: ak.Array, **kwargs) -> ak.Array:
-    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 1) & (array.dau2_deepTauVsJet >= 5)
+    return (
+        sel_iso_first_lep(array, **kwargs) &
+        (array.isOS == 1) &
+        (array.dau2_deepTauVsJet >= 5)
+    )
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
 def sel_region_ss_iso(array: ak.Array, **kwargs) -> ak.Array:
-    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 0) & (array.dau2_deepTauVsJet >= 5)
+    return (
+        sel_iso_first_lep(array, **kwargs) &
+        (array.isOS == 0) &
+        (array.dau2_deepTauVsJet >= 5)
+    )
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
 def sel_region_os_noniso(array: ak.Array, **kwargs) -> ak.Array:
-    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 1) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+    return (
+        sel_iso_first_lep(array, **kwargs) &
+        (array.isOS == 1) &
+        (array.dau2_deepTauVsJet < 5) &
+        (array.dau2_deepTauVsJet >= 1)
+    )
 
 
 @selector(
     needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
 )
 def sel_region_ss_noniso(array: ak.Array, **kwargs) -> ak.Array:
-    return sel_iso_first_lep(array, **kwargs) & (array.isOS == 0) & (array.dau2_deepTauVsJet < 5) & (array.dau2_deepTauVsJet >= 1)
+    return (
+        sel_iso_first_lep(array, **kwargs) &
+        (array.isOS == 0) &
+        (array.dau2_deepTauVsJet < 5) &
+        (array.dau2_deepTauVsJet >= 1)
+    )
 
 
 region_sels = [
@@ -398,53 +410,13 @@ def category_factory(channel: str) -> dict[str, Callable]:
     def sel_channel(array: ak.Array, **kwargs) -> ak.Array:
         return array.pairType == pair_type
 
-    @selector(needs=["isBoosted"])
+    @selector(needs=["isBoosted", "fatjet_particleNetMDJetTags_probXbb"])
     def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return array.isBoosted == 1
-
-    @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
-    def sel_vbf(array: ak.Array, **kwargs) -> ak.Array:
+        year = kwargs["year"]
         return (
-            (array.isVBF == 1) &
-            (array.VBFjj_mass > 500) &
-            (array.VBFjj_deltaEta > 3)
+            (array.isBoosted == 1) &
+            (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
         )
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh1_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh2_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh3_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh4_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh5_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return array.HHKin_mass >= 1100
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh1_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh2_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh3_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
-
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh4_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return array.HHKin_mass >= 1100
 
     def sel_combinations(main_sel, sub_sels):
         def create(sub_sel):
@@ -458,29 +430,14 @@ def category_factory(channel: str) -> dict[str, Callable]:
 
         return [create(sub_sel) for sub_sel in sub_sels]
 
-    mhh_sels_resolved = [
-        sel_mhh1_resolved,
-        sel_mhh2_resolved,
-        sel_mhh3_resolved,
-        sel_mhh4_resolved,
-        sel_mhh5_resolved,
-    ]
-
-    mhh_sels_boosted = [
-        sel_mhh1_boosted,
-        sel_mhh2_boosted,
-        sel_mhh3_boosted,
-        sel_mhh4_boosted,
-    ]
-
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
     def sel_btag_m(array: ak.Array, **kwargs) -> ak.Array:
         year = kwargs["year"]
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
-            (array.bjet2_bID_deepFlavor < btag_wps[year]["medium"])
+            (array.bjet2_bID_deepFlavor <= btag_wps[year]["medium"])
         ) | (
-            (array.bjet1_bID_deepFlavor < btag_wps[year]["medium"]) &
+            (array.bjet1_bID_deepFlavor <= btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
@@ -508,97 +465,43 @@ def category_factory(channel: str) -> dict[str, Callable]:
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
-    @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_resolved(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
-            ((array.bH_mass_raw - 169.0) / 145.0)**2.0
-        ) < 1.0
-
-    @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
-            ((array.bH_mass_raw - 159.0) / 94.0)**2.0
-        ) < 1.0
-
     @selector(
-        needs=[sel_baseline, sel_channel],
+        needs=[sel_baseline],
         channel=channel,
     )
     def cat_baseline(array: ak.Array, **kwargs) -> ak.Array:
-        return sel_baseline(array, **kwargs) & sel_channel(array, **kwargs)
+        return sel_baseline(array, **kwargs)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_m, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted, sel_btag_m],
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_btag_m(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
+            sel_btag_m(array, **kwargs)
         )
 
     @selector(
-        needs=[cat_resolved_1b, sel_mass_window_resolved],
-        channel=channel,
-    )
-    def cat_resolved_1b_mwc(array: ak.Array, **kwargs) -> ak.Array:
-        return cat_resolved_1b(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted, sel_btag_mm],
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_btag_mm(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
+            sel_btag_mm(array, **kwargs)
         )
 
     @selector(
-        needs=[cat_resolved_2b, sel_mass_window_resolved],
-        channel=channel,
-    )
-    def cat_resolved_2b_mwc(array: ak.Array, **kwargs) -> ak.Array:
-        return cat_resolved_2b(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted],
         channel=channel,
     )
     def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_btag_ll(array, **kwargs) &
-            sel_boosted(array, **kwargs) &
-            ~(sel_vbf(array, **kwargs) & sel_btag_m_first(array, **kwargs))
-        )
-
-    @selector(
-        needs=[cat_boosted, sel_mass_window_resolved],
-        channel=channel,
-    )
-    def cat_boosted_mwc(array: ak.Array, **kwargs) -> ak.Array:
-        return cat_boosted(array, **kwargs) & sel_mass_window_resolved(array, **kwargs)
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-        channel=channel,
-    )
-    def cat_vbf(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_vbf(array, **kwargs) &
-            sel_btag_m_first(array, **kwargs)
+            sel_boosted(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
@@ -607,37 +510,6 @@ def category_factory(channel: str) -> dict[str, Callable]:
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
-        "vbf": cat_vbf,
-        # mass window cuts
-        "resolved1bmwc": cat_resolved_1b_mwc,
-        "resolved2bmwc": cat_resolved_2b_mwc,
-        "boostedmwc": cat_boosted_mwc,
-        # mhh bins in resolved and boosted
-        **{
-            f"resolved1bmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_1b, mhh_sels_resolved))
-        },
-        **{
-            f"resolved2bmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_2b, mhh_sels_resolved))
-        },
-        **{
-            f"boostedmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
-        },
-        # mass window cuts and mhh bins in resolved and boosted
-        **{
-            f"resolved1bmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_1b_mwc, mhh_sels_resolved))
-        },
-        **{
-            f"resolved2bmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_2b_mwc, mhh_sels_resolved))
-        },
-        **{
-            f"boostedmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_boosted_mwc, mhh_sels_boosted))
-        },
     }
 
     # add all region combinations
@@ -668,7 +540,7 @@ for channel in channels:
         # combined categories
         categories[f"run2_{channel}_{name}"] = {
             "selection": sel,
-            "n_bins": 10,
+            "n_bins": 30,
             "year": None,
             **sel.extra,
         }
@@ -696,7 +568,7 @@ def load_klub_file(
     expressions = list(set(expressions))
 
     # load the array
-    f = uproot.open(os.path.join(skim_directory, f"SKIM_{sample_name}", file_name))
+    f = uproot.open(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name))
     array = f["HTauTauTree"].arrays(expressions=expressions, cut=sel_baseline.str_repr.strip())
 
     # compute the weight and complain when non-finite weights were found
@@ -735,7 +607,7 @@ def load_dnn_file(
     expressions = list(set(expressions))
 
     # load the array
-    f = uproot.open(os.path.join(eval_directory, f"SKIM_{sample_name}", file_name))
+    f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
     try:
         array = f["evaluation"].arrays(filter_name=expressions)
     except uproot.exceptions.KeyInFileError:
@@ -748,24 +620,25 @@ def load_file(
     skim_directory: str,
     eval_directory: str,
     sample_name: str,
-    file_name: str,
+    klub_file_name: str,
+    eval_file_name: str,
     dnn_output_columns: list[str],
 ) -> tuple[ak.Array, float]:
     # load the klub file
-    klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, file_name)
+    klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, klub_file_name)
 
     # load the dnn output file
     if eval_directory:
-        dnn_array = load_dnn_file(eval_directory, sample_name, file_name, dnn_output_columns)
+        dnn_array = load_dnn_file(eval_directory, sample_name, eval_file_name, dnn_output_columns)
 
         # use klub array index to filter dnn array
         dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
         if ak.sum(dnn_mask) != len(klub_array):
-            klub_path = os.path.join(skim_directory, f"SKIM_{sample_name}", file_name)
-            eval_path = os.path.join(eval_directory, f"SKIM_{sample_name}", file_name)
+            klub_path = os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), klub_file_name)
+            eval_path = os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), eval_file_name)
             raise Exception(
                 f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
-                f"number of elements in the klub array ({len(klub_array)}) for file {file_name} "
+                f"number of elements in the klub array ({len(klub_array)}) for file {klub_file_name} "
                 f"(klub: {klub_path}, dnn: {eval_path})",
             )
         dnn_array = dnn_array[dnn_mask]
@@ -779,7 +652,7 @@ def load_file(
         if not ak.all(matches):
             raise Exception(
                 f"found event mismatch between klub and dnn files in {int(ak.sum(~matches))} cases "
-                f"in file {file_name}",
+                f"in files {klub_file_name} / {eval_file_name}",
             )
 
     # drop index columns
@@ -856,9 +729,16 @@ def load_sample_data(
     else:
         # determine file names and build arguments for the parallel load implementation
         load_args = [
-            (skim_directory, eval_directory, sample_name, file_name, dnn_output_columns or [])
-            for file_name in os.listdir(os.path.join(eval_directory, f"SKIM_{sample_name}"))
-            if fnmatch(file_name, "output_*.root")
+            (
+                skim_directory,
+                eval_directory,
+                sample_name,
+                eval_file_name.replace("_nominal", ""),
+                eval_file_name,
+                dnn_output_columns or [],
+            )
+            for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
+            if fnmatch(eval_file_name, "output_*_nominal.root")
         ]
 
         # run in parallel
@@ -926,7 +806,7 @@ def write_datacards(
     output_directory: str,
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
-    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flat_s"),
+    binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -961,11 +841,11 @@ def write_datacards(
     # get a list of all sample names per skim directory
     all_sample_names = {
         year: [
-            dir_name[5:]
+            dir_name
             for dir_name in os.listdir(skim_dir)
             if (
                 os.path.isdir(os.path.join(skim_dir, dir_name)) and
-                dir_name.startswith("SKIM_")
+                dir_is_skim_dir(dir_name)
             )
         ]
         for year, skim_dir in skim_directories.items()
@@ -1100,7 +980,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal_distance", "flat_s"]
+    assert binning_algo in ["equal", "flats"]
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -1219,7 +1099,7 @@ def _write_datacard(
     # signal_scale = scale * br_hh_bbtt
 
     # derive bin edges
-    if binning_algo == "equal_distance":
+    if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
     else:  # flat_s
         # get the signal values and weights
@@ -1419,6 +1299,7 @@ def _write_datacard(
         for (year, process_name), h in hists.items():
             full_name = process_name if year is None else full_process_names[(year, process_name)]
             shape_name = shape_patterns["nom"].format(category=category, process=full_name)
+            # TODO: does this overwrite the shape for the same process when no year is set (i.e., when stacking)?
             root_file[shape_name] = h
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:

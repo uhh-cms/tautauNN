@@ -86,7 +86,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
         # prepare input models
         models = dict(self.input().items())
-        assert len(models) == 1 or set(models.keys()) == set(range(self.n_folds))
+        n_models = len(models)
+        assert n_models == 1 or set(models.keys()) == set(range(self.n_folds))
 
         # helpers
         flatten = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
@@ -120,7 +121,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
             # merge with fold mask in case there are multiple models
             eval_mask = cat_mask
-            if len(models) > 1:
+            if n_models > 1:
                 eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
 
             return cont_inputs, cat_inputs, eval_mask
@@ -321,10 +322,6 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         )
         progress_step = 0
 
-        # prepare input models
-        models = dict(self.input().items())
-        assert len(models) == 1 or set(models.keys()) == set(range(self.n_folds))
-
         # prepare outputs that will first be created in a temporary location and then moved eventually
         output_collection = self.output()
         tmp_outputs = {
@@ -432,7 +429,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso", "2017_*tau_vbf_os_iso")
+_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
 
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
@@ -449,10 +446,8 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     binning = luigi.ChoiceParameter(
         default="flats",
         choices=("flats", "equal", "ud", "ud_flats", "tt_dy_driven"),
-        description=(
-            "binning to use; choices: flats, equal, ud (uncertainty-driven) "
-            "ud_flats (uncertainty-driven with flat signal distribution), tt_dy_driven (tt+dy-driven) "
-            "default: flats"),
+        description="binning to use; choices: flats, equal, ud (uncertainty-driven) ud_flats (uncertainty-driven with "
+        "flat signal distribution), tt_dy_driven (tt+dy-driven) default: flats",
     )
     n_bins = luigi.IntParameter(
         default=10,
@@ -520,10 +515,9 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def output(self):
         # prepare the output directory
-        if self.binning in ["flats", "equal"]:
-            dirname = f"{self.binning}{self.n_bins}"
-        else:
-            dirname = f"{self.binning}{self.n_bins}_{self.uncertainty}_{self.signal_uncertainty}"
+        dirname = f"{self.binning}{self.n_bins}"
+        if self.binning in ["ud", "ud_flats", "tt_dy_driven"]:
+            dirname += f"_{self.uncertainty}_{self.signal_uncertainty}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
@@ -569,8 +563,9 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
             binning=(self.n_bins, 0.0, 1.0, self.binning),
-            uncertainty=self.uncertainty,
-            signal_uncertainty=self.signal_uncertainty,
+            # TODO: port additional binning options to stacked datacard script
+            # uncertainty=self.uncertainty,
+            # signal_uncertainty=self.signal_uncertainty,
             qcd_estimation=self.qcd_estimation,
             n_parallel_read=self.parallel_read,
             n_parallel_write=self.parallel_write,

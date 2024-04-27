@@ -38,7 +38,7 @@ import uproot
 import hist
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
 from tautaunn.binning_algorithms import uncertainty_driven, tt_dy_driven, flat_signal_ud
 
 
@@ -62,7 +62,7 @@ klub_weight_columns = [
     "bTagweightReshape",
 ]
 klub_extra_columns = [
-    "DNNoutSM_kl_1",
+    # "DNNoutSM_kl_1",
 ]
 processes = OrderedDict({
     "TT": {
@@ -75,7 +75,7 @@ processes = OrderedDict({
     },
     "DY": {
         "id": 3,
-        "sample_patterns": ["DY_amc_*"],
+        "sample_patterns": ["DY_*"],
     },
     "W": {
         "id": 4,
@@ -144,26 +144,26 @@ processes = OrderedDict({
     **{
         f"ggf_spin_{spin}_mass_{mass}_hbbhtt": {
             "id": 0,
-            "sample_patterns": [f"ggF_{resonance}_m{mass}"],
+            "sample_patterns": [f"{resonance}{mass}"],
             "spin": spin,
             "mass": mass,
             "signal": True,
         }
         for mass in masses
-        for spin, resonance in zip(spins, ["Radion", "*Graviton"])
+        for spin, resonance in zip(spins, ["Rad", "Grav"])
     },
     "data_mu": {
-        "sample_patterns": ["SingleMuon_Run2017*", "Mu_201*"],
+        "sample_patterns": ["Muon*"],
         "data": True,
         "channels": ["mutau"],
     },
     "data_egamma": {
-        "sample_patterns": ["EGamma_Run201*", "Ele_201*"],
+        "sample_patterns": ["EGamma*"],
         "data": True,
         "channels": ["etau"],
     },
     "data_tau": {
-        "sample_patterns": ["Tau_Run201*"],
+        "sample_patterns": ["Tau*"],
         "data": True,
         "channels": ["tautau"],
     },
@@ -172,8 +172,9 @@ processes = OrderedDict({
     #     "data": True,
     #     "channels": ["mutau", "etau", "tautau"],
     # },
+    # TODO: enable MET? contains all channels?
     # "data_met": {
-    #     "sample_patterns": ["MET_Run2017*"],
+    #     "sample_patterns": ["MET*"],
     #     "data": True,
     #     "channels": ["mutau", "etau", "tautau"],
     # },
@@ -266,21 +267,11 @@ stat_model_2018 = {
 categories = {}
 
 
-def apply_outlier_mask(values,
-                       name,
-                       x_min,
-                       x_max,
-                       category,
-                       spin,
-                       mass,
-                       return_mask=False):
+def apply_outlier_mask(values, name, x_min, x_max, category, spin, mass, return_mask=False):
     outlier_mask = (values < x_min) | (values > x_max)
     if ak.any(outlier_mask):
         print(f"  found {ak.sum(outlier_mask)} {name} outliers in ({category},{spin},{mass})")
-    if return_mask:
-        return outlier_mask
-    else:
-        return values[~outlier_mask]
+    return outlier_mask if return_mask else values[~outlier_mask]
 
 
 def merge_dicts(*dicts):
@@ -288,6 +279,16 @@ def merge_dicts(*dicts):
     for d in dicts:
         merged.update(deepcopy(d))
     return merged
+
+
+def sample_name_to_skim_dir(sample_name: str) -> str:
+    # this used to be f"SKIM_{sample_name}"
+    return sample_name
+
+
+def dir_is_skim_dir(dir_name: str) -> bool:
+    # without the gone SKIM_ prefix we can no longer check this
+    return True
 
 
 def selector(
@@ -340,7 +341,7 @@ def sel_iso_first_lep(array: ak.Array) -> ak.Array:
 
 
 @selector(
-    needs=["isLeptrigger", "isMETtrigger", "isSingleTauTrigger",],
+    needs=["isLeptrigger", "isMETtrigger", "isSingleTauTrigger"],
     str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTauTrigger == 1))",
 )
 def sel_trigger(array: ak.Array) -> ak.Array:
@@ -350,8 +351,8 @@ def sel_trigger(array: ak.Array) -> ak.Array:
 
 
 @selector(
-    needs=["isLeptrigger", "pairType", "nleps", "nbjetscand"],
-    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & (nbjetscand > 1)",  # noqa
+    needs=[sel_trigger, sel_iso_first_lep, "nleps", "nbjetscand", "isBoosted"],
+    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & ((nbjetscand > 1) | (isBoosted == 1))",  # noqa
 )
 def sel_baseline(array: ak.Array) -> ak.Array:
     return (
@@ -360,7 +361,7 @@ def sel_baseline(array: ak.Array) -> ak.Array:
         # (note that this is not called "baseline" anymore by KLUB standards)
         sel_iso_first_lep(array) &
         (array.nleps == 0) &
-        (array.nbjetscand > 1)
+        ((array.nbjetscand > 1) | (array.isBoosted == 1))
     )
 
 
@@ -413,53 +414,56 @@ def category_factory(
     def sel_channel(array: ak.Array) -> ak.Array:
         return array.pairType == pair_type
 
-    @selector(needs=["isBoosted"])
+    @selector(needs=["isBoosted", "fatjet_particleNetMDJetTags_probXbb"])
     def sel_boosted(array: ak.Array) -> ak.Array:
-        return array.isBoosted == 1
-
-    @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
-    def sel_vbf(array: ak.Array) -> ak.Array:
         return (
-            (array.isVBF == 1) &
-            (array.VBFjj_mass > 500) &
-            (array.VBFjj_deltaEta > 3)
+            (array.isBoosted == 1) &
+            (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
         )
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh1_resolved(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
+    # @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
+    # def sel_vbf(array: ak.Array) -> ak.Array:
+    #     return (
+    #         (array.isVBF == 1) &
+    #         (array.VBFjj_mass > 500) &
+    #         (array.VBFjj_deltaEta > 3)
+    #     )
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh2_resolved(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh1_resolved(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh3_resolved(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh2_resolved(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh4_resolved(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh3_resolved(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh5_resolved(array: ak.Array) -> ak.Array:
-        return array.HHKin_mass >= 1100
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh4_resolved(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh1_boosted(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh5_resolved(array: ak.Array) -> ak.Array:
+    #     return array.HHKin_mass >= 1100
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh2_boosted(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh1_boosted(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh3_boosted(array: ak.Array) -> ak.Array:
-        return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh2_boosted(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
 
-    @selector(needs=["HHKin_mass"])
-    def sel_mhh4_boosted(array: ak.Array) -> ak.Array:
-        return array.HHKin_mass >= 1100
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh3_boosted(array: ak.Array) -> ak.Array:
+    #     return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
+
+    # @selector(needs=["HHKin_mass"])
+    # def sel_mhh4_boosted(array: ak.Array) -> ak.Array:
+    #     return array.HHKin_mass >= 1100
 
     def sel_combinations(main_sel, sub_sels):
         def create(sub_sel):
@@ -474,97 +478,97 @@ def category_factory(
 
         return [create(sub_sel) for sub_sel in sub_sels]
 
-    mhh_sels_resolved = [
-        sel_mhh1_resolved,
-        sel_mhh2_resolved,
-        sel_mhh3_resolved,
-        sel_mhh4_resolved,
-        sel_mhh5_resolved,
-    ]
+    # mhh_sels_resolved = [
+    #     sel_mhh1_resolved,
+    #     sel_mhh2_resolved,
+    #     sel_mhh3_resolved,
+    #     sel_mhh4_resolved,
+    #     sel_mhh5_resolved,
+    # ]
 
-    mhh_sels_boosted = [
-        sel_mhh1_boosted,
-        sel_mhh2_boosted,
-        sel_mhh3_boosted,
-        sel_mhh4_boosted,
-    ]
+    # mhh_sels_boosted = [
+    #     sel_mhh1_boosted,
+    #     sel_mhh2_boosted,
+    #     sel_mhh3_boosted,
+    #     sel_mhh4_boosted,
+    # ]
 
-    mdnn_columns = [
-        "mdnn__v5__kl1_c2v1_c31_vbf__dy",
-        "mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf",
-        "mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tt_fh",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tt_lep",
-        "mdnn__v5__kl1_c2v1_c31_vbf__tth",
-    ]
+    # mdnn_columns = [
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__dy",
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf",
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf",
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_fh",
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_lep",
+    #     "mdnn__v5__kl1_c2v1_c31_vbf__tth",
+    # ]
 
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_ggf(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > tt)
-        )
+    # @selector(needs=mdnn_columns)
+    # def sel_mdnn_ggf(array: ak.Array) -> ak.Array:
+    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
+    #     return (
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > tt)
+    #     )
 
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_vbf(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > tt)
-        )
+    # @selector(needs=mdnn_columns)
+    # def sel_mdnn_vbf(array: ak.Array) -> ak.Array:
+    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
+    #     return (
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > tt)
+    #     )
 
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_tth(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > tt)
-        )
+    # @selector(needs=mdnn_columns)
+    # def sel_mdnn_tth(array: ak.Array) -> ak.Array:
+    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
+    #     return (
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > tt)
+    #     )
 
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_dy(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > tt)
-        )
+    # @selector(needs=mdnn_columns)
+    # def sel_mdnn_dy(array: ak.Array) -> ak.Array:
+    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
+    #     return (
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
+    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > tt)
+    #     )
 
-    @selector(needs=mdnn_columns)
-    def sel_mdnn_tt(array: ak.Array) -> ak.Array:
-        tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-        return (
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-            (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__dy)
-        )
+    # @selector(needs=mdnn_columns)
+    # def sel_mdnn_tt(array: ak.Array) -> ak.Array:
+    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
+    #     return (
+    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
+    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
+    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
+    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__dy)
+    #     )
 
-    mdnn_sels = [
-        sel_mdnn_ggf,
-        sel_mdnn_vbf,
-        sel_mdnn_tth,
-        sel_mdnn_dy,
-        sel_mdnn_tt,
-    ]
+    # mdnn_sels = [
+    #     sel_mdnn_ggf,
+    #     sel_mdnn_vbf,
+    #     sel_mdnn_tth,
+    #     sel_mdnn_dy,
+    #     sel_mdnn_tt,
+    # ]
 
-    mdnn_sel_names = ["ggf", "vbf", "tth", "dy", "tt"]
+    # mdnn_sel_names = ["ggf", "vbf", "tth", "dy", "tt"]
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
     def sel_btag_m(array: ak.Array) -> ak.Array:
         return (
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
-            (array.bjet2_bID_deepFlavor < btag_wps[year]["medium"])
+            (array.bjet2_bID_deepFlavor <= btag_wps[year]["medium"])
         ) | (
-            (array.bjet1_bID_deepFlavor < btag_wps[year]["medium"]) &
+            (array.bjet1_bID_deepFlavor <= btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
@@ -575,120 +579,113 @@ def category_factory(
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_ll(array: ak.Array) -> ak.Array:
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
-        )
+    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
+    # def sel_btag_ll(array: ak.Array) -> ak.Array:
+    #     return (
+    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
+    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
+    #     )
 
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_m_first(array: ak.Array) -> ak.Array:
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-        )
+    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
+    # def sel_btag_m_first(array: ak.Array) -> ak.Array:
+    #     return (
+    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
+    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
+    #     )
 
-    @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_resolved(array: ak.Array) -> ak.Array:
-        return (
-            ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
-            ((array.bH_mass_raw - 169.0) / 145.0)**2.0
-        ) < 1.0
+    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
+    # def sel_mass_window_resolved(array: ak.Array) -> ak.Array:
+    #     return (
+    #         ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
+    #         ((array.bH_mass_raw - 169.0) / 145.0)**2.0
+    #     ) < 1.0
 
-    @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
-        return (
-            ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
-            ((array.bH_mass_raw - 159.0) / 94.0)**2.0
-        ) < 1.0
+    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
+    # def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
+    #     return (
+    #         ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
+    #         ((array.bH_mass_raw - 159.0) / 94.0)**2.0
+    #     ) < 1.0
 
     @selector(
-        needs=[sel_baseline, sel_channel],
+        needs=[sel_baseline],
         year=year,
         channel=channel,
     )
     def cat_baseline(array: ak.Array) -> ak.Array:
-        return sel_baseline(array) & sel_channel(array)
+        return sel_baseline(array)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_m, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted, sel_btag_m],
         year=year,
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array) -> ak.Array:
         return (
             sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_m(array) &
             ~sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_btag_m(array)
         )
 
-    @selector(
-        needs=[cat_resolved_1b, sel_mass_window_resolved],
-        year=year,
-        channel=channel,
-    )
-    def cat_resolved_1b_mwc(array: ak.Array) -> ak.Array:
-        return cat_resolved_1b(array) & sel_mass_window_resolved(array)
+    # @selector(
+    #     needs=[cat_resolved_1b, sel_mass_window_resolved],
+    #     year=year,
+    #     channel=channel,
+    # )
+    # def cat_resolved_1b_mwc(array: ak.Array) -> ak.Array:
+    #     return cat_resolved_1b(array) & sel_mass_window_resolved(array)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted, sel_btag_mm],
         year=year,
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array) -> ak.Array:
         return (
             sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_mm(array) &
             ~sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_btag_mm(array)
         )
 
-    @selector(
-        needs=[cat_resolved_2b, sel_mass_window_resolved],
-        year=year,
-        channel=channel,
-    )
-    def cat_resolved_2b_mwc(array: ak.Array) -> ak.Array:
-        return cat_resolved_2b(array) & sel_mass_window_resolved(array)
+    # @selector(
+    #     needs=[cat_resolved_2b, sel_mass_window_resolved],
+    #     year=year,
+    #     channel=channel,
+    # )
+    # def cat_resolved_2b_mwc(array: ak.Array) -> ak.Array:
+    #     return cat_resolved_2b(array) & sel_mass_window_resolved(array)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
+        needs=[sel_baseline, sel_boosted],
         year=year,
         channel=channel,
     )
     def cat_boosted(array: ak.Array) -> ak.Array:
         return (
             sel_baseline(array) &
-            sel_channel(array) &
-            sel_btag_ll(array) &
-            sel_boosted(array) &
-            ~(sel_vbf(array) & sel_btag_m_first(array))
+            sel_boosted(array)
         )
 
-    @selector(
-        needs=[cat_boosted, sel_mass_window_resolved],
-        year=year,
-        channel=channel,
-    )
-    def cat_boosted_mwc(array: ak.Array) -> ak.Array:
-        return cat_boosted(array) & sel_mass_window_resolved(array)
+    # @selector(
+    #     needs=[cat_boosted, sel_mass_window_resolved],
+    #     year=year,
+    #     channel=channel,
+    # )
+    # def cat_boosted_mwc(array: ak.Array) -> ak.Array:
+    #     return cat_boosted(array) & sel_mass_window_resolved(array)
 
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-        year=year,
-        channel=channel,
-    )
-    def cat_vbf(array: ak.Array) -> ak.Array:
-        return (
-            sel_baseline(array) &
-            sel_channel(array) &
-            sel_vbf(array) &
-            sel_btag_m_first(array)
-        )
+    # @selector(
+    #     needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
+    #     year=year,
+    #     channel=channel,
+    # )
+    # def cat_vbf(array: ak.Array) -> ak.Array:
+    #     return (
+    #         sel_baseline(array) &
+    #         sel_channel(array) &
+    #         sel_vbf(array) &
+    #         sel_btag_m_first(array)
+    #     )
 
     # create a dict of all selectors, but without subdivision into regions
     selectors = {
@@ -696,42 +693,42 @@ def category_factory(
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
-        "vbf": cat_vbf,
-        # mass window cuts
-        "resolved1bmwc": cat_resolved_1b_mwc,
-        "resolved2bmwc": cat_resolved_2b_mwc,
-        "boostedmwc": cat_boosted_mwc,
-        # mhh bins in resolved and boosted
-        **{
-            f"resolved1bmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_1b, mhh_sels_resolved))
-        },
-        **{
-            f"resolved2bmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_2b, mhh_sels_resolved))
-        },
-        **{
-            f"boostedmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
-        },
-        # mdnn in vbf
-        **{
-            f"vbfmdnn{mdnn_sel_names[i]}": sel
-            for i, sel in enumerate(sel_combinations(cat_vbf, mdnn_sels))
-        },
-        # mass window cuts and mhh bins in resolved and boosted
-        **{
-            f"resolved1bmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_1b_mwc, mhh_sels_resolved))
-        },
-        **{
-            f"resolved2bmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_resolved_2b_mwc, mhh_sels_resolved))
-        },
-        **{
-            f"boostedmwcmhh{i + 1}": sel
-            for i, sel in enumerate(sel_combinations(cat_boosted_mwc, mhh_sels_boosted))
-        },
+        # "vbf": cat_vbf,
+        # # mass window cuts
+        # "resolved1bmwc": cat_resolved_1b_mwc,
+        # "resolved2bmwc": cat_resolved_2b_mwc,
+        # "boostedmwc": cat_boosted_mwc,
+        # # mhh bins in resolved and boosted
+        # **{
+        #     f"resolved1bmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b, mhh_sels_resolved))
+        # },
+        # **{
+        #     f"resolved2bmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b, mhh_sels_resolved))
+        # },
+        # **{
+        #     f"boostedmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
+        # },
+        # # mdnn in vbf
+        # **{
+        #     f"vbfmdnn{mdnn_sel_names[i]}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_vbf, mdnn_sels))
+        # },
+        # # mass window cuts and mhh bins in resolved and boosted
+        # **{
+        #     f"resolved1bmwcmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b_mwc, mhh_sels_resolved))
+        # },
+        # **{
+        #     f"resolved2bmwcmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b_mwc, mhh_sels_resolved))
+        # },
+        # **{
+        #     f"boostedmwcmhh{i + 1}": sel
+        #     for i, sel in enumerate(sel_combinations(cat_boosted_mwc, mhh_sels_boosted))
+        # },
     }
 
     # add all region combinations
@@ -808,7 +805,7 @@ def load_klub_file(
     expressions = list(set(expressions))
 
     # load the array
-    f = uproot.open(os.path.join(skim_directory, f"SKIM_{sample_name}", file_name))
+    f = uproot.open(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name))
     array = f["HTauTauTree"].arrays(expressions=expressions, cut=sel_baseline.str_repr.strip())
 
     # compute the weight and complain when non-finite weights were found
@@ -847,7 +844,7 @@ def load_dnn_file(
     expressions = list(set(expressions))
 
     # load the array
-    f = uproot.open(os.path.join(eval_directory, f"SKIM_{sample_name}", file_name))
+    f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
     array = f["evaluation"].arrays(filter_name=expressions)
 
     return array
@@ -870,8 +867,8 @@ def load_file(
         # use klub array index to filter dnn array
         dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
         if ak.sum(dnn_mask) != len(klub_array):
-            klub_path = os.path.join(skim_directory, f"SKIM_{sample_name}", file_name)
-            eval_path = os.path.join(eval_directory, f"SKIM_{sample_name}", file_name)
+            klub_path = os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name)
+            eval_path = os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name)
             raise Exception(
                 f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
                 f"number of elements in the klub array ({len(klub_array)}) for file {file_name} "
@@ -965,7 +962,7 @@ def load_sample_data(
         # determine file names and build arguments for the parallel load implementation
         load_args = [
             (skim_directory, eval_directory, sample_name, file_name, dnn_output_columns or [])
-            for file_name in os.listdir(os.path.join(skim_directory, f"SKIM_{sample_name}"))
+            for file_name in os.listdir(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name)))
             if fnmatch(file_name, "output_*.root")
         ]
 
@@ -1039,7 +1036,6 @@ def write_datacards(
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
     uncertainty: float = 0.1,
     signal_uncertainty: float = 0.5,
-    N_signal: int = 4,
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1069,7 +1065,7 @@ def write_datacards(
         for dir_name in os.listdir(skim_directory)
         if (
             os.path.isdir(os.path.join(skim_directory, dir_name)) and
-            dir_name.startswith("SKIM_")
+            dir_is_skim_dir(dir_name)
         )
     ]
 
@@ -1308,9 +1304,9 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal_distance":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    elif binning_algo == "ud_flats": # uncertainty-driven flat_s
-        #if uncertainty is None:
-            #raise Exception("uncertainty must be specified for uncertainty-driven binning")
+    elif binning_algo == "ud_flats":  # uncertainty-driven flat_s
+        # if uncertainty is None:
+        #     raise Exception("uncertainty must be specified for uncertainty-driven binning")
         # get the signal values
         signal_process_names = [
             process_name
@@ -1339,25 +1335,20 @@ def _write_datacard(
             # dict.get() returns the key if it exits, otherwise the default value (False here)
             if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
         ]
-        bkgd_sample_names = set() 
+        bkgd_sample_names = set()
         for process in bkgd_process_names:
             bkgd_sample_names |= set(sample_map[process])
         bkgd_values = ak.concatenate([
             sample_data[sample_name][variable_name]
-            for sample_name in bkgd_sample_names 
+            for sample_name in bkgd_sample_names
         ], axis=0)
         # apply axis limits and complain
-        outlier_mask_sig = apply_outlier_mask(signal_values,
-                                              "signal",
-                                              x_min,
-                                              x_max,
-                                              category,
-                                              spin,
-                                              mass,
-                                              return_mask=True)
+        outlier_mask_sig = apply_outlier_mask(
+            signal_values, "signal", x_min, x_max, category, spin, mass, return_mask=True,
+        )
         signal_values = signal_values[~outlier_mask_sig]
         signal_weights = signal_weights[~outlier_mask_sig]
-        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass)
         # get tt and dy values
         tt_values = ak.concatenate([
             sample_data[sample_name][variable_name]
@@ -1368,8 +1359,8 @@ def _write_datacard(
             for sample_name in sample_map["DY"]
         ], axis=0)
         # apply axis limits and complain
-        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
-        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass)
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass)
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1381,15 +1372,17 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = flat_signal_ud(signal_values=signal_values,
-                                   signal_weights=signal_weights,
-                                   bkgd_values=bkgd_values,
-                                   tt_values=tt_values,
-                                   dy_values=dy_values,
-                                   uncertainty=uncertainty,
-                                   x_min=x_min,
-                                   x_max=x_max,
-                                   n_bins=n_bins)
+        bin_edges = flat_signal_ud(
+            signal_values=signal_values,
+            signal_weights=signal_weights,
+            bkgd_values=bkgd_values,
+            tt_values=tt_values,
+            dy_values=dy_values,
+            uncertainty=uncertainty,
+            x_min=x_min,
+            x_max=x_max,
+            n_bins=n_bins,
+        )
     elif binning_algo == "tt_dy_driven":
         if uncertainty is None:
             raise Exception("uncertainty must be specified for uncertainty-driven binning")
@@ -1420,8 +1413,8 @@ def _write_datacard(
             for sample_name in sample_map["DY"]
         ], axis=0)
         # apply axis limits and complain
-        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
-        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass)
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass)
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1433,16 +1426,18 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = tt_dy_driven(signal_values=signal_values,
-                                 dy_values=dy_values,
-                                 tt_values=tt_values,
-                                 uncertainty=uncertainty,
-                                 signal_uncertainty=signal_uncertainty,
-                                 mode="min",
-                                 n_bins=n_bins,
-                                 x_min=x_min,
-                                 x_max=x_max,)
-    elif binning_algo == "ud": # uncertainty-driven
+        bin_edges = tt_dy_driven(
+            signal_values=signal_values,
+            dy_values=dy_values,
+            tt_values=tt_values,
+            uncertainty=uncertainty,
+            signal_uncertainty=signal_uncertainty,
+            mode="min",
+            n_bins=n_bins,
+            x_min=x_min,
+            x_max=x_max,
+        )
+    elif binning_algo == "ud":  # uncertainty-driven
         if uncertainty is None:
             raise Exception("uncertainty must be specified for uncertainty-driven binning")
         # get the signal values
@@ -1469,12 +1464,12 @@ def _write_datacard(
             # dict.get() returns the key if it exits, otherwise the default value (False here)
             if (not processes[process_name].get("signal", False)) and (not processes[process_name].get("data", False))
         ]
-        bkgd_sample_names = set() 
+        bkgd_sample_names = set()
         for process in bkgd_process_names:
             bkgd_sample_names |= set(sample_map[process])
         bkgd_values = ak.concatenate([
             sample_data[sample_name][variable_name]
-            for sample_name in bkgd_sample_names 
+            for sample_name in bkgd_sample_names
         ], axis=0)
         # get tt and dy values
         tt_values = ak.concatenate([
@@ -1486,10 +1481,10 @@ def _write_datacard(
             for sample_name in sample_map["DY"]
         ], axis=0)
         # apply axis limits and complain
-        signal_values = apply_outlier_mask(signal_values, "signal", x_min, x_max, category, spin, mass) 
-        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass) 
-        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass) 
-        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass) 
+        signal_values = apply_outlier_mask(signal_values, "signal", x_min, x_max, category, spin, mass)
+        bkgd_values = apply_outlier_mask(bkgd_values, "bkgd", x_min, x_max, category, spin, mass)
+        tt_values = apply_outlier_mask(tt_values, "tt", x_min, x_max, category, spin, mass)
+        dy_values = apply_outlier_mask(dy_values, "dy", x_min, x_max, category, spin, mass)
         # the number of bins cannot be larger than the amount of unique signal values
         _n_bins_max = len(set(signal_values))
         if n_bins > _n_bins_max:
@@ -1501,15 +1496,17 @@ def _write_datacard(
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
             return (None, None)
-        bin_edges = uncertainty_driven(signal_values=signal_values,
-                                    bkgd_values=bkgd_values,
-                                    tt_values=tt_values,
-                                    dy_values=dy_values,
-                                    bkgd_uncertainty=uncertainty,
-                                    signal_uncertainty=signal_uncertainty,
-                                    n_bins=n_bins,
-                                    x_min=x_min,
-                                    x_max=x_max,)
+        bin_edges = uncertainty_driven(
+            signal_values=signal_values,
+            bkgd_values=bkgd_values,
+            tt_values=tt_values,
+            dy_values=dy_values,
+            bkgd_uncertainty=uncertainty,
+            signal_uncertainty=signal_uncertainty,
+            n_bins=n_bins,
+            x_min=x_min,
+            x_max=x_max,
+        )
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
@@ -1570,7 +1567,6 @@ def _write_datacard(
                 f"due to edge value rounding in process {signal_process_name}",
             )
             n_bins = _n_bins_actual
-
 
     #
     # write shapes
