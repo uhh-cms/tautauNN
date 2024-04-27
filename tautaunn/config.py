@@ -434,6 +434,32 @@ cont_feature_sets = {
         "htthbb_masked_e", "htthbb_masked_px", "htthbb_masked_py", "htthbb_masked_pz",
         "httfatjet_masked_e", "httfatjet_masked_px", "httfatjet_masked_py", "httfatjet_masked_pz",
     ],
+    "default_daurot_composite_old": cont_features_daurot_fatjet + [
+        "htt_e", "htt_px", "htt_py", "htt_pz",
+        "hbb_masked_e", "hbb_masked_px", "hbb_masked_py", "hbb_masked_pz",
+        "htthbb_masked_e", "htthbb_masked_px", "htthbb_masked_py", "htthbb_masked_pz",
+        "httfatjet_masked_e", "httfatjet_masked_px", "httfatjet_masked_py", "httfatjet_masked_pz",
+        "dau1_dxy", "dau1_dz", "dau2_dxy", "dau2_dz",
+        "bjet1_masked_cID_deepFlavor", "bjet2_masked_cID_deepFlavor",
+    ],
+    "default_daurot_masked": [
+        "met_px", "met_py", "dmet_resp_px", "dmet_resp_py", "dmet_reso_px", "dmet_reso_py",
+        "met_cov00", "met_cov01", "met_cov11",
+        *[
+            f"dau{i}_{feat}"
+            for i in [1, 2]
+            for feat in ["px", "py", "pz", "e", "dxy", "dz"]
+        ],
+        *[
+            f"bjet{i}_masked_{feat}"
+            for i in [1, 2]
+            for feat in [
+                "px", "py", "pz", "e",
+                "btag_deepFlavor", "cID_deepFlavor", "CvsB", "CvsL",
+                "HHbtag",
+            ]
+        ],
+    ],
     "full": (cont_features_full := cont_features_reg + [
         "tauH_e", "tauH_px", "tauH_py", "tauH_pz",
         "bH_e", "bH_px", "bH_py", "bH_pz",
@@ -1113,8 +1139,7 @@ regression_sets = {
     )),
     "v6": (reg_set_v6 := RegressionSet(
         model_files={
-            # TODO: update path to pre model file
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final_features3/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")
+            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"dev_final_features3/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
             for fold in range(5)
         },
         cont_feature_set="default_daurot_composite",

@@ -94,7 +94,7 @@ def load_sample_root(data_dir, sample, features, selections, max_events=-1, cach
         # concatenate and add sum_weights column
         feature_vecs = np.concatenate(feature_vecs, axis=0)
         feature_vecs["sum_weights"] *= sum_weights
-        print(f"loaded {len(feature_vecs):_} events from {n_files_seen} file(s), took {human_duration(seconds=duration)}")
+        print(f"loaded {len(feature_vecs):_} events from {n_files_seen} file(s) in {human_duration(seconds=duration)}")
         if broken_files:
             broken_files_repr = "\n".join(broken_files)
             print(f"{len(broken_files)} broken file(s):\n{broken_files_repr}")
