@@ -363,8 +363,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                             for field in out_tree.fields
                         }
                     else:
-                        out_tree = {c: np.asarray(arr[c]) 
-                                    for c in list(set(cfg.klub_index_columns) | set(cfg.shapes_extra_columns))}
+                        out_tree = {
+                            c: np.asarray(arr[c])
+                            for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns))
+                        }
 
                     if "nominal" in key:
                         cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)

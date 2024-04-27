@@ -595,22 +595,12 @@ klub_category_columns = [
     "dau1_iso",
     "dau1_eleMVAiso",
     "dau1_deepTauVsJet",
-]
-
-shapes_extra_columns = [
-    "pairType",
-    "nbjetscand",
-    "bjet1_bID_deepFlavor",
-    "bjet2_bID_deepFlavor",
-    "isBoosted",
-    "fatjet_particleNetMDJetTags_score",
-    "dau1_iso",
-    "dau1_eleMVAiso",
-    "dau1_deepTauVsJet",
-    *[f"{obj}{i}_{val}"
-      for obj in ["dau", "bjet"]
-      for i in [1, 2] for val in ["pt", "eta"]],
-    *[f"fatjet_{val}" for val in ["pt", "eta"]],
+    # preemptively add pt and eta values
+    *[
+        f"{obj}_{f}"
+        for obj in ["dau1", "dau2", "bjet1", "bjet2", "fatjet"]
+        for f in ["pt", "eta"]
+    ],
 ]
 
 dynamic_columns = {
