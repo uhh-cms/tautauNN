@@ -391,12 +391,6 @@ def train(
             parameterize_year_any,
             parameterize_mass_any,
             parameterize_spin_any,
-            # hack: fixed sets
-            regression_set,
-            # "default",
-            lbn_set,
-            # "test5",
-            # end
             n_folds,
             fold_index,
             validation_fraction,
@@ -423,6 +417,8 @@ def train(
             ) = pickle.load(f)
 
     else:
+        print(f"dataset is not cached, loading samples to write {cache_file}")
+
         # loop through samples
         for sample in samples:
             rec = load_sample_root(
@@ -729,9 +725,10 @@ def train(
             def __init__(
                 self,
                 model: tf.keras.Model,
-                fade_in: tuple[int, int],
+                fadein: tuple[int, int],
                 dense_index_start: int,
                 dense_index_stop: int,
+                lres_callback: ReduceLRAndStop | None = None,
                 name="regression_fader",
                 **kwargs,
             ) -> None:
@@ -744,55 +741,71 @@ def train(
                 for layer in model.layers:
                     if "dense_1" in layer.name and self.dense_layer is None:
                         self.dense_layer = layer
-                    elif "reg_fade_in" in layer.name and self.fadein_layer is None:
+                    elif "reg_fadein" in layer.name and self.fadein_layer is None:
                         self.fadein_layer = layer
-                    elif "reg_lbn_fade_in" in layer.name and self.fadein_lbn_layer is None:
+                    elif "reg_lbn_fadein" in layer.name and self.fadein_lbn_layer is None:
                         self.fadein_lbn_layer = layer
 
                 # dense layer and fade-in layer are mandatory, lbn fade-in layer is optional
                 assert self.dense_layer is not None
                 assert self.fadein_layer is not None
 
-                # reference to the fade-in factor
-                self.fadein_factor = self.fadein_layer.factor
-                self.fadein_lbn_factor = None if self.fadein_lbn_layer is None else self.fadein_lbn_layer.factor
-
                 # store initial weights of first dense layer that connect to the regression network
                 self.dense_index_start = dense_index_start
                 self.dense_index_stop = dense_index_stop
                 self.dense_weights_reg = self.dense_layer.kernel[self.dense_index_start:self.dense_index_stop]
 
-                # fade-in range
-                assert fade_in[0] > 0
-                assert fade_in[1] > 0
-                self.fade_in = fade_in
+                # fade-in range check (the es patience value is not needed here)
+                assert fadein[0] > 0
+                assert fadein[1] > 0
+                self.fadein = fadein
+                self.fadein_start, self.fadein_duration = self.fadein[:2]
+
+                # store callbacks
+                self.lres_callback = lres_callback
 
                 # state
                 self.name = name
                 self.counter: int = 0
 
+            @property
+            def fadein_factor(self):
+                return self.fadein_layer.factor
+
+            @property
+            def fadein_lbn_factor(self):
+                return None if self.fadein_lbn_layer is None else self.fadein_lbn_layer.factor
+
             def on_test_end(self, logs: dict[str, Any] | None = None) -> None:
                 self.counter += 1
 
                 # inject initial weights
-                if self.counter == self.fade_in[0]:
+                if self.counter == self.fadein_start:
                     self.dense_layer.kernel[self.dense_index_start:self.dense_index_stop].assign(self.dense_weights_reg)
                     print(f"\n{self.name}: injected initial weights")
 
-                if self.fade_in[0] <= self.counter < self.fade_in[0] + self.fade_in[1]:
+                    if self.lres_callback:
+                        self.lres_callback._reset_best()
+                        print(f"\n{self.name}: reset best state of LRES callback")
+
+                if self.fadein_start <= self.counter < self.fadein_start + self.fadein_duration:
                     # ramp up factor
-                    f = (self.counter - self.fade_in[0]) / self.fade_in[1]
+                    f = (self.counter - self.fadein_start) / self.fadein_duration
                     self.fadein_factor.assign(f)
                     if self.fadein_lbn_factor is not None:
                         self.fadein_lbn_factor.assign(f)
                     print(f"\n{self.name}: set fade-in factor to {f:.3f}")
 
-                elif self.counter == self.fade_in[0] + self.fade_in[1]:
+                elif self.counter == self.fadein_start + self.fadein_duration:
                     # fix factor at 1
                     self.fadein_factor.assign(1.0)
                     if self.fadein_lbn_factor is not None:
                         self.fadein_lbn_factor.assign(1.0)
-                    print(f"\n{self.name}: fix fade-in factor at 1.0")
+                    print(f"\n{self.name}: fix fade-in factor to 1.0")
+
+                    if self.lres_callback:
+                        self.lres_callback._reset_best()
+                        print(f"\n{self.name}: reset best state of LRES callback")
 
         # from tautaunn.tf_util import LRFinder
         # x_train_lr_find = dataset_train.get_n_batches(500)
@@ -806,28 +819,6 @@ def train(
         # lr_callback.plot_schedule()
 
         # callbacks
-        fit_callbacks = {
-            # tensorboard
-            "tensorboard": tf.keras.callbacks.TensorBoard(
-                log_dir=full_tensorboard_dir,
-                histogram_freq=1,
-                write_graph=True,
-                profile_batch=(500, 1500) if run_profiler else 0,
-            ) if full_tensorboard_dir else None,
-            # confusion matrix and output plots
-            "liveplotter": LivePlotWriter(
-                log_dir=full_tensorboard_dir,
-                class_names=list(class_names.values()),
-                validate_every=validate_every,
-            ) if full_tensorboard_dir else None,
-            # regression fader
-            "reg_fader": RegressionFader(
-                model=model,
-                fade_in=regression_cfg.fade_in,
-                dense_index_start=regression_weight_range[0],
-                dense_index_stop=regression_weight_range[1],
-            ) if regression_cfg and regression_cfg.fade_in[0] >= 0 else None,
-        }
         if cycle_lr:
             lres_callback = CycleLR(
                 steps_per_epoch=validate_every,
@@ -849,11 +840,39 @@ def train(
                 mode="min",
                 lr_patience=learning_rate_patience,
                 lr_factor=0.5,  # TODO: test 0.333
-                es_start_epoch=regression_cfg.fade_in[0] if regression_cfg else 0,
+                es_start_epoch=(regression_cfg.fadein[0] + regression_cfg.fadein[1]) if regression_cfg else 0,
                 es_patience=early_stopping_patience,
                 verbose=1,
             )
-        fit_callbacks["lres"] = lres_callback
+
+        fit_callbacks = {
+            # tensorboard
+            "tensorboard": tf.keras.callbacks.TensorBoard(
+                log_dir=full_tensorboard_dir,
+                histogram_freq=1,
+                write_graph=True,
+                profile_batch=(500, 1500) if run_profiler else 0,
+            ) if full_tensorboard_dir else None,
+            # confusion matrix and output plots
+            "liveplotter": LivePlotWriter(
+                log_dir=full_tensorboard_dir,
+                class_names=list(class_names.values()),
+                validate_every=validate_every,
+            ) if full_tensorboard_dir else None,
+            # lres
+            "lres": lres_callback,
+            # regression fader
+            "reg_fader": RegressionFader(
+                model=model,
+                fadein=regression_cfg.fadein,
+                dense_index_start=regression_weight_range[0],
+                dense_index_stop=regression_weight_range[1],
+                lres_callback=lres_callback,
+            ) if regression_cfg and regression_cfg.fadein[0] >= 0 else None,
+        }
+
+        fit_callbacks.update({
+        })
 
         # some logs
         model.summary()
@@ -869,10 +888,6 @@ def train(
         # training
         t_start = time.perf_counter()
         try:
-            # test
-            # pretrained_model = "feat5/hbtres_PSbaseline_LSmulti3_SSdefault_FSdefault_daurot-default_ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_RSv2_LBdefault_daurot_FI0_SD1"  # noqa
-            # model.load_weights(os.path.join(os.environ["TN_DATA_DIR"], "store/Training", pretrained_model))
-
             model.fit(
                 x=dataset_train.create_keras_generator(input_names=["cont_input", "cat_input"]),
                 validation_data=dataset_valid.create_keras_generator(input_names=["cont_input", "cat_input"]),
@@ -886,13 +901,13 @@ def train(
 
             # fine tuning
             # see https://keras.io/guides/transfer_learning/#finetuning
-            if regression_cfg and regression_cfg.fine_tune:
-                ft_cfg = regression_cfg.fine_tune
+            if regression_cfg and (ft_cfg := regression_cfg.fine_tune):
                 print("\nstarting fine-tuning adjustments")
 
                 # verify that the regression fade-in took place
-                if tf.keras.backend.get_value(fit_callbacks["reg_fader"].fadein_factor) != 1:
-                    raise RuntimeError("regression fade-in did not take place yet")
+                epoch = tf.keras.backend.get_value(model.optimizer.iterations) // validate_every
+                if epoch < regression_cfg.fadein[0] + regression_cfg.fadein[1]:
+                    raise RuntimeError("regression fade-in did not fully take place yet")
 
                 # obtain updated hyper-parameters from the fine-tuning config
                 # l2 norm
@@ -1263,8 +1278,8 @@ def create_model(
         reg_out = tf.keras.layers.Concatenate(name="reg_concat")(reg_concat_layers)
 
         # modulate through fade-in layer
-        if regression_cfg.fade_in[0] > 0:
-            reg_out = FadeInLayer(name="reg_fade_in")(reg_out)
+        if regression_cfg.fadein[0] > 0:
+            reg_out = FadeInLayer(name="reg_fadein")(reg_out)
 
         # store the range where the regression output is positioned in the overall dnn input for the fade-in later on
         regression_weight_range = (
@@ -1284,8 +1299,8 @@ def create_model(
                 axis=1,
             )
 
-            if regression_cfg.fade_in[0] > 0:
-                reg_neutrinos = FadeInLayer(name="reg_lbn_fade_in")(reg_neutrinos)
+            if regression_cfg.fadein[0] > 0:
+                reg_neutrinos = FadeInLayer(name="reg_lbn_fadein")(reg_neutrinos)
 
     #
     # LBN

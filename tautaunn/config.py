@@ -1013,7 +1013,7 @@ class RegressionSet:
     use_reg_last_layer: bool = True
     use_cls_outputs: bool = True
     use_cls_last_layer: bool = True
-    fade_in: tuple[int, int] = (0, 0)
+    fadein: tuple[int, int] = (0, 0)  # fade-in start, duration
     fine_tune: dict[str, Any] | None = None
     feed_lbn: bool = False
 
@@ -1038,7 +1038,7 @@ regression_sets = {
         use_reg_last_layer=True,
         use_cls_outputs=False,
         use_cls_last_layer=True,
-        fade_in=(150, 20),
+        fadein=(150, 20),
         fine_tune=None,
         feed_lbn=False,
     )),
@@ -1056,7 +1056,7 @@ regression_sets = {
         use_reg_last_layer=True,
         use_cls_outputs=False,
         use_cls_last_layer=True,
-        fade_in=(150, 20),
+        fadein=(150, 20),
         fine_tune=None,
         feed_lbn=False,
     )),
@@ -1084,7 +1084,7 @@ regression_sets = {
         use_reg_last_layer=True,
         use_cls_outputs=False,
         use_cls_last_layer=True,
-        fade_in=(150, 20),
+        fadein=(150, 20),
         fine_tune=None,
         feed_lbn=False,
     )),
@@ -1123,7 +1123,7 @@ regression_sets = {
         use_reg_last_layer=True,
         use_cls_outputs=False,
         use_cls_last_layer=True,
-        fade_in=(150, 20),
+        fadein=(150, 20),
         fine_tune=None,
         feed_lbn=False,
     )),
@@ -1141,16 +1141,22 @@ regression_sets = {
         use_reg_last_layer=True,
         use_cls_outputs=False,
         use_cls_last_layer=True,
-        fade_in=(150, 20),
+        fadein=(150, 20),
         fine_tune=None,
         feed_lbn=False,
     )),
-    "v6_lbn_ft_lt20_lr1": reg_set_v6.copy(
+    "v6_lbn_ft_lt20_lr1": (reg_set_v6_lbn_ft_lt20_lr1 := reg_set_v6.copy(
         feed_lbn=True,
         fine_tune={
             "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
             "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-1,
         },
+    )),
+    "v6_fi80_lbn_ft_lt20_lr1": reg_set_v6_lbn_ft_lt20_lr1.copy(
+        fadein=(80, 20),
+    ),
+    "v6_fi100_lbn_ft_lt20_lr1": reg_set_v6_lbn_ft_lt20_lr1.copy(
+        fadein=(100, 20),
     ),
 }
 

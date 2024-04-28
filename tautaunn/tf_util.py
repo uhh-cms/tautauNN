@@ -344,7 +344,7 @@ class CycleLR(tf.keras.callbacks.Callback):
                     #tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
                 else:
                     return
-    
+
     def _reset_for_fine_tuning(self) -> None:
         self.wait = 0
         self.repeat_counter = 0
@@ -802,9 +802,18 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         self.wait = 0
         self.lr_counter = 0
         self.skip_lr_monitoring = False
+        self.repeat_counter = 0
+
+        self._reset_best()
+
+    def _reset_before_repeat(self) -> None:
+        self.wait = 0
+        self.lr_counter = 0
+
+    def _reset_best(self) -> None:
+        self.wait = 0
         self.best_epoch = -1
         self.best_weights = None
-        self.repeat_counter = 0
 
         if self.mode == "min":
             self.best_metric = np.inf
@@ -814,10 +823,6 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
             self.best_metric = -np.inf
             self.best_metric_with_previous_lr = -np.inf
             self.monitor_op = lambda cur, best: (cur - best) > self.min_delta
-
-    def _reset_before_repeat(self) -> None:
-        self.wait = 0
-        self.lr_counter = 0
 
     def _reset_for_fine_tuning(self) -> None:
         self.wait = 0
@@ -860,15 +865,16 @@ class ReduceLRAndStop(tf.keras.callbacks.Callback):
         # lr monitoring
         #
 
-        # do nothing if lr is not yet to be monitored
-        if epoch < self.lr_start_epoch:
-            self.wait = 0
-            return
-
         if not self.skip_lr_monitoring:
+            # do nothing if lr is not yet to be monitored
+            if epoch < self.lr_start_epoch:
+                self.wait = 0
+                return
+
             # within patience?
             if self.wait <= self.lr_patience:
                 return
+
             # drop?
             if (
                 self.best_metric_with_previous_lr is None or

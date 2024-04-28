@@ -66,8 +66,8 @@ class TrainingParameters(Task):
         description="the optimizer the use; choices: adam,adamw; default: adamw",
     )
     learning_rate = luigi.FloatParameter(
-        default=3e-3,
-        description="learning rate; default: 3e-3",
+        default=1e-3,
+        description="learning rate; default: 1e-3",
     )
     learning_rate_patience = luigi.IntParameter(
         default=10,
@@ -129,9 +129,9 @@ class TrainingParameters(Task):
         description="name of categorical feature set; default: default_extended_pair",
     )
     regression_set = luigi.ChoiceParameter(
-        default="v6_lbn_ft_lt20_lr1",
+        default="v6_fi80_lbn_ft_lt20_lr1",
         choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
-        description="name of a regression set to use; default: v6_lbn_ft_lt20_lr1",
+        description="name of a regression set to use; default: v6_fi80_lbn_ft_lt20_lr1",
     )
     lbn_set = luigi.ChoiceParameter(
         default="default_daurot_fatjet_composite",
@@ -229,7 +229,7 @@ class Training(TrainingParameters):
             model_prefix="",
             model_suffix="",
             data_dirs=dict(cfg.skim_dirs),
-            cache_dir=os.path.join(os.environ["TN_DATA_DIR"], "training_cache"),
+            cache_dir=os.getenv("TN_TRAINING_CACHE_DIR", os.path.join(os.environ["TN_DATA_DIR"], "training_cache")),
             tensorboard_dir=(
                 None
                 if self.skip_tensorboard
