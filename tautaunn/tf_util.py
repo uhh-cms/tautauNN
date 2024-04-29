@@ -488,11 +488,6 @@ class CycleLR(tf.keras.callbacks.Callback):
                         f"from now on checking early stopping with patience {self.es_patience}",
                     )
 
-            # do nothing if es is not yet to be monitored
-            if epoch < self.es_start_epoch:
-                self.wait = 0
-                return
-
             # within patience?
             if self.wait <= self.es_patience:
                 return
