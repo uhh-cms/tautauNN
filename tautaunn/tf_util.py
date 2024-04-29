@@ -319,16 +319,16 @@ class CycleLR(tf.keras.callbacks.Callback):
 
     def on_batch_end(self, epoch, logs=None):
         logs = logs or {}
-        new_lr = self.calc_lr()
-        self.cycle_step += 1
-        # setdefault() adds the second argument in case the key doesn't exist
-        # if it does already exist, it does nothing
-        self.history.setdefault("lr", []).append(
-            tf.keras.backend.get_value(self.model.optimizer.lr))
-        tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
-
-        for k, v in logs.items():
-            self.history.setdefault(k, []).append(v)
+        if not self.reduce_lr_and_stop:
+            new_lr = self.calc_lr()
+            self.cycle_step += 1
+            # setdefault() adds the second argument in case the key doesn't exist
+            # if it does already exist, it does nothing
+            self.history.setdefault("lr", []).append(
+                tf.keras.backend.get_value(self.model.optimizer.lr))
+            tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+            for k, v in logs.items():
+                self.history.setdefault(k, []).append(v)
 
     def _reset_before_new_cycle(self) -> None:
         self.cycle_step = 0
@@ -392,9 +392,6 @@ class CycleLR(tf.keras.callbacks.Callback):
             if self.cycle_count == self.max_cycles:
                 if self.reduce_on_end:
                     self.reduce_lr_and_stop = True
-                    print(f"\n Initiating ReduceLRandStop after epoch: {epoch+1}")
-                    print(f"\n Current lr_range {self.lr_range}")
-                    print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}")
                     # set the lr to the mid of the current lr range
                     tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
                     self.wait = 0
@@ -506,6 +503,13 @@ class CycleLR(tf.keras.callbacks.Callback):
             if not self.reduce_lr_and_stop:
                 print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
                 print(f"\n Starting new cycle with lr_range: {self.lr_range}")
+        if self.cycle_count == self.max_cycles:
+            if self.reduce_on_end:
+                print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
+                print(f"\n Initiating ReduceLRandStop after epoch: {epoch}")
+                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}\n")
+                # add 1 to cycle count to stop from printing this message again
+                self.cycle_count += 1
 
     def restore_best_weights(self) -> bool:
         if self.best_weights is None:
