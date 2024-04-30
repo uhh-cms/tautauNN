@@ -50,6 +50,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     @property
     def priority(self):
+        return 1
         # TODO: update?
         # higher priority value = picked earlier by scheduler
         if re.match("^.*(TT_semiLep|TT_fullyLep|ttHToTauTau|TTZToQQ).*$", self.sample.name):
@@ -122,7 +123,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             # merge with fold mask in case there are multiple models
             eval_mask = cat_mask
             if n_models > 1:
-                eval_mask &= (arr.EventNumber % self.n_folds) == fold_index
+                eval_mask &= np.asarray((arr.EventNumber % self.n_folds) == fold_index)
 
             return cont_inputs, cat_inputs, eval_mask
 
@@ -141,15 +142,13 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
                     # insert into output tree
                     for i, class_name in enumerate(class_names.values()):
-                        # HARDCODED: skip dy
-                        # TODO: maybe also drop ttbar
+                        # HARDCODED: skip dy, TODO: maybe also drop ttbar
                         if class_name == "dy":
                             continue
                         field = col_name(mass, spin, class_name, shape_name)
                         if field not in out_tree:
-                            pred_arr = -1 * np.ones(len(eval_mask), dtype=np.float32)
-                            pred_arr[eval_mask] = predictions[:, i]
-                        out_tree[field] = pred_arr
+                            out_tree[field] = -1 * np.ones(len(eval_mask), dtype=np.float32)
+                        out_tree[field][eval_mask] = predictions[:, i]
 
         def sel_trigger(array: ak.Array) -> ak.Array:
             return ((array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1))
