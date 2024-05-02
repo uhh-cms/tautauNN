@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import itertools
 from collections import defaultdict
 
@@ -41,21 +42,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
 
     @property
-    def chunk_size(self):
-        return 1
-        # TODO: update?
-        if re.match("^.*(TT_semiLep|TT_fullyLep|ttHToTauTau|TTZToQQ|201).*$", self.sample.name):
-            return 1
-        return 2
-
-    @property
     def priority(self):
-        return 1
-        # TODO: update?
         # higher priority value = picked earlier by scheduler
-        if re.match("^.*(TT_semiLep|TT_fullyLep|ttHToTauTau|TTZToQQ).*$", self.sample.name):
+        # priotize (tt, ttH, ttZ > data > rest) across all years
+        if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToQQ)$", self.sample.name):
             return 10
-        return 0
+        if re.match(r"^(EGamma|MET|Muon|Tau)(A|B|C|D|E|F|G|H)$", self.sample.name):
+            return 5
+        return 1
 
     def workflow_requires(self):
         reqs = super().workflow_requires()
@@ -71,16 +65,15 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
-        def targets(num):
-            targets = {"nominal": self.local_target(f"output_{num}_nominal.root")}
-            if not self.nominal_only:
-                targets["shapes"] = self.local_target(f"output_{num}_shapes.root")
-            return targets
+        targets = {"nominal": self.local_target(f"output_{self.branch_data}_nominal.root")}
+        if not self.nominal_only:
+            targets["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
+        return law.SiblingFileCollection(targets)
 
-        return law.SiblingFileCollection({num: targets(num) for num in self.branch_data})
-
-    @law.decorator.safe_output
+    @law.decorator.localize(input=False, output=True)
     def run(self):
+        t_start = time.perf_counter()
+
         # set inter and intra op parallelism threads of tensorflow
         tf.config.threading.set_inter_op_parallelism_threads(1)
         tf.config.threading.set_intra_op_parallelism_threads(1)
@@ -93,7 +86,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # helpers
         flatten = lambda r, t: r.astype([(n, t) for n in r.dtype.names], copy=False).view(t).reshape((-1, len(r.dtype)))
         def col_name(mass, spin, class_name, shape_name="nominal"):
-            name = f"hbtresdnn_mass{int(mass)}_spin{int(spin)}_{class_name.lower()}"
+            name = f"pdnn_m{int(mass)}_s{int(spin)}_{class_name.lower()}"
             if shape_name != "nominal":
                 name += f"_{shape_name}"
             return name
@@ -240,10 +233,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # jes has 11 sources
         jes_dict = {
             f"jes_{src}_{ud}": {
-                # "bjet1_pt": f"bjet1_pt_jet{ud}{src}",
-                # "bjet1_e": f"bjet1_e_jet{ud}{src}",
-                # "bjet2_pt": f"bjet2_pt_jet{ud}{src}",
-                # "bjet2_e": f"bjet2_e_jet{ud}{src}",
+                "bjet1_pt": f"bjet1_pt_jet{ud}{src}",
+                "bjet1_e": f"bjet1_e_jet{ud}{src}",
+                "bjet2_pt": f"bjet2_pt_jet{ud}{src}",
+                "bjet2_e": f"bjet2_e_jet{ud}{src}",
                 "fatjet_pt": f"fatjet_pt_jet{ud}{src}",
                 "fatjet_e": f"fatjet_e_jet{ud}{src}",
                 "METx": f"METx_jet{ud}{src}",
@@ -314,21 +307,32 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # callback to report progress
         publish_progress = self.create_progress_callback(
             len(self.flat_folds) *
-            len(self.branch_data) *
             len(shape_names) *
             len(self.spins) *
             len(self.masses),
         )
         progress_step = 0
 
-        # prepare outputs that will first be created in a temporary location and then moved eventually
-        output_collection = self.output()
-        tmp_outputs = {
-            num: {
-                output: law.LocalFileTarget(is_tmp="root")
-                for output in output_dict.values() if not output.exists()
+        # load the input tree
+        skim_file = self.get_skim_file(self.branch_data)
+        in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
+
+        # read columns and insert dynamic ones
+        arr = in_tree.arrays(
+            list(columns_to_read - {"year_flag"}),
+            aliases=cfg.klub_aliases,
+            library="ak",
+        )
+        arr = ak.with_field(arr, self.sample.year_flag, "year_flag")
+
+        # prepare tree-like structure for outputs
+        outputs = self.output()
+        out_trees = {
+            key: {
+                c: np.asarray(arr[c])
+                for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns))
             }
-            for num, output_dict in output_collection.targets.items()
+            for key in outputs.targets.keys()
         }
 
         # loop over models to keep only one in memory at a time
@@ -336,89 +340,51 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             with self.publish_step(f"\nloading model for fold {fold_index} ..."), get_device("cpu"):
                 model = inps["saved_model"].load(formatter="tf_saved_model")
 
-            # loop over files
-            for num, output_dict in output_collection.targets.items():
-                # load the input tree
-                skim_file = self.get_skim_file(num)
-                in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
+            # loop through output trees
+            for key, out_tree in out_trees.items():
+                if key == "nominal":
+                    cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                    # evaluate the data
+                    with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
+                        predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
 
-                # read columns and insert dynamic ones
-                arr = in_tree.arrays(
-                    list(columns_to_read - {"year_flag"}),
-                    aliases=cfg.klub_aliases,
-                    library="ak",
-                )
-                arr = ak.with_field(arr, self.sample.year_flag, "year_flag")
+                else:  # systs
+                    # reduce array to only events that are in resolved1b, resolved2b or boosted category
+                    category_mask = sel_cats(arr, self.sample.year)
+                    self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
+                    syst_arr = arr[category_mask]
 
-                # prepare the output tree structure if not done yet (in case this is the first fold)
-                for key, output in output_dict.items():
-                    assert key in ["nominal", "shapes"]
-                    tmp_output = tmp_outputs[num][output]
-                    if tmp_output.exists():
-                        # read existing output columns that already evaluated on a previous fold
-                        out_tree = tmp_output.load(formatter="uproot")["hbtres"].arrays()
-                        out_tree = {
-                            field: np.asarray(out_tree[field])
-                            for field in out_tree.fields
-                        }
-                    else:
-                        out_tree = {
-                            c: np.asarray(arr[c])
-                            for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns))
-                        }
+                    # the initial output tree was created for all events, so reduce it once
+                    if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
+                        out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
 
-                    if "nominal" in key:
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                    for shape_name in shape_names:
+                        # apply systematic variations via aliases
+                        for dst, src in shape_systs[shape_name].items():
+                            if src in arr.fields:
+                                syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
+
+                        # get inputs
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
+
                         # evaluate the data
-                        with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
-
-                    else:  # shapes
-                        # reduce array to only events that are in resolved1b, resolved2b or boosted category
-                        category_mask = sel_cats(arr, self.sample.year)
-                        self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                        syst_arr = arr[category_mask]
-
-                        # the initial output tree was created for all events, so reduce it once
-                        if not tmp_output.exists():
-                            out_tree = {c: a[category_mask] for c, a in out_tree.items()}
-
-                        for shape_name in shape_names:
-                            # apply systematic variations via aliases
-                            for dst, src in shape_systs[shape_name].items():
-                                if src in arr.fields:
-                                    syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-
-                            # get inputs
-                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
-
-                            # evaluate the data
-                            with self.publish_step(
-                                f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
-                            ):
-                                predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
-                                # update progress
-                                publish_progress(progress_step)
-                                progress_step += 1
-
-                    # save the output tree
-                    with tmp_output.dump(formatter="uproot", mode="recreate") as f:
-                        try:
-                            f["hbtres"] = out_tree
-                        except:
-                            import traceback
-                            traceback.print_exc()
-                            from IPython import embed
-                            embed()
+                        with self.publish_step(
+                            f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
+                        ):
+                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
+                            # update progress
+                            publish_progress(progress_step)
+                            progress_step += 1
 
         # free memory
         del models
 
-        # move the temporary outputs to the final location, optionally inserting the original tree
-        output_collection.dir.touch()
-        for num, output_dict in tmp_outputs.items():
-            for output, tmp_output in output_dict.items():
-                tmp_output.move_to_local(output)
+        # save outputs
+        for key, outp in outputs.targets.items():
+            with outp.dump(formatter="uproot", mode="recreate") as f:
+                f["hbtres"] = out_trees[key]
+
+        print(f"full evaluation took {law.util.human_duration(seconds=time.perf_counter() - t_start)}")
 
 
 class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask):
