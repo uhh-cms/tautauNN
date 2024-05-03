@@ -2,27 +2,32 @@
 import luigi
 import law
 
-from tautaunn.tasks.datacards import WriteDatacards
+from tautaunn.tasks.base import Task
+from tautaunn.tasks.datacards import WriteDatacards, _default_categories
 
 
-class MakeFinalDistPlots():
+class MakeFinalDistPlots(WriteDatacards, Task):
 
-    input_dir = luigi.Parameter(
-        default="",
-        # TODO: This location should already be determined by the WriteDatacards tasks
-        description="Directory, where shapes.root files are stored by WriteDatacards"
-    )
-    output_dir = luigi.Parameter(
-        default="",
-        description="full path to dir, where plot files will be stored."
-    )
+    output_dir = luigi.Parameter(default=law.NO_STR,
+                                 description="output directory for the plots") 
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     
     def requires(self):
-        pass
-        
+        return WriteDatacards.req(self,
+                                  version=self.version,
+                                  categories=self.categories,
+                                  qcd_estimation=self.qcd_estimation,
+                                  binning=self.binning,
+                                  n_bins=self.n_bins,
+                                  uncertainty=self.uncertainty,
+                                  signal_uncertainty=self.signal_uncertainty,
+                                  variable=self.variable,
+                                  parallel_read=self.parallel_read,
+                                  parallel_write=self.parallel_write,
+                                  output_suffix=self.output_suffix,
+                                  rewrite_existing=self.rewrite_existing)
 
     def output(self):
         # prepare the output directory
@@ -36,13 +41,11 @@ class MakeFinalDistPlots():
         # load the datacard creating function
         from tautaunn.plot_dists import make_plots
 
-        # prepare inputs
-        # inp = self.input()
-        # sample_names = list(inp)
-
+        inp = self.input()
         # create the cards
+        input_dir = inp[inp.keys()[0]].abspath
+        from IPython import embed; embed()
         make_plots(
-            limits_file=self.limits_file,
-            input_dir=self.input_dir,
+            input_dir=input_dir,
             output_dir=self.output_dir,
         )
