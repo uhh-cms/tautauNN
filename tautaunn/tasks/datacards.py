@@ -41,11 +41,35 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        if self.is_workflow():
+            # TODO: the following values were derived for the 2017 samples but probably need adjustments for the other
+            # eras, so perhaps the checks should depend not on sample.name but rather on sample.skim_name, which is
+            # <year>_<sample_name>
+
+            # set the max runtime depending on the sample if set to 0
+            if self.max_runtime == 0:
+                if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToQQ|TTZToLLNuNu)$", self.sample.name):
+                    self.max_runtime = 24.0  # h
+                else:
+                    self.max_runtime = 6.0  # h
+                print(f"set max_runtime to {self.max_runtime}h ({self.sample.name})")
+
+            # set the max memory depending on the sample if set to 0 (default request on NAF is 1500 MB)
+            if self.htcondor_memory == 0:
+                if re.match(r"^(TT_SemiLep|TT_FullyLep|TTZToQQ|TTZToLLNuNu)$", self.sample.name):
+                    self.htcondor_memory = 2_500  # MB
+                    print(f"set htcondor_memory to {self.htcondor_memory} MB ({self.sample.name})")
+                else:
+                    self.htcondor_memory = law.NO_FLOAT  # keep default setting
+
     @property
     def priority(self):
         # higher priority value = picked earlier by scheduler
         # priotize (tt, ttH, ttZ > data > rest) across all years
-        if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToQQ)$", self.sample.name):
+        if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToLLNuNu)$", self.sample.name):
             return 10
         if re.match(r"^(EGamma|MET|Muon|Tau)(A|B|C|D|E|F|G|H)$", self.sample.name):
             return 5
