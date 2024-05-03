@@ -1,14 +1,14 @@
 from collections import OrderedDict
 import argparse
 import numpy as np
-from pathlib2 import Path
+from pathlib import Path
 from glob import glob
 from tqdm import tqdm
 import os
 
 import uproot
 import hist
-from hist import Hist
+from hist import Hist, Stack
 
 
 import matplotlib.pyplot as plt
@@ -24,17 +24,19 @@ luminosities = {  # in /fb
 
 def make_parser():
     parser = argparse.ArgumentParser(description="Plot the shapes that are fed into combine.")
-    parser.add_argument("-l", "--limits_file",
-                        type=str, help='/full/path/to/reslimits.npz file')
     parser.add_argument("-i", "--input_dir",
                         type=str, help='directory, where the datacards & shapes are stored')
     parser.add_argument("-o", "--output_dir",
                         type=str, help='output dir to store plots (default ./input_dir.stem)',
                         default="")
+    parser.add_argument("-l", "--limits_file", required=False, default=None,
+                        type=str, help='/full/path/to/reslimits.npz file')
     return parser
 
 
-def load_hists(filename, dirname, signal_name):
+def load_hists(filename: str | Path,
+               dirname: str,
+               signal_name: str) -> tuple[Stack, Hist]:
     with uproot.open(filename) as file:
         objects = file[dirname].classnames()
         sig = file[dirname][signal_name].to_hist()
@@ -62,14 +64,16 @@ def load_hists(filename, dirname, signal_name):
     return stack, sig
 
 
-def load_reslim(file, mass):
+def load_reslim(file: str | Path,
+                mass: float | int):
     limits = np.load(file)
     masses = limits['data']['mhh']
     exp_lim = limits['data']['limit']*1000
     return exp_lim[np.where(masses==int(mass))][0]
 
 
-def get_exclusion_idx(widths, thres=50):
+def get_exclusion_idx(widths: list,
+                      thres: float = 50.):
     ratios = widths/widths[-1]
     check = ratios>thres
     if np.all(~check):
@@ -82,18 +86,23 @@ def get_exclusion_idx(widths, thres=50):
         return np.where(boolchange==True)[0][0]+1
 
 
-def plot_double_dist(mc_stack, sig, lim, exclusion_idx, title, savename):
+def plot_double_dist(mc_stack: Stack,
+                     exclusion_idx: int,
+                     title: str,
+                     savename: str | Path,
+                     sig: Hist | None = None,
+                     lim: float | None = None) -> None:
 
     fig, (ax_0, ax_1) = plt.subplots(1, 2, figsize = (24, 8))
     fig.suptitle(title)
     ax_0.set_title("Full")
     mc_stack.plot(stack=True, histtype='fill', ax=ax_0)
-    sig = (sig/sig.sum().value)*lim
-    sig.plot1d(label=f'sig. norm. to limit: {lim:.1f} fb', color='black', ax=ax_0)
-    #hep.cms.label(f"Work in Progress {channel} {cat}",
-                  #lumi=luminosities[year],
-                  #year=year,
-                  #loc=2)
+    if sig is not None:
+        if lim is not None:
+            # normalise to limit 
+            sig = (sig/sig.sum().value)*lim
+            sig.plot1d(label=f'sig. norm. to limit: {lim:.1f} fb', color='black', ax=ax_1)
+        sig.plot1d(label=f'sig.', color='black', ax=ax_0)
     ax_0.set_yscale('log')
     ax_0.set_ylabel('N')
     ax_0.set_xlabel("DNN Out")
@@ -104,8 +113,11 @@ def plot_double_dist(mc_stack, sig, lim, exclusion_idx, title, savename):
     else:
         ax_1.set_title(f"Excluding first {exclusion_idx} bins")
     mc_stack.plot(stack=True, histtype='fill', ax=ax_1)
-    sig = (sig/sig.sum().value)*lim
-    sig.plot1d(label=f'sig. norm. to limit: {lim:.1f} fb', color='black', ax=ax_1)
+    if sig is not None:
+        if lim is not None:
+            sig = (sig/sig.sum().value)*lim
+            sig.plot1d(label=f'sig. norm. to limit: {lim:.1f} fb', color='black', ax=ax_1)
+        sig.plot1d(label=f'sig.', color='black', ax=ax_1)
     ax_1.set_yscale('log')
     ax_1.set_ylabel('')
     ax_1.set_xlabel('DNN Out')
@@ -114,11 +126,18 @@ def plot_double_dist(mc_stack, sig, lim, exclusion_idx, title, savename):
     plt.close()
 
 
-def plot_single_dist(mc_stack, sig, lim, title, savename):
+def plot_single_dist(mc_stack: Stack,
+                     title: str,
+                     savename: str | Path,
+                     sig: Hist | None = None,
+                     lim: float | None = None) -> None:
     mc_stack.plot(stack=True, histtype='fill')
-    sig = sig/sig.sum().value
-    sig = sig*lim
-    sig.plot1d(label=f'sig. norm. to limit {lim:.1f} fb', color='black')
+    if sig is not None: 
+        if lim is not None:
+            sig = sig/sig.sum().value
+            sig = sig*lim
+            sig.plot1d(label=f'sig. norm. to limit {lim:.1f} fb', color='black')
+        sig.plot1d(label=f'sig.', color='black')
     plt.yscale('log')
     lgd = plt.legend(bbox_to_anchor=(1.06, 1.02))
     plt.ylabel("N")
@@ -128,7 +147,9 @@ def plot_single_dist(mc_stack, sig, lim, title, savename):
     plt.close()
 
 
-def make_plots(limits_file, input_dir, output_dir):
+def make_plots(input_dir: str | Path,
+               output_dir: str | Path,
+               limits_file: str | Path | None = None):
     if output_dir == "":
         output_dir = f"./{Path(input_dir).parent.stem}"
     if not os.path.exists(output_dir):
@@ -146,27 +167,42 @@ def make_plots(limits_file, input_dir, output_dir):
         dirname = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_hbbhtt"
         stack, sig = load_hists(filename, dirname, signal_name)
-        lim = load_reslim(limits_file, mass)
+        if limits_file is not None:
+            lim = load_reslim(limits_file, mass)
+        else: 
+            lim = None
         title = f"cat: {cat}, spin: {spin} mass: {mass}"
         widths = stack.axes.widths[0]
         exclusion_idx = get_exclusion_idx(widths)
         if exclusion_idx == -1:
-            plot_single_dist(stack, sig, lim, title, f"{output_dir}/{filename.stem}.png")
+            plot_single_dist(mc_stack=stack,
+                             title=title,
+                             savename=f"{output_dir}/{filename.stem}.png",
+                             sig=sig,
+                             lim=lim)
         else:
-            plot_double_dist(stack,sig, lim,
-                             exclusion_idx,
-                             title, f"{output_dir}/{filename.stem}.png")
+            plot_double_dist(mc_stack=stack,
+                             exclusion_idx=exclusion_idx,
+                             title=title,
+                             savename=f"{output_dir}/{filename.stem}.png",
+                             sig=sig,
+                             lim=lim)
 
 
-def main() -> None:
-    make_plots()
+def main(input_dir: str | Path,
+         output_dir: str | Path,
+         limits_file: str | Path | None) -> None:
+    make_plots(input_dir=input_dir,
+               output_dir=output_dir,
+               limits_file=limits_file)
 
 
 if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
-    main(limits_file=args.limits_file,
-         input_dir=args.input_dir,
-         output_dir=args.output_dir)
+    main(input_dir=args.input_dir,
+         output_dir=args.output_dir,
+         limits_file=args.limits_file)
+
 
 
