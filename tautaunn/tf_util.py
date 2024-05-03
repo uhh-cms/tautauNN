@@ -218,11 +218,12 @@ class CycleLR(tf.keras.callbacks.Callback):
             epoch_per_cycle: int = 5,
             policy: str = "triangular2",
             lr_range: list = [1e-5, 3e-3],
+            final_lr: float | None = None,
             invert: bool = True,
             monitor: str = "val_ce",
             reduce_on_end: bool = False,
             lr_patience: int = 10,
-            lr_factor: float = 0.1,
+            lr_factor: float = 0.5,
             mode: str = "min",
             es_patience: int = 10,
             max_cycles: int = 10,
@@ -243,6 +244,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         # set attributes
         self.invert = invert
         self.lr_range = lr_range
+        self.final_lr = final_lr
         if not self.lr_range[-1] > self.lr_range[0]:
             raise ValueError(
                 f"{self.__class__.__name__}: Upper bound of LR Range must be larger than lower."
@@ -397,7 +399,9 @@ class CycleLR(tf.keras.callbacks.Callback):
                 if self.reduce_on_end:
                     self.reduce_lr_and_stop = True
                     # set the lr to the mid of the current lr range
-                    tf.keras.backend.set_value(self.model.optimizer.lr, (self.lr_range[0] + self.lr_range[1]) / 2.)
+                    if self.final_lr is None:
+                        self.final_lr = (self.lr_range[0] + self.lr_range[1]) / 2.
+                    tf.keras.backend.set_value(self.model.optimizer.lr, self.final_lr)
                     self.wait = 0
                     return
                 else:
@@ -506,9 +510,12 @@ class CycleLR(tf.keras.callbacks.Callback):
             if self.reduce_on_end:
                 print(f"\n Cycle {self.cycle_count} Finished after epoch: {epoch}")
                 print(f"\n Initiating ReduceLRandStop after epoch: {epoch}")
-                print(f"\n Switching to mid of current lr range: {(self.lr_range[0] + self.lr_range[1] )/ 2.}\n")
+                print(f"\n Switching to: {self.final_lr}\n")
                 # add 1 to cycle count to stop from printing this message again
                 self.cycle_count += 1
+
+    def on_train_end(self, logs: dict[str, Any] | None = None) -> None:
+        self.restore_best_weights()
 
     def restore_best_weights(self) -> bool:
         if self.best_weights is None:
@@ -526,6 +533,7 @@ class CycleLR(tf.keras.callbacks.Callback):
         if value is None:
             print_msg(f"{self.__class__.__name__}: metric '{self.monitor}' not available, found {','.join(list(logs))}")
         return value
+
 
 
 class ReduceLRAndStop(tf.keras.callbacks.Callback):

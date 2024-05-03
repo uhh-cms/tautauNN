@@ -822,14 +822,16 @@ def train(
         if cycle_lr:
             lres_callback = CycleLR(
                 steps_per_epoch=validate_every,
-                epoch_per_cycle=5,
+                epoch_per_cycle=50,
                 policy="triangular2",
-                lr_range=[1e-5, 5e-3],
-                max_cycles=10,
+                lr_range=[5e-6, 1e-3],
+                final_lr=1e-5,
+                max_cycles=1,
+                lr_factor=0.8,
                 reduce_on_end=True,
                 monitor="val_ce",
                 mode="min",
-                invert=True,
+                invert=False,
                 es_patience=early_stopping_patience,
                 verbose=2,
             )
