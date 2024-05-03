@@ -5,18 +5,11 @@ import law
 from tautaunn.tasks.datacards import WriteDatacards
 
 
-class MakeFinalDistPlots(WriteDatacards):
+class MakeFinalDistPlots():
 
-    limits_file = luigi.Parameter(
-        default="",
-        # TODO: This location should already be determined by the WriteDatacards tasks
-        # Can I retrieve the location from WriteDatacards somehow?
-        description="limits will be read from this /path/to/limits_file.npz> "
-    )
     input_dir = luigi.Parameter(
         default="",
         # TODO: This location should already be determined by the WriteDatacards tasks
-        # Can I retrieve the location from WriteDatacards somehow?
         description="Directory, where shapes.root files are stored by WriteDatacards"
     )
     output_dir = luigi.Parameter(
@@ -26,6 +19,10 @@ class MakeFinalDistPlots(WriteDatacards):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+    
+    def requires(self):
+        pass
+        
 
     def output(self):
         # prepare the output directory
