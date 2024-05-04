@@ -51,19 +51,19 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
             # set the max runtime depending on the sample if set to 0
             if self.max_runtime == 0:
-                if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToQQ|TTZToLLNuNu)$", self.sample.name):
+                self.max_runtime = 6.0  # h
+                if re.match(r"^(TT_SemiLep)$", self.sample.name):
+                    self.max_runtime = 36.0  # h
+                elif re.match(r"^(TT_FullyLep|ttHToTauTau|TTZToQQ|TTZToLLNuNu)$", self.sample.name):
                     self.max_runtime = 24.0  # h
-                else:
-                    self.max_runtime = 6.0  # h
                 print(f"set max_runtime to {self.max_runtime}h ({self.sample.name})")
 
             # set the max memory depending on the sample if set to 0 (default request on NAF is 1500 MB)
             if self.htcondor_memory == 0:
+                self.htcondor_memory = law.NO_FLOAT  # leads to default cluster setting
                 if re.match(r"^(TT_SemiLep|TT_FullyLep|TTZToQQ|TTZToLLNuNu)$", self.sample.name):
                     self.htcondor_memory = 2_500  # MB
-                    print(f"set htcondor_memory to {self.htcondor_memory} MB ({self.sample.name})")
-                else:
-                    self.htcondor_memory = law.NO_FLOAT  # keep default setting
+                print(f"set htcondor_memory to {self.htcondor_memory} MB ({self.sample.name})")
 
     @property
     def priority(self):
