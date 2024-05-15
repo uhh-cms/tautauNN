@@ -271,13 +271,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
 
         # klub aliases for systematic variations
-        shape_systs = {
-            "nominal": {},
-            **ees_dict,
-            **tes_dict,
-            **mes_dict,
-            **jes_dict,
-        }
+        shape_systs = {"nominal": {}}
+        if not self.sample.is_data:
+            shape_systs.update({**ees_dict, **tes_dict, **mes_dict, **jes_dict})
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
         # determine columns to read
@@ -302,7 +298,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         dyn_names = sorted(dyn_names, key=list(cfg.dynamic_columns.keys()).index)
 
         # test: extend columns_to_read with systematic variations
-        for shape_name in shape_systs.keys():
+        for shape_name in shape_names:
             for src, dst in shape_systs[shape_name].items():
                 if src in columns_to_read:
                     columns_to_read.add(dst)
