@@ -61,9 +61,114 @@ klub_weight_columns = [
     "PUjetID_SF",
     "bTagweightReshape",
 ]
+
+klub_weight_variation_map = {
+    "trigSF" : [*[
+            f"trigSF_{s}_{ud}"
+            for s in ["ele", "met", "mu", "stau",
+                    *[
+                        f"DM{i}"
+                        for i in [0, 1, 10, 11]
+                    ]]
+            for ud in ["up", "down"]
+        ]
+    ],
+    "IdFakeSF_deep_2d" :[
+        *[
+            f"idFakeSF_etauFR_{be}_{ud}"
+            for be in ["barrel", "endcap"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_mutauFR_eta{rng}_{ud}"
+            for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_stat{i}_{ud}"
+            for i in ['0', '1', 'gt140']
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_systcorrdm{s}_{ud}"
+            for s in ["eras", "uncorreras"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_syst{s}_{ud}"
+            for s in ["correrasgt140", "systuncorrdmeras"]
+            for ud in ["up", "down"]
+        ],
+    ],
+    "PUjetID_SF" : [*[
+            f"PUjetID_SF_{s}{ud}"
+            for s in ["",
+                    *[f"{em}{s}"
+                        for em in ["eff_", "mistag_"] 
+                        for s in ["", 
+                                *[f"eta_{ls}2p5_"
+                                    for ls in ["l", "s"]]
+                                ]
+                        ]
+                    ]
+            for ud in ["up", "down"]
+        ],
+    ],
+    "bTagweightReshape": [*[
+            f"bTagweightReshape_jet{ud}{i}"
+            for ud in ["up", "down"]
+            for i in range(1, 12)
+        ],
+        *[
+            f"bTagweightReshape_{lh}f{s}_{ud}"
+            for lh in ["l", "h"]
+            for s in ["", "stats1", "stats2"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"bTagweightReshape_cferr{i}_{ud}"
+            for i in range(1,3)
+            for ud in ["up", "down"]
+        ]
+    ]
+}
+
+klub_weight_variation_columns = list(itertools.chain(*klub_weight_variation_map.values()))
+
 klub_extra_columns = [
     # "DNNoutSM_kl_1",
 ]
+
+dnn_shape_columns = [
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_mes_{ud}"
+        for mass in masses
+        for spin in spins
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_ees_{dm}_{ud}"
+        for mass in masses
+        for spin in spins
+        for dm in ["DM0", "DM1"]
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_tes_{dm}_{ud}"
+        for mass in masses
+        for spin in spins
+        for dm in ["DM0", "DM1", "DM10", "DM11"]
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_jes_{i}_{ud}"
+        for mass in masses
+        for spin in spins
+        for i in range(1,12)
+        for ud in ["up", "down"]
+    ],
+]
+
 processes = OrderedDict({
     "TT": {
         "id": 1,
@@ -341,12 +446,12 @@ def sel_iso_first_lep(array: ak.Array) -> ak.Array:
 
 
 @selector(
-    needs=["isLeptrigger", "isMETtrigger", "isSingleTauTrigger"],
-    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTauTrigger == 1))",
+    needs=["isLeptrigger", "isMETtrigger", "isSingleTautrigger"],
+    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
 )
 def sel_trigger(array: ak.Array) -> ak.Array:
     return (
-        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1)
+        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1)
     )
 
 
@@ -421,49 +526,6 @@ def category_factory(
             (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
         )
 
-    # @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
-    # def sel_vbf(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.isVBF == 1) &
-    #         (array.VBFjj_mass > 500) &
-    #         (array.VBFjj_deltaEta > 3)
-    #     )
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh1_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh2_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh3_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh4_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh5_resolved(array: ak.Array) -> ak.Array:
-    #     return array.HHKin_mass >= 1100
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh1_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh2_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh3_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh4_boosted(array: ak.Array) -> ak.Array:
-    #     return array.HHKin_mass >= 1100
 
     def sel_combinations(main_sel, sub_sels):
         def create(sub_sel):
@@ -478,89 +540,6 @@ def category_factory(
 
         return [create(sub_sel) for sub_sel in sub_sels]
 
-    # mhh_sels_resolved = [
-    #     sel_mhh1_resolved,
-    #     sel_mhh2_resolved,
-    #     sel_mhh3_resolved,
-    #     sel_mhh4_resolved,
-    #     sel_mhh5_resolved,
-    # ]
-
-    # mhh_sels_boosted = [
-    #     sel_mhh1_boosted,
-    #     sel_mhh2_boosted,
-    #     sel_mhh3_boosted,
-    #     sel_mhh4_boosted,
-    # ]
-
-    # mdnn_columns = [
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__dy",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_fh",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_lep",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tth",
-    # ]
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_ggf(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_vbf(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_tth(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_dy(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_tt(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__dy)
-    #     )
-
-    # mdnn_sels = [
-    #     sel_mdnn_ggf,
-    #     sel_mdnn_vbf,
-    #     sel_mdnn_tth,
-    #     sel_mdnn_dy,
-    #     sel_mdnn_tt,
-    # ]
-
-    # mdnn_sel_names = ["ggf", "vbf", "tth", "dy", "tt"]
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
     def sel_btag_m(array: ak.Array) -> ak.Array:
@@ -578,34 +557,6 @@ def category_factory(
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
-
-    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    # def sel_btag_ll(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
-    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
-    #     )
-
-    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    # def sel_btag_m_first(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
-    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-    #     )
-
-    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    # def sel_mass_window_resolved(array: ak.Array) -> ak.Array:
-    #     return (
-    #         ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
-    #         ((array.bH_mass_raw - 169.0) / 145.0)**2.0
-    #     ) < 1.0
-
-    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    # def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
-    #     return (
-    #         ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
-    #         ((array.bH_mass_raw - 159.0) / 94.0)**2.0
-    #     ) < 1.0
 
     @selector(
         needs=[sel_baseline],
@@ -627,14 +578,6 @@ def category_factory(
             sel_btag_m(array)
         )
 
-    # @selector(
-    #     needs=[cat_resolved_1b, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_resolved_1b_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_resolved_1b(array) & sel_mass_window_resolved(array)
-
     @selector(
         needs=[sel_baseline, sel_boosted, sel_btag_mm],
         year=year,
@@ -647,14 +590,6 @@ def category_factory(
             sel_btag_mm(array)
         )
 
-    # @selector(
-    #     needs=[cat_resolved_2b, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_resolved_2b_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_resolved_2b(array) & sel_mass_window_resolved(array)
-
     @selector(
         needs=[sel_baseline, sel_boosted],
         year=year,
@@ -666,69 +601,12 @@ def category_factory(
             sel_boosted(array)
         )
 
-    # @selector(
-    #     needs=[cat_boosted, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_boosted_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_boosted(array) & sel_mass_window_resolved(array)
-
-    # @selector(
-    #     needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_vbf(array: ak.Array) -> ak.Array:
-    #     return (
-    #         sel_baseline(array) &
-    #         sel_channel(array) &
-    #         sel_vbf(array) &
-    #         sel_btag_m_first(array)
-    #     )
-
     # create a dict of all selectors, but without subdivision into regions
     selectors = {
         "baseline": cat_baseline,
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
-        # "vbf": cat_vbf,
-        # # mass window cuts
-        # "resolved1bmwc": cat_resolved_1b_mwc,
-        # "resolved2bmwc": cat_resolved_2b_mwc,
-        # "boostedmwc": cat_boosted_mwc,
-        # # mhh bins in resolved and boosted
-        # **{
-        #     f"resolved1bmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"resolved2bmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"boostedmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
-        # },
-        # # mdnn in vbf
-        # **{
-        #     f"vbfmdnn{mdnn_sel_names[i]}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_vbf, mdnn_sels))
-        # },
-        # # mass window cuts and mhh bins in resolved and boosted
-        # **{
-        #     f"resolved1bmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b_mwc, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"resolved2bmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b_mwc, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"boostedmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_boosted_mwc, mhh_sels_boosted))
-        # },
     }
 
     # add all region combinations
@@ -793,7 +671,7 @@ def load_klub_file(
     file_name: str,
 ) -> tuple[ak.Array, float]:
     # prepare expressions
-    expressions = klub_index_columns + klub_weight_columns + klub_extra_columns + sel_baseline.flat_columns
+    expressions = klub_index_columns + klub_weight_columns + klub_weight_variation_colums + klub_extra_columns + sel_baseline.flat_columns
 
     # add all columns potentially necessary for selections
     expressions += sum([
@@ -833,7 +711,7 @@ def load_klub_file(
     return array, sum_gen_mc_weights
 
 
-def load_dnn_file(
+def load_nominal_dnn(
     eval_directory: str,
     sample_name: str,
     file_name: str,
@@ -845,8 +723,23 @@ def load_dnn_file(
 
     # load the array
     f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
-    array = f["evaluation"].arrays(filter_name=expressions)
+    array = f["hbtres"].arrays(filter_name=expressions)
+    return array
 
+
+def load_shapes_dnn(
+    eval_directory: str,
+    sample_name: str,
+    file_name: str,
+    dnn_output_columns: list[str],
+) -> ak.Array:
+    # prepare expressions
+    expressions = klub_index_columns + dnn_output_columns + dnn_shape_columns
+    expressions = list(set(expressions))
+
+    # load the array
+    f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
+    array = f["hbtres"].arrays(filter_name=expressions)
     return array
 
 
@@ -856,13 +749,16 @@ def load_file(
     sample_name: str,
     file_name: str,
     dnn_output_columns: list[str],
-) -> tuple[ak.Array, float]:
+) -> tuple[ak.Array, float, ak.Array]:
     # load the klub file
     klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, file_name)
 
     # load the dnn output file
     if eval_directory:
-        dnn_array = load_dnn_file(eval_directory, sample_name, file_name, dnn_output_columns)
+        dnn_array = load_nominal_dnn(eval_directory,
+                                     sample_name,
+                                     file_name.replace(".root", "_nominal.root"),
+                                     dnn_output_columns)
 
         # use klub array index to filter dnn array
         dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
@@ -887,6 +783,12 @@ def load_file(
                 f"found event mismatch between klub and dnn files in {int(ak.sum(~matches))} cases "
                 f"in file {file_name}",
             )
+        
+        dnn_shapes_array = load_shapes_dnn(eval_directory,
+                                           sample_name,
+                                           file_name.replace(".root", "_systs.root"),
+                                           dnn_output_columns)
+        
 
     # drop index columns
     array = klub_array
@@ -899,8 +801,12 @@ def load_file(
             if field in klub_index_columns:
                 continue
             array = ak.with_field(array, dnn_array[field], field)
-
-    return array, sum_gen_mc_weights
+        # shapes cannot be added to array because they have a different length
+        #for field in dnn_shapes_array.fields:
+            #if field in klub_index_columns:
+                #continue
+            #array = ak.with_field(array, dnn_shapes_array[field], field)
+    return array, sum_gen_mc_weights, dnn_shapes_array
 
 
 def load_file_mp(args: tuple[Any]) -> tuple[ak.Array, float]:
@@ -955,6 +861,7 @@ def load_sample_data(
     cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, sample_name, dnn_output_columns or [])
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
+        print(cache_path)
         with open(cache_path, "rb") as f:
             array = pickle.load(f)
 
@@ -975,8 +882,10 @@ def load_sample_data(
             ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
 
         # combine values
-        array = ak.concatenate([arr for arr, _ in ret], axis=0)
-        sum_gen_mc_weights = sum(f for _, f in ret)
+        array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
+        sum_gen_mc_weights = sum(f for _, f, _ in ret)
+        dnn_shapes_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
+        from IPython import embed; embed()
         del ret
         gc.collect()
 
@@ -1061,7 +970,7 @@ def write_datacards(
 
     # get a list of all sample names in the skim directory
     all_sample_names = [
-        dir_name[5:]
+        dir_name.replace("SKIM_", "")
         for dir_name in os.listdir(skim_directory)
         if (
             os.path.isdir(os.path.join(skim_directory, dir_name)) and
@@ -1122,25 +1031,38 @@ def write_datacards(
 
     # prepare loading data
     print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
-    data_gen = (
-        load_sample_data(
-            skim_directory,
-            eval_directory,
-            sample_name,
-            selection_columns,
-            dnn_output_columns,
-            n_parallel=n_parallel_read,
-            cache_directory=cache_directory,
-        )
-        for sample_name in matched_sample_names
-    )
+    #data_gen = (
+        #load_sample_data(
+            #skim_directory,
+            #eval_directory,
+            #sample_name,
+            #selection_columns,
+            #dnn_output_columns,
+            #n_parallel=n_parallel_read,
+            #cache_directory=cache_directory,
+        #)
+        #for sample_name in matched_sample_names
+    #)
 
     # for debugging: just load data and free memory
-    # print("just load data and exit")
-    # for _ in data_gen:
-    #     gc.collect()
-    # print("done loading data, exit")
-    # return
+    #print("just load data and exit")
+    #for _ in data_gen:
+        #gc.collect()
+    #print("done loading data, exit")
+    for sample_name in matched_sample_names:
+        if sample_name == 'ZZZ':
+            load_sample_data(
+                skim_directory,
+                eval_directory,
+                sample_name,
+                selection_columns,
+                dnn_output_columns,
+                n_parallel=n_parallel_read,
+                cache_directory=cache_directory,
+            )
+            gc.collect()
+            print("done")
+    return
 
     # actually load
     sample_data = dict(zip(matched_sample_names, data_gen))
@@ -1874,7 +1796,7 @@ def main():
         "--categories",
         "-c",
         type=csv,
-        default=(default_cats := "2017_*tau_resolved?b_os_iso,2017_*tau_boosted_os_iso,2017_*tau_vbf_os_iso"),
+        default=(default_cats := "2017_*tau_resolved?b_os_iso,2017_*tau_boosted_os_iso"),
         help=f"comma separated list of categories or patterns; default: {default_cats}",
     )
     parser.add_argument(
@@ -1894,13 +1816,13 @@ def main():
         "-u",
         type=float,
         default=None,
-        help="uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: None",
+        help="uncertainty to use for uncertainty-driven binning; default: None",
     )
     parser.add_argument(
         "--signal-uncertainty",
         type=float,
         default=0.5,
-        help="signal uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: 0.5",
+        help="signal uncertainty to use for uncertainty-driven binning; default: 0.5",
     )
     parser.add_argument(
         "--n-bins",
