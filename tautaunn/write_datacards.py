@@ -96,7 +96,7 @@ klub_weight_variation_map = {
         ],
         *[
             f"idFakeSF_tauid_2d_syst{s}_{ud}"
-            for s in ["correrasgt140", "systuncorrdmeras"]
+            for s in ["correrasgt140", "uncorrdmeras"]
             for ud in ["up", "down"]
         ],
     ],
@@ -368,6 +368,59 @@ stat_model_2018 = {
     "lumi_13TeV_2018": {"*": "1.015"},
     "lumi_13TeV_correlated": {"*": "1.020"},
     "lumi_13TeV_1718": {"*": "1.002"},
+}
+
+stat_model_shapes = {
+    **{f"CMS_JES_{unc}": {"channels": ["mutau", "etau", "tautau"],
+                          "categories": ["boosted", "resolved1b", "resolved2b"],
+                          "processes": "*[!QCD]",
+                          "klub_name": f"bTagweightReshape_jet{i}",
+                          "dnn_shape_pattern": f"pdnn_*_jes_{i}_up"}
+       for i, unc in zip(range(1,13,2),["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
+    **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
+                                        "categories": ["resolved1b", "resolved2b"],
+                                        "processes": "*[!QCD]",
+                                        "klub_name": f"bTagweightReshape_{s}"}
+     for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+}
+
+stat_model_shapes_year_dependent = {
+    f"{year}": {
+        f"CMS_JES_Abs_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                 "categories": ["boosted", "resolved1b", "resolved2b"],
+                                 "processes": "*[!QCD]"},
+        f"CMS_JES_BBEC1_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                  "categories": ["boosted", "resolved1b", "resolved2b"],
+                                  "processes": "*[!QCD]"},
+        f"CMS_JES_EC2_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                "categories": ["boosted", "resolved1b", "resolved2b"],
+                                "processes": "*[!QCD]"},
+        f"CMS_JES_HF_{year}": {"channels": ["mutau", "etau", "tautau"],
+                               "categories": ["boosted", "resolved1b", "resolved2b"],
+                               "processes": "*[!QCD]"},
+        f"CMS_JES_RelSample_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                      "categories": ["boosted", "resolved1b", "resolved2b"],
+                                      "processes": "*[!QCD]"},
+        **{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                                        "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*[!QCD]"}
+           for be in ["barrel", "endcap"]},
+        f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
+                                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                                       "processes": "*[!QCD]"},
+        f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
+                                        "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*[!QCD]"},
+        f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
+                                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*[!QCD]"},
+        **{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
+                                              "categories": ["boosted", "resolved1b", "resolved2b"],
+                                              "processes": "*[!QCD]"}
+           for dm in ["DM0", "DM1", "DM10", "DM11"]},
+        
+    }
+    for year in ["UL16", "UL16APV", "UL17", "UL18"]
 }
 categories = {}
 
@@ -671,7 +724,7 @@ def load_klub_file(
     file_name: str,
 ) -> tuple[ak.Array, float]:
     # prepare expressions
-    expressions = klub_index_columns + klub_weight_columns + klub_weight_variation_colums + klub_extra_columns + sel_baseline.flat_columns
+    expressions = klub_index_columns + klub_weight_columns + klub_weight_variation_columns + klub_extra_columns + sel_baseline.flat_columns
 
     # add all columns potentially necessary for selections
     expressions += sum([
@@ -692,6 +745,7 @@ def load_klub_file(
         reduce(mul, (array[c] for c in klub_weight_columns)),
         "full_weight",
     )
+        
     mask = ~np.isfinite(array.full_weight)
     if np.any(mask):
         print(
@@ -863,7 +917,7 @@ def load_sample_data(
         print("reading from cache")
         print(cache_path)
         with open(cache_path, "rb") as f:
-            array = pickle.load(f)
+            array, dnn_shapes_array = pickle.load(f)
 
     else:
         # determine file names and build arguments for the parallel load implementation
@@ -885,7 +939,6 @@ def load_sample_data(
         array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
         sum_gen_mc_weights = sum(f for _, f, _ in ret)
         dnn_shapes_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
-        from IPython import embed; embed()
         del ret
         gc.collect()
 
@@ -897,7 +950,7 @@ def load_sample_data(
             print("writing to cache")
             with tempfile.NamedTemporaryFile(suffix=".pkl") as tmp:
                 with open(tmp.name, "wb") as f:
-                    pickle.dump(array, f)
+                    pickle.dump((array, dnn_shapes_array), f)
                 shutil.copy2(tmp.name, cache_path)
 
     # remove unnecessary columns
@@ -909,7 +962,8 @@ def load_sample_data(
 
     print("done")
 
-    return array
+    from IPython import embed; embed()
+    return array, dnn_shapes_array
 
 
 def expand_categories(category: str | Sequence[str]) -> list[str]:
@@ -1030,39 +1084,41 @@ def write_datacards(
         dnn_output_columns.append(variable_pattern.format(spin=spin, mass=mass))
 
     # prepare loading data
+    # reduce for debugging
+    matched_sample_names = ['ZZ', 'WW', 'Rad250']
     print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
-    #data_gen = (
-        #load_sample_data(
-            #skim_directory,
-            #eval_directory,
-            #sample_name,
-            #selection_columns,
-            #dnn_output_columns,
-            #n_parallel=n_parallel_read,
-            #cache_directory=cache_directory,
-        #)
-        #for sample_name in matched_sample_names
-    #)
+    data_gen = (
+        load_sample_data(
+            skim_directory,
+            eval_directory,
+            sample_name,
+            selection_columns,
+            dnn_output_columns,
+            n_parallel=n_parallel_read,
+            cache_directory=cache_directory,
+        )
+        for sample_name in matched_sample_names
+    )
 
     # for debugging: just load data and free memory
     #print("just load data and exit")
     #for _ in data_gen:
         #gc.collect()
     #print("done loading data, exit")
-    for sample_name in matched_sample_names:
-        if sample_name == 'ZZZ':
-            load_sample_data(
-                skim_directory,
-                eval_directory,
-                sample_name,
-                selection_columns,
-                dnn_output_columns,
-                n_parallel=n_parallel_read,
-                cache_directory=cache_directory,
-            )
-            gc.collect()
-            print("done")
-    return
+    #for sample_name in matched_sample_names:
+        #if sample_name == 'ZZZ':
+            #load_sample_data(
+                #skim_directory,
+                #eval_directory,
+                #sample_name,
+                #selection_columns,
+                #dnn_output_columns,
+                #n_parallel=n_parallel_read,
+                #cache_directory=cache_directory,
+            #)
+            #gc.collect()
+            #print("done")
+    #return
 
     # actually load
     sample_data = dict(zip(matched_sample_names, data_gen))
@@ -1106,7 +1162,7 @@ def write_datacards(
 
 def _write_datacard(
     sample_map: dict[str, list[str]],
-    sample_data: dict[str, ak.Array],
+    sample_data: dict[str, tuple[ak.Array, ak.Array]],
     spin: int,
     mass: int,
     category: str,
@@ -1160,6 +1216,7 @@ def _write_datacard(
         "syst": "cat_{category}/{process}__{parameter}{direction}",
         "syst_comb": "$CHANNEL/$PROCESS__$SYSTEMATIC",
     }
+    from IPython import embed; embed()
 
     # remove signal processes from the sample map that do not correspond to spin or mass
     sample_map = {
@@ -1201,6 +1258,11 @@ def _write_datacard(
             }
             for region_name, qcd_category in qcd_categories.items()
         }
+    
+    # retrieve the dnn_shapes_array from sample_data 
+    dnn_shapes = {sample_name: sample_data[sample_name][1] for sample_name in sample_data}
+    # remove the dnn_shapes_array from sample_data
+    sample_data = {sample_name: sample_data[sample_name][0] for sample_name in sample_data}
 
     # apply the category selection to sample data
     sample_data = {
@@ -1209,6 +1271,11 @@ def _write_datacard(
         # skip data for now as were are using fake data from background-only below
         if not processes[process_name].get("data", False)
     }
+
+    # check if lengths of arrays coincide (dnn_shapes already contains only events in categories)
+    for sample_name, data in sample_data.items():
+        if len(data) != len(dnn_shapes[sample_name]):
+            print(f"length of dnn_shapes_array does not match length of sample_data for sample {sample_name}")
 
     # complain when nan's were found
     for sample_name, data in sample_data.items():
@@ -1807,8 +1874,8 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal", "flats", "ud_flats", "ud", "tt_dy_driven"),
-        default="equal",
+        choices=("equal_distance", "flats", "ud_flats", "ud", "tt_dy_driven"),
+        default="equal_distance",
         help="binning strategy to use; default: equal",
     )
     parser.add_argument(
