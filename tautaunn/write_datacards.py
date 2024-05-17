@@ -376,16 +376,37 @@ stat_model_shapes = {
                           "processes": "*[!QCD]",
                           "klub_name": f"bTagweightReshape_jet{i}",
                           "dnn_shape_pattern": f"pdnn_*_jes_{i}_up"}
-       for i, unc in zip(range(1,13,2),["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
+       for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
     **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
                                         "categories": ["resolved1b", "resolved2b"],
                                         "processes": "*[!QCD]",
                                         "klub_name": f"bTagweightReshape_{s}"}
      for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+    **{f"CMS_eff_t_id_Stat{s}": {"channels": ["mutau", "etau", "tautau"],
+                             "categories": ["boosted", "resolved1b", "resolved2b"],
+                             "processes": "*[!QCD]",
+                             "klub_name": f"idFakeSF_tauid_2d_stat{s}",}
+       for s in ['0', '1', 'gt140']},
+    **{f"CMS_eff_t_id_DM{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 "categories": ["boosted", "resolved1b", "resolved2b"],
+                             "processes": "*[!QCD]",
+                             "klub_name": f"idFakeSF_tauid_2d_systcorrdm{s}",}
+       for s in ['eras', 'uncorreras']},
+    **{f"CMS_eff_t_id_syst{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 "categories": ["boosted", "resolved1b", "resolved2b"],
+                             "processes": "*[!QCD]",
+                             "klub_name": f"idFakeSF_tauid_2d_syst{s}",}
+       for s in ['correrasgt140', 'uncorrdmeras']},
 }
 
 stat_model_shapes_year_dependent = {
     f"{year}": {
+        **{f"CMS_JES_{unc}_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                                     "processes": "*[!QCD]",
+                                     "klub_name": f"bTagweightReshape_jet{i}",
+                                     "dnn_shape_pattern": f"pdnn_*_jes_{i}_up"}
+           for i, unc in zip([2,4,6,9,11] ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
         f"CMS_JES_Abs_{year}": {"channels": ["mutau", "etau", "tautau"],
                                  "categories": ["boosted", "resolved1b", "resolved2b"],
                                  "processes": "*[!QCD]"},
@@ -419,6 +440,12 @@ stat_model_shapes_year_dependent = {
                                               "processes": "*[!QCD]"}
            for dm in ["DM0", "DM1", "DM10", "DM11"]},
         
+        **{f"CMS_scale_t_{dm}_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                        "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*",
+                                        ""
+                                        }
+           for dm in ["DM0", "DM1", "DM10", "DM11"]},
     }
     for year in ["UL16", "UL16APV", "UL17", "UL18"]
 }
