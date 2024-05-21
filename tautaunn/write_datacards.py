@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import gc
+import re
 import itertools
 import hashlib
 import pickle
@@ -375,7 +376,7 @@ stat_model_shapes = {
                           "categories": ["boosted", "resolved1b", "resolved2b"],
                           "processes": "*[!QCD]",
                           "klub_name": f"bTagweightReshape_jet{i}",
-                          "dnn_shape_pattern": f"pdnn_*_jes_{i}_up"}
+                          "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
        for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
     **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
                                         "categories": ["resolved1b", "resolved2b"],
@@ -405,23 +406,8 @@ stat_model_shapes_year_dependent = {
                                      "categories": ["boosted", "resolved1b", "resolved2b"],
                                      "processes": "*[!QCD]",
                                      "klub_name": f"bTagweightReshape_jet{i}",
-                                     "dnn_shape_pattern": f"pdnn_*_jes_{i}_up"}
-           for i, unc in zip([2,4,6,9,11] ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
-        f"CMS_JES_Abs_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                 "categories": ["boosted", "resolved1b", "resolved2b"],
-                                 "processes": "*[!QCD]"},
-        f"CMS_JES_BBEC1_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                  "categories": ["boosted", "resolved1b", "resolved2b"],
-                                  "processes": "*[!QCD]"},
-        f"CMS_JES_EC2_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                "categories": ["boosted", "resolved1b", "resolved2b"],
-                                "processes": "*[!QCD]"},
-        f"CMS_JES_HF_{year}": {"channels": ["mutau", "etau", "tautau"],
-                               "categories": ["boosted", "resolved1b", "resolved2b"],
-                               "processes": "*[!QCD]"},
-        f"CMS_JES_RelSample_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                      "categories": ["boosted", "resolved1b", "resolved2b"],
-                                      "processes": "*[!QCD]"},
+                                     "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
+           for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
         **{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
                                         "categories": ["boosted", "resolved1b", "resolved2b"],
                                         "processes": "*[!QCD]"}
@@ -438,13 +424,6 @@ stat_model_shapes_year_dependent = {
         **{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
                                               "categories": ["boosted", "resolved1b", "resolved2b"],
                                               "processes": "*[!QCD]"}
-           for dm in ["DM0", "DM1", "DM10", "DM11"]},
-        
-        **{f"CMS_scale_t_{dm}_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*",
-                                        ""
-                                        }
            for dm in ["DM0", "DM1", "DM10", "DM11"]},
     }
     for year in ["UL16", "UL16APV", "UL17", "UL18"]
@@ -705,38 +684,71 @@ def category_factory(
 for channel in channels:
     cats_2016APV = category_factory(year="2016APV", channel=channel)
     for name, sel in cats_2016APV.items():
+        # build the shapes model
+        shapes_model = {}
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
+        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL16APV"].items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
         categories[f"2016APV_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2016),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2016 = category_factory(year="2016", channel=channel)
     for name, sel in cats_2016.items():
+        shapes_model = {}
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
+        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL16"].items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
         categories[f"2016_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2016),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2017 = category_factory(year="2017", channel=channel)
     for name, sel in cats_2017.items():
+        shapes_model = {}
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
+        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL17"].items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
         categories[f"2017_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2017),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2018 = category_factory(year="2018", channel=channel)
     for name, sel in cats_2018.items():
+        shapes_model = {}
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
+        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL18"].items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model = merge_dicts(shapes_model, model_dict)
         categories[f"2018_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2018),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
 
@@ -772,6 +784,16 @@ def load_klub_file(
         reduce(mul, (array[c] for c in klub_weight_columns)),
         "full_weight",
     )
+    # add all weight variations
+    for weight_name in klub_weight_variation_map:
+        for replacement in klub_weight_variation_map[weight_name]:
+            weight_list = [w for w in klub_weight_columns if w != weight_name]
+            weight_list.append(replacement)
+            array = ak.with_field(
+                array,
+                reduce(mul, (array[c] for c in weight_list)),
+                replacement,
+            )
         
     mask = ~np.isfinite(array.full_weight)
     if np.any(mask):
@@ -989,7 +1011,6 @@ def load_sample_data(
 
     print("done")
 
-    from IPython import embed; embed()
     return array, dnn_shapes_array
 
 
@@ -1112,7 +1133,6 @@ def write_datacards(
 
     # prepare loading data
     # reduce for debugging
-    matched_sample_names = ['ZZ', 'WW', 'Rad250']
     print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
     data_gen = (
         load_sample_data(
@@ -1243,7 +1263,6 @@ def _write_datacard(
         "syst": "cat_{category}/{process}__{parameter}{direction}",
         "syst_comb": "$CHANNEL/$PROCESS__$SYSTEMATIC",
     }
-    from IPython import embed; embed()
 
     # remove signal processes from the sample map that do not correspond to spin or mass
     sample_map = {
@@ -1316,6 +1335,8 @@ def _write_datacard(
     # prepare the scaling values, signal is scaled to 1pb * br
     scale = categories[category]["scale"]
     signal_scale = scale * br_hh_bbtt
+    # retrieve the shapes model
+    shapes_model = categories[category]["shapes_model"]
 
     # derive bin edges
     if binning_algo == "equal_distance":
@@ -1591,6 +1612,7 @@ def _write_datacard(
     # fill histograms
     # (add zero bin offsets with 1e-5 and 100% error)
     hists = {}
+    shape_hists = {}
     for process_name, sample_names in sample_map.items():
         # skip data
         if processes[process_name].get("data", False):
@@ -1613,6 +1635,49 @@ def _write_datacard(
 
         # store it
         hists[process_name] = h
+
+        for shape_name, shape_data in shapes_model.items():
+            for sample_name in sample_names:
+                for direction in ["up", "down"]:
+                    if "dnn_shape_pattern" and "klub_name" in shape_data:
+                        # variations that affect both weight and dnn response
+                        if shape_data["klub_name"].startswith("bTagweightReshape"):
+                            # stupid klub naming calls for stupid code (only affects jes cols)
+                            # all others end with "up" or "down", while this one is "jet{direction}{num}" 
+                            # perform a re.match on the klub_name to retrieve the number (0-11) in the name
+                            match = re.match(r"bTagweightReshape_jet(\d+)", shape_data["klub_name"])
+                            correct_name = f"bTagweightReshape_jet{direction}{int(match.group(1))}"
+                            shape_data["klub_name"] = correct_name
+                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}{direction}"]
+                        weight = sample_data[sample_name][shape_data["klub_name"]] * _scale
+                    elif "klub_name" and not "dnn_shape_pattern" in shape_data:
+                        # variations that only affect the weight
+                        fill_arr = sample_data[sample_name][variable_name]
+                        weight = sample_data[sample_name][shape_data["klub_name"]] * _scale
+                    elif "dnn_shape_pattern" and not "klub_name" in shape_data:
+                        # variations that only affect the dnn response
+                        fill_arr = dnn_shapes[sample_name][shape_data["dnn_shape_pattern"]]
+                        weight = sample_data[sample_name].full_weight * _scale
+                    else:
+                        raise Exception((f"shape uncertainty must affect either dnn response or weight,"
+                                        f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
+                    
+                    h = hist.Hist.new.Variable(bin_edges, name=f"{shape_name}{variable_name}").Weight()
+                    h.fill(**{
+                        f"{shape_name}{variable_name}": fill_arr, 
+                        "weight": weight, 
+                    })
+
+                    # add epsilon values at positions where bin contents are not positive
+                    nom = h.view().value
+                    mask = nom <= 0
+                    nom[mask] = 1.0e-5
+                    h.view().variance[mask] = 1.0e-5
+
+                    # store it with the corresponding pattern from line 1265
+                    shape_hists[f"{process_name}__{shape_name}"] = {"hist":h,
+                                                                    "parameter": shape_name,
+                                                                    "direction": direction}
 
     # actual qcd estimation
     if qcd_estimation:
@@ -1683,6 +1748,12 @@ def _write_datacard(
         for process_name, h in hists.items():
             shape_name = shape_patterns["nom"].format(category=category, process=process_name)
             root_file[shape_name] = h
+        for process_name, shapes_hist_data in shape_hists.items():
+            shape_name = shape_patterns["syst"].format(category=category,
+                                                       process=process_name,
+                                                       parameter=shapes_hist_data["parameter"],
+                                                       direction=shapes_hist_data["direction"])
+            root_file[shape_name] = shapes_hist_data["hist"] 
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
@@ -1753,6 +1824,19 @@ def _write_datacard(
         if set(effect_line) != {"-"}:
             blocks["tabular_parameters"].append((param_name, "lnN", *effect_line))
             added_param_names.append(param_name)
+    shapes_model = categories[category]["shapes_model"]
+    for shape_name, shape_data in shapes_model.items():
+        effect_line = []
+        for process_name in exp_processes:
+            process_pattern = shape_data["process_pattern"]
+            if fnmatch(process_name, process_pattern):
+                effect = "1.0"
+            else:
+                effect = "-"
+            effect_line.append(effect)
+        if set(effect_line) != {"-"}:
+            blocks["tabular_parameters"].append((shape_name, "shape", *effect_line))
+            added_param_names.append(shape_name)
     if blocks["tabular_parameters"]:
         empty_lines.add("tabular_parameters")
 
