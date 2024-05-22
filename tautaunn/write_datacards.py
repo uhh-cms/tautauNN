@@ -375,28 +375,28 @@ stat_model_shapes = {
     **{f"CMS_JES_{unc}": {"channels": ["mutau", "etau", "tautau"],
                           "categories": ["boosted", "resolved1b", "resolved2b"],
                           "processes": "*[!QCD]",
-                          "klub_name": f"bTagweightReshape_jet{i}",
+                          "klub_name": "bTagweightReshape_jet{direction}%i"%i, #klub naming scheme is different for jes things......
                           "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
        for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
     **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
                                         "categories": ["resolved1b", "resolved2b"],
                                         "processes": "*[!QCD]",
-                                        "klub_name": f"bTagweightReshape_{s}"}
+                                        "klub_name": "bTagweightReshape_%s{direction}"%s}
      for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
     **{f"CMS_eff_t_id_Stat{s}": {"channels": ["mutau", "etau", "tautau"],
                              "categories": ["boosted", "resolved1b", "resolved2b"],
                              "processes": "*[!QCD]",
-                             "klub_name": f"idFakeSF_tauid_2d_stat{s}",}
+                             "klub_name": "idFakeSF_tauid_2d_stat%s{direction}",}
        for s in ['0', '1', 'gt140']},
     **{f"CMS_eff_t_id_DM{s}": {"channels": ["mutau", "etau", "tautau"],
                                  "categories": ["boosted", "resolved1b", "resolved2b"],
                              "processes": "*[!QCD]",
-                             "klub_name": f"idFakeSF_tauid_2d_systcorrdm{s}",}
+                             "klub_name": "idFakeSF_tauid_2d_systcorrdm%s{direction}"%s,}
        for s in ['eras', 'uncorreras']},
     **{f"CMS_eff_t_id_syst{s}": {"channels": ["mutau", "etau", "tautau"],
                                  "categories": ["boosted", "resolved1b", "resolved2b"],
                              "processes": "*[!QCD]",
-                             "klub_name": f"idFakeSF_tauid_2d_syst{s}",}
+                             "klub_name": "idFakeSF_tauid_2d_syst%s{direction}"%s,}
        for s in ['correrasgt140', 'uncorrdmeras']},
 }
 
@@ -405,26 +405,26 @@ stat_model_shapes_year_dependent = {
         **{f"CMS_JES_{unc}_{year}": {"channels": ["mutau", "etau", "tautau"],
                                      "categories": ["boosted", "resolved1b", "resolved2b"],
                                      "processes": "*[!QCD]",
-                                     "klub_name": f"bTagweightReshape_jet{i}",
+                                     "klub_name": "bTagweightReshape_jet{direction}%i"%i,
                                      "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
            for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
-        **{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
-                                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*[!QCD]"}
-           for be in ["barrel", "endcap"]},
-        f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
-                                       "categories": ["boosted", "resolved1b", "resolved2b"],
-                                       "processes": "*[!QCD]"},
-        f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
-                                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*[!QCD]"},
-        f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
-                                       "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*[!QCD]"},
-        **{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
-                                              "categories": ["boosted", "resolved1b", "resolved2b"],
-                                              "processes": "*[!QCD]"}
-           for dm in ["DM0", "DM1", "DM10", "DM11"]},
+        #**{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"], TODO: find out klub name for these:
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*[!QCD]"}
+           #for be in ["barrel", "endcap"]},
+        #f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                       #"processes": "*[!QCD]"},
+        #f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*[!QCD]"},
+        #f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*[!QCD]"},
+        #**{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
+                                              #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                              #"processes": "*[!QCD]"}
+           #for dm in ["DM0", "DM1", "DM10", "DM11"]},
     }
     for year in ["UL16", "UL16APV", "UL17", "UL18"]
 }
@@ -1641,22 +1641,15 @@ def _write_datacard(
                 for direction in ["up", "down"]:
                     if "dnn_shape_pattern" and "klub_name" in shape_data:
                         # variations that affect both weight and dnn response
-                        if shape_data["klub_name"].startswith("bTagweightReshape"):
-                            # stupid klub naming calls for stupid code (only affects jes cols)
-                            # all others end with "up" or "down", while this one is "jet{direction}{num}" 
-                            # perform a re.match on the klub_name to retrieve the number (0-11) in the name
-                            match = re.match(r"bTagweightReshape_jet(\d+)", shape_data["klub_name"])
-                            correct_name = f"bTagweightReshape_jet{direction}{int(match.group(1))}"
-                            shape_data["klub_name"] = correct_name
-                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}{direction}"]
-                        weight = sample_data[sample_name][shape_data["klub_name"]] * _scale
+                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}_{direction}"]
+                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
                     elif "klub_name" and not "dnn_shape_pattern" in shape_data:
                         # variations that only affect the weight
                         fill_arr = sample_data[sample_name][variable_name]
-                        weight = sample_data[sample_name][shape_data["klub_name"]] * _scale
+                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
                     elif "dnn_shape_pattern" and not "klub_name" in shape_data:
                         # variations that only affect the dnn response
-                        fill_arr = dnn_shapes[sample_name][shape_data["dnn_shape_pattern"]]
+                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}_{direction}"]
                         weight = sample_data[sample_name].full_weight * _scale
                     else:
                         raise Exception((f"shape uncertainty must affect either dnn response or weight,"
