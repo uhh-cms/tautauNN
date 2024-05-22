@@ -376,7 +376,7 @@ stat_model_shapes = {
                           "categories": ["boosted", "resolved1b", "resolved2b"],
                           "processes": "*[!QCD]",
                           "klub_name": "bTagweightReshape_jet{direction}%i"%i, #klub naming scheme is different for jes things......
-                          "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
+                          "dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
        for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
     **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
                                         "categories": ["resolved1b", "resolved2b"],
@@ -406,7 +406,7 @@ stat_model_shapes_year_dependent = {
                                      "categories": ["boosted", "resolved1b", "resolved2b"],
                                      "processes": "*[!QCD]",
                                      "klub_name": "bTagweightReshape_jet{direction}%i"%i,
-                                     "dnn_shape_pattern": f"pdnn_*_jes_{i}"}
+                                     "dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
            for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
         #**{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"], TODO: find out klub name for these:
                                         #"categories": ["boosted", "resolved1b", "resolved2b"],
@@ -1641,7 +1641,7 @@ def _write_datacard(
                 for direction in ["up", "down"]:
                     if "dnn_shape_pattern" and "klub_name" in shape_data:
                         # variations that affect both weight and dnn response
-                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}_{direction}"]
+                        fill_arr = dnn_shapes[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
                         weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
                     elif "klub_name" and not "dnn_shape_pattern" in shape_data:
                         # variations that only affect the weight
@@ -1649,7 +1649,7 @@ def _write_datacard(
                         weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
                     elif "dnn_shape_pattern" and not "klub_name" in shape_data:
                         # variations that only affect the dnn response
-                        fill_arr = dnn_shapes[sample_name][f"{shape_data['dnn_shape_pattern']}_{direction}"]
+                        fill_arr = dnn_shapes[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
                         weight = sample_data[sample_name].full_weight * _scale
                     else:
                         raise Exception((f"shape uncertainty must affect either dnn response or weight,"
