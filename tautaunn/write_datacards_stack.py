@@ -28,6 +28,7 @@ from collections import OrderedDict, defaultdict
 from fnmatch import fnmatch
 from multiprocessing import Pool as ProcessPool
 from multiprocessing.dummy import Pool as ThreadPool
+from dataclasses import dataclass, field
 from copy import deepcopy
 from typing import Sequence, Any, Callable
 
@@ -56,13 +57,87 @@ klub_weight_columns = [
     "PUReweight",
     "L1pref_weight",
     "trigSF",
-    "IdFakeSF_deep_2d",
+    "idFakeSF",  # originally named "IdFakeSF_deep_2d" in KLUB for the central value
     "PUjetID_SF",
     "bTagweightReshape",
 ]
 klub_extra_columns = [
     # "DNNoutSM_kl_1",
 ]
+
+shape_nuisances = {}
+
+
+@dataclass
+class ShapeNuisance:
+    name: str
+    processes: list[str] = field(default_factory=lambda: ["*"])
+    weights: dict[str, tuple[str, str]] = field(default_factory=dict)  # original name mapped to (up, down) variations
+    discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
+    skip: bool = False
+
+    @classmethod
+    def new(cls, *args, **kwargs):
+        inst = cls(*args, **kwargs)
+        shape_nuisances[inst.name] = inst
+        return inst
+
+    @property
+    def is_nominal(self) -> bool:
+        return self.name == "nominal"
+
+    def get_directions(self) -> list[str]:
+        return [""] if self.is_nominal else ["up", "down"]
+
+    def get_varied_weight(self, nominal_weight: str, direction: str) -> str:
+        assert direction in ("", "up", "down")
+        if direction:
+            for nom, (up, down) in self.weights.items():
+                if nom == nominal_weight:
+                    return up if direction == "up" else down
+        return nominal_weight
+
+    def get_varied_full_weight(self, direction: str) -> str:
+        assert direction in ("", "up", "down")
+        # use the default weight field in case the nuisance is nominal or has no dedicated weight variations
+        if not direction or not self.weights:
+            return "full_weight_nominal"
+        # compose the full weight field name
+        return f"full_weight_{self.name}_{direction}"
+
+    def get_varied_discriminator(self, nominal_discriminator: str, direction: str) -> str:
+        assert direction in ("", "up", "down")
+        suffix = ""
+        if direction and self.discriminator_suffix[direction == "down"]:
+            suffix = f"_{self.discriminator_suffix[direction == 'down']}"
+        return nominal_discriminator + suffix
+
+    def applies_to_process(self, process_name: str) -> bool:
+        return any(fnmatch(process_name, pattern) for pattern in self.processes)
+
+
+ShapeNuisance.new(
+    name="nominal",
+)
+ShapeNuisance.new(
+    name="btag_hf",
+    weights={"bTagweightReshape": ("bTagweightReshape_hf_up", "bTagweightReshape_hf_down")},
+)
+ShapeNuisance.new(
+    name="btag_lf",
+    weights={"bTagweightReshape": ("bTagweightReshape_lf_up", "bTagweightReshape_lf_down")},
+)
+ShapeNuisance.new(
+    name="ees_DM0",
+    discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
+)
+ShapeNuisance.new(
+    name="ees_DM1",
+    discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
+)
+# TODO: add the rest of the shape nuisances
+
+
 processes = OrderedDict({
     "TT": {
         "id": 1,
@@ -241,14 +316,20 @@ stat_model = {
     "qqHH_pythiaDipoleOn": {
         "qqHH_*": "0.781/1.219",
     },
-    "pu_reweight": {"*": "1.01"},
+    "pu_reweight": {"!QCD": "1.01"},
     # year dependent (both the selection of nuisances and their effect depend on the year)
-    "lumi_13TeV_2016": {"*": {"2016*": "1.010"}},
-    "lumi_13TeV_2017": {"*": {"2017": "1.020"}},
-    "lumi_13TeV_2018": {"*": {"2018": "1.015"}},
-    "lumi_13TeV_1718": {"*": {"2017": "1.006", "2018": "1.002"}},
-    "lumi_13TeV_correlated": {"*": {"2016*": "1.006", "2017": "1.009", "2018": "1.020"}},
+    "lumi_13TeV_2016": {"!QCD": {"2016*": "1.010"}},
+    "lumi_13TeV_2017": {"!QCD": {"2017": "1.020"}},
+    "lumi_13TeV_2018": {"!QCD": {"2018": "1.015"}},
+    "lumi_13TeV_1718": {"!QCD": {"2017": "1.006", "2018": "1.002"}},
+    "lumi_13TeV_correlated": {"!QCD": {"2016*": "1.006", "2017": "1.009", "2018": "1.020"}},
 }
+
+# # add shape nuisances
+# for nuisance in shape_nuisances.values():
+#     if nuisance.skip:
+#         continue
+#     stat_model[nuisance.name] = {process: "1" for process in nuisance.processes}
 
 
 def merge_dicts(*dicts):
@@ -473,34 +554,37 @@ def category_factory(channel: str) -> dict[str, Callable]:
         return sel_baseline(array, **kwargs)
 
     @selector(
-        needs=[sel_baseline, sel_boosted, sel_btag_m],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m],
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
             sel_btag_m(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_boosted, sel_btag_mm],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm],
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
             sel_btag_mm(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_boosted],
+        needs=[sel_baseline, sel_channel, sel_boosted],
         channel=channel,
     )
     def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
             sel_boosted(array, **kwargs)
         )
 
@@ -554,44 +638,63 @@ def load_klub_file(
     skim_directory: str,
     sample_name: str,
     file_name: str,
+    is_data: bool,
 ) -> tuple[ak.Array, float]:
-    # prepare expressions
-    expressions = klub_index_columns + klub_weight_columns + klub_extra_columns + sel_baseline.flat_columns
+    # all weight column patterns
+    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns] + ["IdFakeSF_deep_2d"]
 
+    # all columns that should be loaded and kept later on
+    persistent_columns = klub_index_columns + klub_extra_columns + sel_baseline.flat_columns
     # add all columns potentially necessary for selections
-    expressions += sum([
+    persistent_columns += sum([
         cat["selection"].flat_columns
         for cat in categories.values()
     ], [])
 
-    # make them unique
-    expressions = list(set(expressions))
-
     # load the array
     f = uproot.open(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name))
-    array = f["HTauTauTree"].arrays(expressions=expressions, cut=sel_baseline.str_repr.strip())
-
-    # compute the weight and complain when non-finite weights were found
-    array = ak.with_field(
-        array,
-        reduce(mul, (array[c] for c in klub_weight_columns)),
-        "full_weight",
+    array = f["HTauTauTree"].arrays(
+        filter_name=list(set(persistent_columns + ([] if is_data else klub_weight_column_patterns))),
+        cut=sel_baseline.str_repr.strip(),
     )
-    mask = ~np.isfinite(array.full_weight)
-    if np.any(mask):
-        print(
-            f"found {sum(mask)} ({100.0 * sum(mask) / len(mask):.2f}% of {len(mask)}) "
-            f"non-finite weight values in sample {sample_name}, file {file_name}",
-        )
-        array = array[~mask]
 
-    # drop columns
-    for c in klub_weight_columns:
-        array = ak.without_field(array, c)
+    # data / mc specifics
+    if is_data:
+        # fake weight for data
+        array = ak.with_field(array, 1.0, "full_weight_nominal")
+    else:
+        # aliases do not work with filter_name for some reason, so swap names manually
+        array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
+        array = ak.without_field(array, "IdFakeSF_deep_2d")
 
-    # also get the sum of generated MC weights
-    # TODO: don't use for data as the hist is not always available there
-    sum_gen_mc_weights = float(f["h_eff"].values()[0])
+        # compute the full weight for each shape variation (includes nominal)
+        # and complain when non-finite weights were found
+        for nuisance in shape_nuisances.values():
+            if not nuisance.is_nominal and not nuisance.weights:
+                continue
+            for direction in nuisance.get_directions():
+                weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
+                array = ak.with_field(
+                    array,
+                    reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns)),
+                    weight_name,
+                )
+                mask = ~np.isfinite(array[weight_name])
+                if np.any(mask):
+                    print(
+                        f"found {sum(mask)} ({100.0 * sum(mask) / len(mask):.2f}% of {len(mask)}) "
+                        f"non-finite weight values in sample {sample_name}, file {file_name}, variation {direction}",
+                    )
+                    array = array[~mask]
+                persistent_columns.append(weight_name)
+
+    # drop weight columns
+    for field in array.fields:
+        if field not in persistent_columns:
+            array = ak.without_field(array, field)
+
+    # also get the sum of generated weights
+    sum_gen_mc_weights = len(array) if is_data else float(f["h_eff"].values()[0])
 
     return array, sum_gen_mc_weights
 
@@ -601,9 +704,13 @@ def load_dnn_file(
     sample_name: str,
     file_name: str,
     dnn_output_columns: list[str],
+    is_data: bool,
 ) -> ak.Array:
     # prepare expressions
     expressions = klub_index_columns + dnn_output_columns
+    # extended output columns for variations if not data
+    if not is_data:
+        expressions += [f"{c}*" for c in dnn_output_columns]
     expressions = list(set(expressions))
 
     # load the array
@@ -623,31 +730,32 @@ def load_file(
     klub_file_name: str,
     eval_file_name: str,
     dnn_output_columns: list[str],
+    is_data: bool,
 ) -> tuple[ak.Array, float]:
     # load the klub file
-    klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, klub_file_name)
+    klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, klub_file_name, is_data)
 
     # load the dnn output file
     if eval_directory:
-        dnn_array = load_dnn_file(eval_directory, sample_name, eval_file_name, dnn_output_columns)
+        dnn_array = load_dnn_file(eval_directory, sample_name, eval_file_name, dnn_output_columns, is_data)
 
         # use klub array index to filter dnn array
-        dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
-        if ak.sum(dnn_mask) != len(klub_array):
+        klub_mask = np.isin(klub_array[klub_index_columns], dnn_array[klub_index_columns])
+        if ak.sum(klub_mask) != len(dnn_array):
             klub_path = os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), klub_file_name)
             eval_path = os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), eval_file_name)
             raise Exception(
-                f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
-                f"number of elements in the klub array ({len(klub_array)}) for file {klub_file_name} "
+                f"the number of matching klub array columns ({ak.sum(klub_mask)}) does not match the "
+                f"number of elements in the dnn eval array ({len(dnn_array)}) for file {klub_file_name} "
                 f"(klub: {klub_path}, dnn: {eval_path})",
             )
-        dnn_array = dnn_array[dnn_mask]
+        klub_array = klub_array[klub_mask]
 
         # exact (event, run, lumi) index check to make sure the order is identical as well
         matches = (
-            (klub_array.EventNumber == dnn_array.EventNumber) &
-            (klub_array.RunNumber == dnn_array.RunNumber) &
-            (klub_array.lumi == dnn_array.lumi)
+            (dnn_array.EventNumber == klub_array.EventNumber) &
+            (dnn_array.RunNumber == klub_array.RunNumber) &
+            (dnn_array.lumi == klub_array.lumi)
         )
         if not ak.all(matches):
             raise Exception(
@@ -656,16 +764,15 @@ def load_file(
             )
 
     # drop index columns
-    array = klub_array
+    array = dnn_array
     for field in klub_index_columns:
         array = ak.without_field(array, field)
 
-    # add dnn columns
-    if eval_directory:
-        for field in dnn_array.fields:
-            if field in klub_index_columns:
-                continue
-            array = ak.with_field(array, dnn_array[field], field)
+    # add klub columns
+    for field in klub_array.fields:
+        if field in klub_index_columns:
+            continue
+        array = ak.with_field(array, klub_array[field], field)
 
     return array, sum_gen_mc_weights
 
@@ -727,18 +834,28 @@ def load_sample_data(
             array = pickle.load(f)
 
     else:
+        # check if this is data
+        is_data = False
+        for process_data in processes.values():
+            if any(fnmatch(sample_name, pattern) for pattern in process_data["sample_patterns"]):
+                is_data = process_data.get("data", False)
+                break
+        else:
+            raise Exception(f"could not determine if sample {sample_name} is data")
+
         # determine file names and build arguments for the parallel load implementation
         load_args = [
             (
                 skim_directory,
                 eval_directory,
                 sample_name,
-                eval_file_name.replace("_nominal", ""),
+                eval_file_name.replace("_nominal", "").replace("_systs", ""),
                 eval_file_name,
                 dnn_output_columns or [],
+                is_data,
             )
             for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
-            if fnmatch(eval_file_name, "output_*_nominal.root")
+            if fnmatch(eval_file_name, "output_*_systs.root")
         ]
 
         # run in parallel
@@ -756,22 +873,22 @@ def load_sample_data(
         gc.collect()
 
         # update the full weight
-        array = ak.with_field(array, array.full_weight / sum_gen_mc_weights, "full_weight")
+        for field in array.fields:
+            if field.startswith("full_weight_"):
+                array = ak.with_field(array, array[field] / sum_gen_mc_weights, field)
 
         # add to cache?
         if cache_path:
             print("writing to cache")
-            with tempfile.NamedTemporaryFile(suffix=".pkl") as tmp:
-                with open(tmp.name, "wb") as f:
+            try:
+                with open(cache_path, "wb") as f:
                     pickle.dump(array, f)
-                shutil.copy2(tmp.name, cache_path)
-
-    # remove unnecessary columns
-    keep_columns = dnn_output_columns + klub_extra_columns + ["full_weight"] + (selection_columns or [])
-    for c in array.fields:
-        if c not in keep_columns:
-            array = ak.without_field(array, c)
-            gc.collect()
+            except:
+                try:
+                    os.remove(cache_path)
+                except:
+                    pass
+                raise
 
     print("done")
 
@@ -1078,8 +1195,6 @@ def _write_datacard(
         year: {
             sample_name: data[sample_name][cat_data["selection"](data[sample_name], year=year)]
             for sample_name, process_name in sample_processes[year].items()
-            # skip data for now as were are using fake data from background-only below
-            if not processes[process_name].get("data", False)
         }
         for year, data in sample_data.items()
     }
@@ -1087,21 +1202,22 @@ def _write_datacard(
     # complain when nan's were found
     for year, data in sample_data.items():
         for sample_name, _data in data.items():
-            n_nonfinite = np.sum(~np.isfinite(_data[variable_name]))
-            if n_nonfinite:
-                print(
-                    f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
-                    "selection are non-finite (nan or inf)",
-                )
-
-    # prepare the scaling values, signal is scaled to 1pb * br
-    # scale = cat_data["scale"]
-    # signal_scale = scale * br_hh_bbtt
+            for field in _data.fields:
+                # skip fields other than the shape variables
+                if not field.startswith(variable_name):
+                    continue
+                n_nonfinite = np.sum(~np.isfinite(_data[field]))
+                if n_nonfinite:
+                    print(
+                        f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
+                        f"selection are non-finite in variable {field}",
+                    )
 
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
     else:  # flat_s
+        # TODO: background constraints, include shape nuisances
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1130,7 +1246,7 @@ def _write_datacard(
         signal_weights = ak.concatenate(
             sum(
                 ([
-                    data[sample_name].full_weight * luminosities[year] * br_hh_bbtt
+                    data[sample_name].full_weight_nominal * luminosities[year] * br_hh_bbtt
                     for sample_name in sample_map[year][signal_process_name[year]]
                 ] for year, data in sample_data.items()),
                 [],
@@ -1187,98 +1303,154 @@ def _write_datacard(
         for process_name, sample_names in _map.items():
             process_map[process_name][year] = sample_names
 
-    # fill histograms
-    # (add zero bin offsets with 1e-5 and 100% error)
-    hists: dict[tuple[name, name], hist.Hist] = {}
-    for process_name, _map in process_map.items():
-        # skip data
-        if processes[process_name].get("data", False):
+    # histogram structures
+    # mapping (year, process) -> (nuisance, direction) -> hist
+    hists: dict[tuple[str, str], dict[tuple[str, str], hist.Hist]] = defaultdict(dict)
+
+    # keep track per year if at least one variation lead to a valid qcd estimation
+    any_qcd_valid = {year: False for year in sample_map.keys()}
+
+    # outer loop over variations
+    for nuisance in shape_nuisances.values():
+        if nuisance.skip:
             continue
+        for direction in nuisance.get_directions():
+            hist_name = (
+                variable_name
+                if nuisance.is_nominal
+                else f"{variable_name}_{nuisance.name}{direction}"
+            )
+            varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
+            varied_weight_field = nuisance.get_varied_full_weight(direction)
 
-        for year, sample_names in _map.items():
-            # create and fill the histogram
-            h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
-            scale = luminosities[year]
-            if processes[process_name].get("signal", False):
-                scale *= br_hh_bbtt
-            for sample_name in sample_names:
-                h.fill(**{
-                    variable_name: sample_data[year][sample_name][variable_name],
-                    "weight": sample_data[year][sample_name].full_weight * scale,
-                })
+            # define histograms
+            for process_name, _map in process_map.items():
+                if not nuisance.applies_to_process(process_name):
+                    continue
+                _hist_name, _process_name = hist_name, process_name
+                if processes[process_name].get("data", False):
+                    _hist_name = _process_name = "data_obs"
+                h = hist.Hist.new.Variable(bin_edges, name=_hist_name).Weight()
+                hists[(year, _process_name)][(nuisance.name, direction)] = h
 
-            # add epsilon values at positions where bin contents are not positive
-            nom = h.view().value
-            mask = nom <= 0
-            nom[mask] = 1.0e-5
-            h.view().variance[mask] = 1.0e-5
+            # fill histograms
+            for process_name, _map in process_map.items():
+                if not nuisance.applies_to_process(process_name):
+                    continue
 
-            # store it
-            hists[(year, process_name)] = h
+                _hist_name, _process_name = hist_name, process_name
 
-    # actual qcd estimation
-    if qcd_estimation:
-        qcd_hists: dict[str, dict[str, hist.Hist]] = defaultdict(dict)
-        for region_name, _qcd_data in qcd_data.items():
-            for year, data in _qcd_data.items():
-                # create a histogram that is filled with both data and negative background
-                h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
-                for sample_name, _data in data.items():
-                    weight = 1
-                    if not processes[sample_processes[year][sample_name]].get("data", False):
-                        weight = -1 * _data.full_weight * scale
-                    h.fill(**{variable_name: _data[variable_name], "weight": weight})
-                qcd_hists[year][region_name] = h
+                # for real data, skip if the nuisance is not nominal, and change hist name in case it is
+                is_data = processes[process_name].get("data", False)
+                if is_data:
+                    if not nuisance.is_nominal:
+                        continue
+                    _hist_name = _process_name = "data_obs"
 
-        # ABCD method per year
-        for year, _qcd_hists in qcd_hists.items():
-            # take shape from region "C"
-            h_qcd = _qcd_hists["os_noniso"]
-            # get the intgral and its uncertainty from region "B"
-            num_val = _qcd_hists["ss_iso"].sum().value
-            num_var = _qcd_hists["ss_iso"].sum().variance
-            # get the intgral and its uncertainty from region "D"
-            denom_val = _qcd_hists["ss_noniso"].sum().value
-            denom_var = _qcd_hists["ss_noniso"].sum().variance
-            # stop if any yield is negative (due to more MC than data)
-            if num_val <= 0 or denom_val <= 0:
-                print(
-                    f"  skipping QCD estimation in ({category},{year},{spin},{mass}) due to negative yields "
-                    f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
-                )
-                qcd_estimation = False
-                break
-            # create the normalization correction including uncorrelated uncertainty propagation
-            corr_val = num_val / denom_val
-            corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
-            # scale the shape by updating values and variances in-place
-            val = h_qcd.view().value
-            _var = h_qcd.view().variance
-            new_val = val * corr_val
-            _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
-            val[:] = new_val
-            # set negative values to epsilon values but keep potentially large uncertainties
-            val[val <= 0] = 1.0e-5
-            # store it
-            hists[(year, "QCD")] = h_qcd
+                # get the histogram to fill
+                h = hists[(year, _process_name)][(nuisance.name, direction)]
 
-    # fake data using the sum of all backgrounds
-    hists[(None, "data_obs")] = (
-        hist.Hist.new
-        .Variable(bin_edges, name=variable_name)
-        .Double()
-    )
-    data_values = hists[(None, "data_obs")].view()
-    for (year, process_name), h in hists.items():
-        # add backgrounds
-        if process_name != "data_obs" and not processes[process_name].get("signal", False):
-            data_values += h.view().value
-    data_values[...] = np.round(data_values)
+                # fill the histogram
+                for year, sample_names in _map.items():
+                    scale = 1 if is_data else luminosities[year]
+                    if processes[process_name].get("signal", False):
+                        scale *= br_hh_bbtt
+                    for sample_name in sample_names:
+                        weight = 1
+                        if not is_data:
+                            weight = sample_data[year][sample_name][varied_weight_field] * scale
+                        h.fill(**{
+                            _hist_name: sample_data[year][sample_name][varied_variable_name],
+                            "weight": weight,
+                        })
 
-    # gather rates
+                    # add epsilon values at positions where bin contents are not positive
+                    nom = h.view().value
+                    mask = nom <= 0
+                    nom[mask] = 1.0e-5
+                    h.view().variance[mask] = 1.0e-5
+
+            # actual qcd estimation
+            if qcd_estimation:
+                # mapping year -> region -> hist
+                qcd_hists: dict[str, dict[str, hist.Hist]] = defaultdict(dict)
+
+                # create data-minus-background histograms in the 4 regions
+                for region_name, _qcd_data in qcd_data.items():
+                    for year, data in _qcd_data.items():
+                        # create a histogram that is filled with both data and negative background
+                        h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
+                        for sample_name, _data in data.items():
+                            process_name = sample_processes[year][sample_name]
+                            if not nuisance.applies_to_process(process_name):
+                                continue
+
+                            # skip signals
+                            if processes[process_name].get("signal", False):
+                                continue
+
+                            is_data = processes[process_name].get("data", False)
+                            if is_data:
+                                # for data, always will the nominal values
+                                h.fill(**{
+                                    hist_name: _data[variable_name],
+                                    "weight": 1,
+                                })
+                            else:
+                                # for mc, use varied values and subtract them from data by using a negative fill weight
+                                scale = luminosities[year]
+                                h.fill(**{
+                                    hist_name: _data[varied_variable_name],
+                                    "weight": -1 * _data[varied_weight_field] * scale,
+                                })
+                        qcd_hists[year][region_name] = h
+
+                # ABCD method per year
+                # TODO: consider using averaging between the two options where the shape is coming from
+                for year, region_hists in qcd_hists.items():
+                    # take shape from region "C"
+                    h_qcd = region_hists["os_noniso"]
+                    # get the intgral and its uncertainty from region "B"
+                    num_val = region_hists["ss_iso"].sum().value
+                    num_var = region_hists["ss_iso"].sum().variance
+                    # get the intgral and its uncertainty from region "D"
+                    denom_val = region_hists["ss_noniso"].sum().value
+                    denom_var = region_hists["ss_noniso"].sum().variance
+                    # stop if any yield is negative (due to more MC than data)
+                    qcd_invalid = h_qcd.sum().value <= 0 or num_val <= 0 or denom_val <= 0
+                    if not qcd_invalid:
+                        # create the normalization correction including uncorrelated uncertainty propagation
+                        corr_val = num_val / denom_val
+                        corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
+                        # scale the shape by updating values and variances in-place
+                        val = h_qcd.view().value
+                        _var = h_qcd.view().variance
+                        new_val = val * corr_val
+                        _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
+                        val[:] = new_val
+                    else:
+                        # zero-fill the histogram
+                        h_qcd *= 0.0
+                        print(
+                            f"  skipping QCD estimation in ({category},{nuisance.name}{direction},{year},{spin},{mass}) "  # noqa
+                            f"due to negative yields in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",  # noqa
+                        )
+                    # zero-fill
+                    hval = h_qcd.view().value
+                    hval[hval <= 0] = 1.0e-5
+                    # store it
+                    hists[(year, "QCD")][(nuisance.name, direction)] = h_qcd
+                    any_qcd_valid[year] |= not qcd_invalid
+
+    # drop qcd shapes in years where no valid estimation was found
+    for year, qcd_valid in any_qcd_valid.items():
+        if not qcd_valid:
+            del hists[(year, "QCD")]
+
+    # gather rates from nominal histograms
     rates = {
-        (year, process_name): (h.sum() if process_name == "data_obs" else h.sum().value)
-        for (year, process_name), h in hists.items()
+        (year, process_name): _hists[("nominal", "")].sum().value
+        for (year, process_name), _hists in hists.items()
     }
 
     # create process names joining raw names and years
@@ -1296,11 +1468,27 @@ def _write_datacard(
     # note: since /eos does not like write streams, first write to a tmp file and then copy
     def write(path):
         root_file = uproot.recreate(path)
-        for (year, process_name), h in hists.items():
-            full_name = process_name if year is None else full_process_names[(year, process_name)]
-            shape_name = shape_patterns["nom"].format(category=category, process=full_name)
-            # TODO: does this overwrite the shape for the same process when no year is set (i.e., when stacking)?
-            root_file[shape_name] = h
+        for (year, process_name), _hists in hists.items():
+            for (nuisance_name, direction), h in _hists.items():
+                # determine the full process name and optionally skip data for nuisances
+                nuisance = shape_nuisances[nuisance_name]
+                if process_name == "data_obs":
+                    if not nuisance.is_nominal:
+                        continue
+                    full_name = process_name
+                else:
+                    full_name = process_name if year is None else full_process_names[(year, process_name)]
+
+                if nuisance.is_nominal:
+                    shape_name = shape_patterns["nom"].format(category=category, process=full_name)
+                else:
+                    shape_name = shape_patterns["syst"].format(
+                        category=category,
+                        process=full_name,
+                        parameter=nuisance.name,
+                        direction=direction.capitalize(),
+                    )
+                root_file[shape_name] = h
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
@@ -1332,7 +1520,7 @@ def _write_datacard(
     # observations
     blocks["observations"] = [
         ("bin", f"cat_{category}"),
-        ("observation", int(round(rates[(None, "data_obs")]))),
+        ("observation", int(round(rates[(cat_data["year"], "data_obs")]))),  # TODO: ok for stacking?
     ]
     separators.add("observations")
 
@@ -1366,6 +1554,22 @@ def _write_datacard(
     # tabular-style parameters
     blocks["tabular_parameters"] = []
     added_param_names = []
+    # shape nuisances
+    for nuisance in shape_nuisances.values():
+        if nuisance.skip or nuisance.is_nominal:
+            continue
+        effect_line = []
+        for year, process_name, _ in exp_processes:
+            # count occurances of the nuisance in the hists
+            count = sum(1 for (nuisance_name, _) in hists[(year, process_name)] if nuisance.name == nuisance_name)
+            if count not in [0, 2]:
+                raise Exception(f"nuisance {nuisance.name} has {count} occurances in {year} {process_name}")
+            effect_line.append("1" if count else "-")
+        if set(effect_line) != {"-"}:
+            blocks["tabular_parameters"].append((nuisance.name, "shape", *effect_line))
+            added_param_names.append(nuisance.name)
+
+    # additional (mostly rate) uncertainties from the statistical model
     for param_name, effects in stat_model.items():
         effect_line = []
         for year, process_name, full_name in exp_processes:
@@ -1378,7 +1582,13 @@ def _write_datacard(
                             break
                     else:
                         effect = "-"
-                if fnmatch(process_name, process_pattern):
+                # pattern negated?
+                negated = False
+                if process_pattern.startswith("!"):
+                    negated = True
+                    process_pattern = process_pattern[1:]
+                if fnmatch(process_name, process_pattern) != negated:
+                    # matched, so break the loop such that the effect is used
                     break
             else:
                 effect = "-"
@@ -1423,7 +1633,7 @@ def _write_datacard(
             for line in lines:
                 if isinstance(line, (list, tuple)):
                     line = "  ".join(map(str, line))
-                f.write(f"{line}\n")
+                f.write(f"{line.strip()}\n")
 
             # block separator
             if block_name in separators:

@@ -154,7 +154,12 @@ class L2Metric(tf.keras.metrics.Metric):
             if isinstance(layer, tf.keras.layers.Dense) and layer.kernel_regularizer is not None
         ]
 
-    def update_state(self, y_true: tf.Tensor | None, y_pred: tf.Tensor | None, sample_weight: tf.Tensor | None = None) -> None:
+    def update_state(
+        self,
+        y_true: tf.Tensor | None,
+        y_pred: tf.Tensor | None,
+        sample_weight: tf.Tensor | None = None,
+    ) -> None:
         if self.kernels and self.norms:
             self.l2.assign(tf.add_n([tf.reduce_sum(k**2) * n for k, n in zip(self.kernels, self.norms)]))
 
@@ -346,8 +351,8 @@ class CycleLR(tf.keras.callbacks.Callback):
                     self.lr_range[np.argmax(self.lr_range)] /= 2.
                     self.cycle_width = self.lr_range[1] - self.lr_range[0]
                     self.step_size = self.cycle_width / self.half_life
-                    #new_lr = self.calc_lr()
-                    #tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
+                    # new_lr = self.calc_lr()
+                    # tf.keras.backend.set_value(self.model.optimizer.lr, new_lr)
                 else:
                     return
 
@@ -355,11 +360,8 @@ class CycleLR(tf.keras.callbacks.Callback):
         self.wait = 0
         self.repeat_counter = 0
 
-
     def on_epoch_end(self, epoch, logs):
-
-        if self.reduce_lr_and_stop == False:
-
+        if not self.reduce_lr_and_stop:
             if self.cycle_step == self.steps:
                 self.cycle_count += 1
                 self._reset_before_new_cycle()
@@ -533,7 +535,6 @@ class CycleLR(tf.keras.callbacks.Callback):
         if value is None:
             print_msg(f"{self.__class__.__name__}: metric '{self.monitor}' not available, found {','.join(list(logs))}")
         return value
-
 
 
 class ReduceLRAndStop(tf.keras.callbacks.Callback):

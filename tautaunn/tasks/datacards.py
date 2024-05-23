@@ -449,9 +449,9 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
     )
     variable = luigi.Parameter(
-        default="hbtresdnn_mass{mass}_spin{spin}_hh",
+        default="pdnn_m{mass}_s{spin}_hh",
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
-        "default: 'hbtresdnn_mass{mass}_spin{spin}_hh'",
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
     )
     parallel_read = luigi.IntParameter(
         default=4,

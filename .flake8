@@ -2,6 +2,6 @@
 
 max-line-length = 125
 
-ignore = E306, E402, E128, E501, E502, E722, E731, E741, F822, W504
+ignore = E306, E402, E128, E501, E502, E722, E731, E741, F402, F822, W504
 
 inline-quotes = double
