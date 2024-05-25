@@ -82,6 +82,10 @@ class ShapeNuisance:
         shape_nuisances[inst.name] = inst
         return inst
 
+    def __post_init__(self):
+        if self.is_nominal:
+            self.skip = False
+
     @property
     def is_nominal(self) -> bool:
         return self.name == "nominal"
@@ -763,7 +767,7 @@ for channel in channels:
         # combined categories
         categories[f"run2_{channel}_{name}"] = {
             "selection": sel,
-            "n_bins": 30,
+            "n_bins": 40,  # TODO: tune!
             "year": None,
             **sel.extra,
         }
@@ -924,6 +928,7 @@ def get_cache_path(
     cache_directory: str,
     skim_directory: str,
     eval_directory: str,
+    year: str,
     sample_name: str,
     dnn_output_columns: list[str],
 ) -> str | None:
@@ -950,6 +955,9 @@ def get_cache_path(
     ]
     h = hashlib.sha256(str(h).encode("utf-8")).hexdigest()[:10]
 
+    # TODO: use this version that includes the year
+    # return os.path.join(cache_directory, f"{year}_{sample_name}_{h}.pkl")
+
     return os.path.join(cache_directory, f"data_{sample_name}_{h}.pkl")
 
 
@@ -966,7 +974,14 @@ def load_sample_data(
     print(f"loading sample {sample_name} ({year}) ...")
 
     # load from cache?
-    cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, sample_name, dnn_output_columns or [])
+    cache_path = get_cache_path(
+        cache_directory,
+        skim_directory,
+        eval_directory,
+        year,
+        sample_name,
+        dnn_output_columns or [],
+    )
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
         with open(cache_path, "rb") as f:
@@ -1000,7 +1015,7 @@ def load_sample_data(
         # run in parallel
         if n_parallel > 1:
             # run in parallel
-            with ProcessPool(n_parallel) as pool:
+            with ProcessPool(n_parallel, maxtasksperchild=None) as pool:
                 ret = list(tqdm(pool.imap(load_file_mp, load_args), total=len(load_args)))
         else:
             ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
@@ -1469,8 +1484,9 @@ def _write_datacard(
                 _hist_name, _process_name = hist_name, process_name
                 if processes[process_name].get("data", False):
                     _hist_name = _process_name = "data_obs"
-                h = hist.Hist.new.Variable(bin_edges, name=_hist_name).Weight()
-                hists[(year, _process_name)][(nuisance.name, direction)] = h
+                for year in _map.keys():
+                    h = hist.Hist.new.Variable(bin_edges, name=_hist_name).Weight()
+                    hists[(year, _process_name)][(nuisance.name, direction)] = h
 
             # fill histograms
             for process_name, _map in process_map.items():
@@ -1486,11 +1502,9 @@ def _write_datacard(
                         continue
                     _hist_name = _process_name = "data_obs"
 
-                # get the histogram to fill
-                h = hists[(year, _process_name)][(nuisance.name, direction)]
-
                 # fill the histogram
                 for year, sample_names in _map.items():
+                    h = hists[(year, _process_name)][(nuisance.name, direction)]
                     scale = 1 if is_data else luminosities[year]
                     if processes[process_name].get("signal", False):
                         scale *= br_hh_bbtt
@@ -1584,6 +1598,10 @@ def _write_datacard(
     # drop qcd shapes in years where no valid estimation was found
     for year, qcd_valid in any_qcd_valid.items():
         if not qcd_valid:
+            print(
+                f"\n  completey dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
+                "created for any nuisance\n",
+            )
             del hists[(year, "QCD")]
 
     # gather rates from nominal histograms
@@ -1616,7 +1634,7 @@ def _write_datacard(
                         continue
                     full_name = process_name
                 else:
-                    full_name = process_name if year is None else full_process_names[(year, process_name)]
+                    full_name = full_process_names[(year, process_name)]
 
                 if nuisance.is_nominal:
                     shape_name = shape_patterns["nom"].format(category=category, process=full_name)
@@ -1659,7 +1677,7 @@ def _write_datacard(
     # observations
     blocks["observations"] = [
         ("bin", f"cat_{category}"),
-        ("observation", int(round(rates[(cat_data["year"], "data_obs")]))),  # TODO: ok for stacking?
+        ("observation", int(round(sum(r for (year, process_name), r in rates.items() if process_name == "data_obs")))),
     ]
     separators.add("observations")
 
