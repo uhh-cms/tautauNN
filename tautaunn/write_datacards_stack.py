@@ -128,6 +128,118 @@ ShapeNuisance.new(
     weights={"bTagweightReshape": ("bTagweightReshape_lf_up", "bTagweightReshape_lf_down")},
 )
 ShapeNuisance.new(
+    name="btag_lfstats1",
+    weights={"bTagweightReshape": ("bTagweightReshape_lfstats1_up", "bTagweightReshape_lfstats1_down")},
+)
+ShapeNuisance.new(
+    name="btag_lfstats2",
+    weights={"bTagweightReshape": ("bTagweightReshape_lfstats2_up", "bTagweightReshape_lfstats2_down")},
+)
+ShapeNuisance.new(
+    name="btag_hfstats1",
+    weights={"bTagweightReshape": ("bTagweightReshape_hfstats1_up", "bTagweightReshape_hfstats1_down")},
+)
+ShapeNuisance.new(
+    name="btag_hfstats2",
+    weights={"bTagweightReshape": ("bTagweightReshape_hfstats2_up", "bTagweightReshape_hfstats2_down")},
+)
+ShapeNuisance.new(
+    name="btag_cferr1",
+    weights={"bTagweightReshape": ("bTagweightReshape_cferr1_up", "bTagweightReshape_cferr1_down")},
+)
+ShapeNuisance.new(
+    name="btag_cferr2",
+    weights={"bTagweightReshape": ("bTagweightReshape_cferr2_up", "bTagweightReshape_cferr2_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_stat0",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat0_up", "idFakeSF_tauid_2d_stat0_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_stat1",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat1_up", "idFakeSF_tauid_2d_stat1_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_systcorrdmeras",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmeras_up", "idFakeSF_tauid_2d_systcorrdmeras_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_systcorrdmuncorreras",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmuncorreras_up", "idFakeSF_tauid_2d_systcorrdmuncorreras_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_systuncorrdmeras",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_systuncorrdmeras_up", "idFakeSF_tauid_2d_systuncorrdmeras_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_systcorrerasgt140",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrerasgt140_up", "idFakeSF_tauid_2d_systcorrerasgt140_down")},
+)
+ShapeNuisance.new(
+    name="id_tauid_2d_statgt140",
+    weights={"idFakeSF": ("idFakeSF_tauid_2d_statgt140_up", "idFakeSF_tauid_2d_statgt140_down")},
+)
+ShapeNuisance.new(
+    name="id_etauFR_barrel",
+    weights={"idFakeSF": ("idFakeSF_etauFR_barrel_up", "idFakeSF_etauFR_barrel_down")},
+)
+ShapeNuisance.new(
+    name="id_etauFR_endcap",
+    weights={"idFakeSF": ("idFakeSF_etauFR_endcap_up", "idFakeSF_etauFR_endcap_down")},
+)
+ShapeNuisance.new(
+    name="id_mutauFR_etaLt0p4",
+    weights={"idFakeSF": ("idFakeSF_mutauFR_etaLt0p4_up", "idFakeSF_mutauFR_etaLt0p4_down")},
+)
+ShapeNuisance.new(
+    name="id_mutauFR_eta0p4to0p8",
+    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p4to0p8_up", "idFakeSF_mutauFR_eta0p4to0p8_down")},
+)
+ShapeNuisance.new(
+    name="id_mutauFR_eta0p8to1p2",
+    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p8to1p2_up", "idFakeSF_mutauFR_eta0p8to1p2_down")},
+)
+ShapeNuisance.new(
+    name="id_mutauFR_etaGt1p7",
+    weights={"idFakeSF": ("idFakeSF_mutauFR_etaGt1p7_up", "idFakeSF_mutauFR_etaGt1p7_down")},
+)
+ShapeNuisance.new(
+    name="pu_jet_id",
+    weights={"PUjetID_SF": ("PUjetID_SF_up", "PUjetID_SF_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_DM0",
+    weights={"trigSF": ("trigSF_DM0_up", "trigSF_DM0_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_DM1",
+    weights={"trigSF": ("trigSF_DM1_up", "trigSF_DM1_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_DM10",
+    weights={"trigSF": ("trigSF_DM10_up", "trigSF_DM10_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_DM11",
+    weights={"trigSF": ("trigSF_DM11_up", "trigSF_DM11_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_met",
+    weights={"trigSF": ("trigSF_met_up", "trigSF_met_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_stau",
+    weights={"trigSF": ("trigSF_stau_up", "trigSF_stau_down")},
+)
+ShapeNuisance.new(
+    name="trigSF_ele",
+    weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
+)  # TODO: only for etau channel?
+ShapeNuisance.new(
+    name="trigSF_mu",
+    weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
+)  # TODO: only for mutau channel?
+ShapeNuisance.new(
     name="ees_DM0",
     discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
 )
@@ -135,8 +247,35 @@ ShapeNuisance.new(
     name="ees_DM1",
     discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
 )
-# TODO: add the rest of the shape nuisances
+ShapeNuisance.new(
+    name="tes_DM0",
+    discriminator_suffix=("tes_DM0_up", "tes_DM0_down"),
+)
+ShapeNuisance.new(
+    name="tes_DM1",
+    discriminator_suffix=("tes_DM1_up", "tes_DM1_down"),
+)
+ShapeNuisance.new(
+    name="tes_DM10",
+    discriminator_suffix=("tes_DM10_up", "tes_DM10_down"),
+)
+ShapeNuisance.new(
+    name="tes_DM11",
+    discriminator_suffix=("tes_DM11_up", "tes_DM11_down"),
+)
+ShapeNuisance.new(
+    name="mes",
+    discriminator_suffix=("mes_up", "mes_down"),
+)  # TODO: potentially replace by 1% uncertainty on muon energy scale (to be done in dnn evaluation?)
 
+for js in range(1, 12):
+    ShapeNuisance.new(
+        name=f"jes_{js}",
+        discriminator_suffix=(f"jes_{js}_up", f"jes_{js}_down"),
+        weights={"bTagweightReshape": (f"bTagweightReshape_jetup{js}", f"bTagweightReshape_jetdown{js}")},
+    )
+
+# TODO: JER
 
 processes = OrderedDict({
     "TT": {
