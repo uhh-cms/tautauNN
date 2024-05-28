@@ -65,6 +65,21 @@ klub_weight_columns = [
     "bTagweightReshape",
 ]
 
+klub_selection_columns = [
+    "pairType",
+    "isOS",
+    "isLeptrigger",
+    "isMETtrigger",
+    "isSingleTautrigger",
+    "dau1_deepTauVsJet",
+    "dau2_deepTauVsJet",
+    "dau1_iso",
+    "dau1_eleMVAiso",
+    "nleps",
+    "nbjetscand",
+    "isBoosted",
+]
+
 klub_weight_variation_map = {
     "trigSF" : [*[
             f"trigSF_{s}_{ud}"
@@ -972,6 +987,12 @@ def load_sample_data(
         if c not in keep_columns:
             array = ak.without_field(array, c)
             gc.collect()
+    # slice array to remove all non-cat events
+    dnn_mask = np.isin(dnn_array[klub_index_columns], array[klub_index_columns])
+    array = array[dnn_mask]
+    # add selection columns to dnn array
+    for c in selection_columns:
+        dnn_array = ak.with_field(dnn_array, array[c], c)
 
     print("done")
 
@@ -1267,13 +1288,12 @@ def _write_datacard(
     dnn_data = {sample_name: data[1] for sample_name, data in sample_data.items()}
     sample_data = {sample_name: data[0] for sample_name, data in sample_data.items()}
 
-    # add dnn_data to sample_data
-    for sample_name, data in sample_data.items():
-        #slice down sample_data to match the length of dnn_data
-        dnn_mask = np.isin(dnn_data[sample_name][klub_index_columns], data[klub_index_columns])
-        sample_data[sample_name] = data[dnn_mask] 
+    #for sample_name, data in sample_data.items():
+        ##slice down sample_data to match the length of dnn_data
+        #dnn_mask = np.isin(dnn_data[sample_name][klub_index_columns], data[klub_index_columns])
+        #sample_data[sample_name] = data[dnn_mask] 
 
-    # reversed map to assign processes to samples
+        # reversed map to assign processes to samples
     sample_processes = {}
     for process_name, sample_names in sample_map.items():
         sample_processes.update({sample_name: process_name for sample_name in sample_names})
