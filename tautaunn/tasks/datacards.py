@@ -517,7 +517,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             for name in self.card_names
         })
 
-    @law.decorator.safe_output
     def run(self):
         # load the datacard creating function
         from tautaunn.write_datacards_stack import write_datacards

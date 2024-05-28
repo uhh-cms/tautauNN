@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import gc
 import re
+import json
 import itertools
 import hashlib
 import pickle
@@ -74,6 +75,7 @@ class ShapeNuisance:
     processes: list[str] = field(default_factory=lambda: ["*"])
     weights: dict[str, tuple[str, str]] = field(default_factory=dict)  # original name mapped to (up, down) variations
     discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
+    channels: set[str] = field(default_factory=set)
     skip: bool = False
 
     @classmethod
@@ -83,6 +85,7 @@ class ShapeNuisance:
         return inst
 
     def __post_init__(self):
+        # never skip nominal
         if self.is_nominal:
             self.skip = False
 
@@ -119,7 +122,11 @@ class ShapeNuisance:
     def applies_to_process(self, process_name: str) -> bool:
         return any(fnmatch(process_name, pattern) for pattern in self.processes)
 
+    def applies_to_channel(self, channel_name: str) -> bool:
+        return not self.channels or channel_name in self.channels
 
+
+# TODO: use CMS-recommanded nuisance names
 ShapeNuisance.new(
     name="nominal",
 )
@@ -242,11 +249,13 @@ ShapeNuisance.new(
 ShapeNuisance.new(
     name="trigSF_ele",
     weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
-)  # TODO: only for etau channel?
+    channels={"etau"},
+)
 ShapeNuisance.new(
     name="trigSF_mu",
     weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
-)  # TODO: only for mutau channel?
+    channels={"mutau"},
+)
 ShapeNuisance.new(
     name="ees_DM0",
     discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
@@ -472,6 +481,7 @@ stat_model = {
     "lumi_13TeV_correlated": {"!QCD": {"2016*": "1.006", "2017": "1.009", "2018": "1.020"}},
 }
 
+# TODO: make shape nuisance part of the model?
 # # add shape nuisances
 # for nuisance in shape_nuisances.values():
 #     if nuisance.skip:
@@ -480,6 +490,7 @@ stat_model = {
 
 
 def merge_dicts(*dicts):
+    assert dicts
     merged = dicts[0].__class__()
     for d in dicts:
         merged.update(deepcopy(d))
@@ -959,10 +970,7 @@ def get_cache_path(
     ]
     h = hashlib.sha256(str(h).encode("utf-8")).hexdigest()[:10]
 
-    # TODO: use this version that includes the year
-    # return os.path.join(cache_directory, f"{year}_{sample_name}_{h}.pkl")
-
-    return os.path.join(cache_directory, f"data_{sample_name}_{h}.pkl")
+    return os.path.join(cache_directory, f"{year}_{sample_name}_{h}.pkl")
 
 
 def load_sample_data(
@@ -1013,7 +1021,10 @@ def load_sample_data(
                 is_data,
             )
             for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
-            if fnmatch(eval_file_name, "output_*_systs.root")
+            if fnmatch(eval_file_name, "output_*_systs.root") and
+            not (
+                (year == "2018" and sample_name == "DY_PtZ50To100" and eval_file_name == "output_118_systs.root")
+            )
         ]
 
         # run in parallel
@@ -1087,7 +1098,7 @@ def write_datacards(
     n_parallel_write: int = 2,
     cache_directory: str = "",
     skip_existing: bool = False,
-) -> list[tuple[str, str]]:
+) -> list[tuple[str, str, list[float]]]:
     # cast arguments to lists
     _spins = make_list(spin)
     _masses = make_list(mass)
@@ -1218,18 +1229,38 @@ def write_datacards(
     if n_parallel_write > 1:
         # run in parallel
         with ThreadPool(n_parallel_write) as pool:
-            datacard_paths = list(tqdm(
+            datacard_results = list(tqdm(
                 pool.imap(_write_datacard_mp, datacard_args),
                 total=len(datacard_args),
             ))
     else:
-        datacard_paths = list(tqdm(
+        datacard_results = list(tqdm(
             map(_write_datacard_mp, datacard_args),
             total=len(datacard_args),
         ))
     print("done")
 
-    return datacard_paths
+    # write bin edges into a file
+    bin_edges_file = os.path.join(output_directory, "bin_edges.json")
+    # load them first when the file is existing
+    all_bin_edges = {}
+    if os.path.exists(bin_edges_file):
+        with open(bin_edges_file, "r") as f:
+            all_bin_edges = json.load(f)
+    # update with new bin edges
+    for args, res in zip(datacard_args, datacard_results):
+        spin, mass, category = args[2:5]
+        edges = res[2]
+        key = f"{category}__s{spin}__m{mass}"
+        # do not overwrite when edges are None (in case the datacard was skipped)
+        if key in all_bin_edges and not edges:
+            continue
+        all_bin_edges[key] = edges
+    # write them
+    with open(bin_edges_file, "w") as f:
+        json.dump(all_bin_edges, f, indent=4)
+
+    return datacard_results
 
 
 def _write_datacard(
@@ -1244,7 +1275,7 @@ def _write_datacard(
     binning: tuple[int, float, float, str] | tuple[float, float, str],
     qcd_estimation: bool,
     skip_existing: bool,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, list[float] | None]:
     cat_data = categories[category]
 
     # input checks
@@ -1270,7 +1301,7 @@ def _write_datacard(
     abs_shapes_path = os.path.join(output_directory, shapes_path)
 
     if skip_existing and os.path.exists(abs_datacard_path) and os.path.exists(abs_shapes_path):
-        return datacard_path, shapes_path
+        return datacard_path, shapes_path, None
 
     # prepare qcd estimation if requested
     if qcd_estimation:
@@ -1427,7 +1458,7 @@ def _write_datacard(
             n_bins = _n_bins_max
         if n_bins < 1:
             print(f"  do not write datacard in ({category},{spin},{mass})")
-            return (None, None)
+            return (None, None, None)
         # sort by increasing value
         sort_indices = ak.argsort(signal_values)
         signal_values = signal_values[sort_indices]
@@ -1470,8 +1501,14 @@ def _write_datacard(
 
     # outer loop over variations
     for nuisance in shape_nuisances.values():
+        # skip the nuisance when configured to skip
         if nuisance.skip:
             continue
+        # skip shape nuisances that do not apply to the channel of this category
+        if not nuisance.is_nominal and not nuisance.applies_to_channel(cat_data["channel"]):
+            continue
+
+        # loop over up/down variations (or just "" for nominal)
         for direction in nuisance.get_directions():
             hist_name = (
                 variable_name
@@ -1485,6 +1522,7 @@ def _write_datacard(
             for process_name, _map in process_map.items():
                 if not nuisance.applies_to_process(process_name):
                     continue
+
                 _hist_name, _process_name = hist_name, process_name
                 if processes[process_name].get("data", False):
                     _hist_name = _process_name = "data_obs"
@@ -1588,10 +1626,10 @@ def _write_datacard(
                     else:
                         # zero-fill the histogram
                         h_qcd *= 0.0
-                        print(
-                            f"  skipping QCD estimation in ({category},{nuisance.name}{direction},{year},{spin},{mass}) "  # noqa
-                            f"due to negative yields in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",  # noqa
-                        )
+                        # print(
+                        #     f"  skipping QCD estimation in ({category},{nuisance.name}{direction},{year},{spin},{mass}) "  # noqa
+                        #     f"due to negative yields in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",  # noqa
+                        # )
                     # zero-fill
                     hval = h_qcd.view().value
                     hval[hval <= 0] = 1.0e-5
@@ -1651,9 +1689,13 @@ def _write_datacard(
                     )
                 root_file[shape_name] = h
 
-    with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
-        write(tmp.name)
-        shutil.copy2(tmp.name, abs_shapes_path)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
+            write(tmp.name)
+            shutil.copy2(tmp.name, abs_shapes_path)
+    except:
+        import traceback; traceback.print_exc()
+        from IPython import embed; embed(header="exception raised")
 
     #
     # write the text file
@@ -1714,23 +1756,8 @@ def _write_datacard(
 
     # tabular-style parameters
     blocks["tabular_parameters"] = []
-    added_param_names = []
-    # shape nuisances
-    for nuisance in shape_nuisances.values():
-        if nuisance.skip or nuisance.is_nominal:
-            continue
-        effect_line = []
-        for year, process_name, _ in exp_processes:
-            # count occurances of the nuisance in the hists
-            count = sum(1 for (nuisance_name, _) in hists[(year, process_name)] if nuisance.name == nuisance_name)
-            if count not in [0, 2]:
-                raise Exception(f"nuisance {nuisance.name} has {count} occurances in {year} {process_name}")
-            effect_line.append("1" if count else "-")
-        if set(effect_line) != {"-"}:
-            blocks["tabular_parameters"].append((nuisance.name, "shape", *effect_line))
-            added_param_names.append(nuisance.name)
-
-    # additional (mostly rate) uncertainties from the statistical model
+    # rate nuisances from the statistical model
+    added_rate_params = []
     for param_name, effects in stat_model.items():
         effect_line = []
         for year, process_name, full_name in exp_processes:
@@ -1756,14 +1783,32 @@ def _write_datacard(
             effect_line.append(effect)
         if set(effect_line) != {"-"}:
             blocks["tabular_parameters"].append((param_name, "lnN", *effect_line))
-            added_param_names.append(param_name)
+            added_rate_params.append(param_name)
+    # shape nuisances
+    added_shape_params = []
+    for nuisance in shape_nuisances.values():
+        if nuisance.skip or nuisance.is_nominal or not nuisance.applies_to_channel(cat_data["channel"]):
+            continue
+        effect_line = []
+        for year, process_name, _ in exp_processes:
+            # count occurances of the nuisance in the hists
+            count = sum(1 for (nuisance_name, _) in hists[(year, process_name)] if nuisance.name == nuisance_name)
+            if count not in [0, 2]:
+                raise Exception(f"nuisance {nuisance.name} has {count} occurances in {year} {process_name}")
+            effect_line.append("1" if count else "-")
+        if set(effect_line) != {"-"}:
+            blocks["tabular_parameters"].append((nuisance.name, "shape", *effect_line))
+            added_shape_params.append(nuisance.name)
+
     if blocks["tabular_parameters"]:
         empty_lines.add("tabular_parameters")
 
     # line-style parameters
     blocks["line_parameters"] = [
-        ("model_nuisances", "group", "=", " ".join(added_param_names)),
+        ("rate_nuisances", "group", "=", " ".join(added_rate_params)),
     ]
+    if added_shape_params:
+        blocks["line_parameters"].append(("shape_nuisances", "group", "=", " ".join(added_shape_params)))
     if blocks["line_parameters"]:
         empty_lines.add("line_parameters")
 
@@ -1803,7 +1848,7 @@ def _write_datacard(
                 f.write("\n")
 
     # return output paths
-    return abs_datacard_path, abs_shapes_path
+    return abs_datacard_path, abs_shapes_path, bin_edges
 
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
