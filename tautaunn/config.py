@@ -156,6 +156,10 @@ class Sample:
     def year_flag(self) -> int:
         return self.YEAR_FLAGS[self.year]
 
+    @property
+    def is_data(self) -> bool:
+        return self.name.startswith(("Tau", "Muon", "EGamma", "MET"))
+
     def with_label_and_loss_weight(self, label: int | None, loss_weight: float = 1.0) -> Sample:
         return self.__class__(
             name=self.name,
