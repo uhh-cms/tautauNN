@@ -42,6 +42,8 @@ from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
 from tautaunn.binning_algorithms import uncertainty_driven, tt_dy_driven, flat_signal_ud
 
+import tautaunn.config as cfg
+
 
 #
 # configurations
@@ -408,23 +410,28 @@ stat_model_shapes_year_dependent = {
                                      "klub_name": "bTagweightReshape_jet{direction}%i"%i,
                                      "dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
            for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
-        #**{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"], TODO: find out klub name for these:
-                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
-                                        #"processes": "*[!QCD]"}
-           #for be in ["barrel", "endcap"]},
-        #f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
-                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
-                                       #"processes": "*[!QCD]"},
-        #f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
-                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
-                                        #"processes": "*[!QCD]"},
-        #f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
-                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
-                                        #"processes": "*[!QCD]"},
-        #**{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
-                                              #"categories": ["boosted", "resolved1b", "resolved2b"],
-                                              #"processes": "*[!QCD]"}
-           #for dm in ["DM0", "DM1", "DM10", "DM11"]},
+        **{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                                        "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*",
+                                        "klub_name": "idFakeSF_etauFR_%s_{direction}" %be}
+           for be in ["barrel", "endcap"]},
+        f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
+                                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                                       "processes": "*",
+                                       "klub_name": "trigSF_ele_{direction}"},
+        f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
+                                        "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*",
+                                        "klub_name": "trigSF_mu_{direction}"},
+        f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
+                                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                                        "processes": "*",
+                                        "klub_name": "trigSF_stau_{direction}"},
+        **{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
+                                              "categories": ["boosted", "resolved1b", "resolved2b"],
+                                              "processes": "*",
+                                              "klub_name": "trigSF_%s_{direction}"%dm}
+           for dm in ["DM0", "DM1", "DM10", "DM11"]},
     }
     for year in ["UL16", "UL16APV", "UL17", "UL18"]
 }
@@ -858,58 +865,13 @@ def load_file(
 
     # load the dnn output file
     if eval_directory:
-        dnn_array = load_nominal_dnn(eval_directory,
-                                     sample_name,
-                                     file_name.replace(".root", "_nominal.root"),
-                                     dnn_output_columns)
 
-        # use klub array index to filter dnn array
-        dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
-        if ak.sum(dnn_mask) != len(klub_array):
-            klub_path = os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name)
-            eval_path = os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name)
-            raise Exception(
-                f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
-                f"number of elements in the klub array ({len(klub_array)}) for file {file_name} "
-                f"(klub: {klub_path}, dnn: {eval_path})",
-            )
-        dnn_array = dnn_array[dnn_mask]
-
-        # exact (event, run, lumi) index check to make sure the order is identical as well
-        matches = (
-            (klub_array.EventNumber == dnn_array.EventNumber) &
-            (klub_array.RunNumber == dnn_array.RunNumber) &
-            (klub_array.lumi == dnn_array.lumi)
-        )
-        if not ak.all(matches):
-            raise Exception(
-                f"found event mismatch between klub and dnn files in {int(ak.sum(~matches))} cases "
-                f"in file {file_name}",
-            )
-        
-        dnn_shapes_array = load_shapes_dnn(eval_directory,
+        dnn_array = load_shapes_dnn(eval_directory,
                                            sample_name,
                                            file_name.replace(".root", "_systs.root"),
                                            dnn_output_columns)
         
-
-    # drop index columns
-    array = klub_array
-    for field in klub_index_columns:
-        array = ak.without_field(array, field)
-
-    # add dnn columns
-    if eval_directory:
-        for field in dnn_array.fields:
-            if field in klub_index_columns:
-                continue
-            array = ak.with_field(array, dnn_array[field], field)
-        # shapes cannot be added to array because they have a different length
-        #for field in dnn_shapes_array.fields:
-            #if field in klub_index_columns:
-                #continue
-            #array = ak.with_field(array, dnn_shapes_array[field], field)
-    return array, sum_gen_mc_weights, dnn_shapes_array
+    return klub_array, sum_gen_mc_weights, dnn_array
 
 
 def load_file_mp(args: tuple[Any]) -> tuple[ak.Array, float]:
@@ -966,7 +928,7 @@ def load_sample_data(
         print("reading from cache")
         print(cache_path)
         with open(cache_path, "rb") as f:
-            array, dnn_shapes_array = pickle.load(f)
+            array, dnn_array = pickle.load(f)
 
     else:
         # determine file names and build arguments for the parallel load implementation
@@ -987,23 +949,25 @@ def load_sample_data(
         # combine values
         array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
         sum_gen_mc_weights = sum(f for _, f, _ in ret)
-        dnn_shapes_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
+        dnn_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
         del ret
         gc.collect()
 
         # update the full weight
         array = ak.with_field(array, array.full_weight / sum_gen_mc_weights, "full_weight")
 
+        # update all other weights
+        for replacement in klub_weight_variation_columns:
+            array = ak.with_field(array, array[replacement] / sum_gen_mc_weights, replacement)
+
         # add to cache?
         if cache_path:
             print("writing to cache")
-            with tempfile.NamedTemporaryFile(suffix=".pkl") as tmp:
-                with open(tmp.name, "wb") as f:
-                    pickle.dump((array, dnn_shapes_array), f)
-                shutil.copy2(tmp.name, cache_path)
+            with open(cache_path, "wb") as f:
+                pickle.dump((array, dnn_array), f)
 
     # remove unnecessary columns
-    keep_columns = dnn_output_columns + klub_extra_columns + ["full_weight"] + (selection_columns or [])
+    keep_columns = dnn_output_columns + klub_index_columns + dnn_shape_columns + klub_weight_variation_columns + klub_extra_columns + ["full_weight"] + (selection_columns or [])
     for c in array.fields:
         if c not in keep_columns:
             array = ak.without_field(array, c)
@@ -1011,7 +975,7 @@ def load_sample_data(
 
     print("done")
 
-    return array, dnn_shapes_array
+    return array, dnn_array
 
 
 def expand_categories(category: str | Sequence[str]) -> list[str]:
@@ -1029,6 +993,39 @@ def expand_categories(category: str | Sequence[str]) -> list[str]:
             _categories.append(pattern)
     return _categories
 
+
+def estimate_qcd(qcd_hists,
+                 category,
+                 spin,
+                 mass):
+    # ABCD method
+    # take shape from region "C"
+    h_qcd = qcd_hists["os_noniso"]
+    # get the intgral and its uncertainty from region "B"
+    num_val = qcd_hists["ss_iso"].sum().value
+    num_var = qcd_hists["ss_iso"].sum().variance
+    # get the intgral and its uncertainty from region "D"
+    denom_val = qcd_hists["ss_noniso"].sum().value
+    denom_var = qcd_hists["ss_noniso"].sum().variance
+    # stop if any yield is negative (due to more MC than data)
+    if num_val <= 0 or denom_val <= 0:
+        print(
+            f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
+            f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
+        )
+    else:
+        # create the normalization correction including uncorrelated uncertainty propagation
+        corr_val = num_val / denom_val
+        corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
+        # scale the shape by updating values and variances in-place
+        val = h_qcd.view().value
+        _var = h_qcd.view().variance
+        new_val = val * corr_val
+        _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
+        val[:] = new_val
+        # set negative values to epsilon values but keep potentially large uncertainties
+        val[val <= 0] = 1.0e-5
+    return h_qcd
 
 #
 # functions for writing datacards
@@ -1146,26 +1143,6 @@ def write_datacards(
         )
         for sample_name in matched_sample_names
     )
-
-    # for debugging: just load data and free memory
-    #print("just load data and exit")
-    #for _ in data_gen:
-        #gc.collect()
-    #print("done loading data, exit")
-    #for sample_name in matched_sample_names:
-        #if sample_name == 'ZZZ':
-            #load_sample_data(
-                #skim_directory,
-                #eval_directory,
-                #sample_name,
-                #selection_columns,
-                #dnn_output_columns,
-                #n_parallel=n_parallel_read,
-                #cache_directory=cache_directory,
-            #)
-            #gc.collect()
-            #print("done")
-    #return
 
     # actually load
     sample_data = dict(zip(matched_sample_names, data_gen))
@@ -1287,6 +1264,14 @@ def _write_datacard(
             categories[category]["channel"] in processes[process_name]["channels"]
         )
     }
+    dnn_data = {sample_name: data[1] for sample_name, data in sample_data.items()}
+    sample_data = {sample_name: data[0] for sample_name, data in sample_data.items()}
+
+    # add dnn_data to sample_data
+    for sample_name, data in sample_data.items():
+        #slice down sample_data to match the length of dnn_data
+        dnn_mask = np.isin(dnn_data[sample_name][klub_index_columns], data[klub_index_columns])
+        sample_data[sample_name] = data[dnn_mask] 
 
     # reversed map to assign processes to samples
     sample_processes = {}
@@ -1304,11 +1289,16 @@ def _write_datacard(
             }
             for region_name, qcd_category in qcd_categories.items()
         }
-    
-    # retrieve the dnn_shapes_array from sample_data 
-    dnn_shapes = {sample_name: sample_data[sample_name][1] for sample_name in sample_data}
-    # remove the dnn_shapes_array from sample_data
-    sample_data = {sample_name: sample_data[sample_name][0] for sample_name in sample_data}
+
+        qcd_data_shapes = {
+            region_name: {
+                sample_name: dnn_data[sample_name][categories[qcd_category]["selection"](dnn_data[sample_name])]
+                for sample_name, process_name in sample_processes.items()
+                # skip signal
+                if not processes[process_name].get("signal", False)
+            }
+            for region_name, qcd_category in qcd_categories.items()
+        }
 
     # apply the category selection to sample data
     sample_data = {
@@ -1318,18 +1308,26 @@ def _write_datacard(
         if not processes[process_name].get("data", False)
     }
 
-    # check if lengths of arrays coincide (dnn_shapes already contains only events in categories)
-    for sample_name, data in sample_data.items():
-        if len(data) != len(dnn_shapes[sample_name]):
-            print(f"length of dnn_shapes_array does not match length of sample_data for sample {sample_name}")
+    dnn_data = {
+        sample_name: dnn_data[sample_name][categories[category]["selection"](dnn_data[sample_name])]
+        for sample_name, process_name in sample_processes.items()
+        # skip data for now as were are using fake data from background-only below
+        if not processes[process_name].get("data", False)
+    }
 
     # complain when nan's were found
     for sample_name, data in sample_data.items():
         n_nonfinite = np.sum(~np.isfinite(data[variable_name]))
+        n_nonfinite_dnn = np.sum(~np.isfinite(dnn_data[sample_name][variable_name]))
         if n_nonfinite:
             print(
                 f"{n_nonfinite} / {len(data)} of events in {sample_name} after {category} "
                 "selection are non-finite (nan or inf)",
+            )
+        if n_nonfinite_dnn:
+            print(
+                f"{n_nonfinite_dnn} / {len(dnn_data[sample_name])} of events in {sample_name} after {category} "
+                "selection are non-finite (nan or inf) in DNN data",
             )
 
     # prepare the scaling values, signal is scaled to 1pb * br
@@ -1612,7 +1610,6 @@ def _write_datacard(
     # fill histograms
     # (add zero bin offsets with 1e-5 and 100% error)
     hists = {}
-    shape_hists = {}
     for process_name, sample_names in sample_map.items():
         # skip data
         if processes[process_name].get("data", False):
@@ -1636,42 +1633,6 @@ def _write_datacard(
         # store it
         hists[process_name] = h
 
-        for shape_name, shape_data in shapes_model.items():
-            for sample_name in sample_names:
-                for direction in ["up", "down"]:
-                    if "dnn_shape_pattern" and "klub_name" in shape_data:
-                        # variations that affect both weight and dnn response
-                        fill_arr = dnn_shapes[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
-                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
-                    elif "klub_name" and not "dnn_shape_pattern" in shape_data:
-                        # variations that only affect the weight
-                        fill_arr = sample_data[sample_name][variable_name]
-                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
-                    elif "dnn_shape_pattern" and not "klub_name" in shape_data:
-                        # variations that only affect the dnn response
-                        fill_arr = dnn_shapes[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
-                        weight = sample_data[sample_name].full_weight * _scale
-                    else:
-                        raise Exception((f"shape uncertainty must affect either dnn response or weight,"
-                                        f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
-                    
-                    h = hist.Hist.new.Variable(bin_edges, name=f"{shape_name}{variable_name}").Weight()
-                    h.fill(**{
-                        f"{shape_name}{variable_name}": fill_arr, 
-                        "weight": weight, 
-                    })
-
-                    # add epsilon values at positions where bin contents are not positive
-                    nom = h.view().value
-                    mask = nom <= 0
-                    nom[mask] = 1.0e-5
-                    h.view().variance[mask] = 1.0e-5
-
-                    # store it with the corresponding pattern from line 1265
-                    shape_hists[f"{process_name}__{shape_name}"] = {"hist":h,
-                                                                    "parameter": shape_name,
-                                                                    "direction": direction}
-
     # actual qcd estimation
     if qcd_estimation:
         qcd_hists = {}
@@ -1681,39 +1642,67 @@ def _write_datacard(
             for sample_name, data in _qcd_data.items():
                 weight = 1
                 if not processes[sample_processes[sample_name]].get("data", False):
-                    weight = -1 * data.full_weight * scale
+                    weight = -1 * data.full_weight * _scale
                 h.fill(**{variable_name: data[variable_name], "weight": weight})
             qcd_hists[region_name] = h
+        h_qcd = estimate_qcd(qcd_hists, category, spin, mass)
+        hists["QCD"] = h_qcd
+                             
+    shape_hists = {}
+    for shape_name, shape_data in shapes_model.items():
+        for direction in ["up", "down"]:
+            h = hist.Hist.new.Variable(bin_edges, name=f"{variable_name}_{shape_name}_{direction}").Weight()
+            for sample_name in sample_names:
+                if "dnn_shape_pattern" and "klub_name" in shape_data:
+                    # variations that affect both weight and dnn response
+                    fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
+                    weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
+                elif "klub_name" and not "dnn_shape_pattern" in shape_data:
+                    # variations that only affect the weight
+                    fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
+                    weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
+                elif "dnn_shape_pattern" and not "klub_name" in shape_data:
+                    # variations that only affect the dnn response
+                    fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
+                    weight = sample_data[sample_name].full_weight * _scale
+                else:
+                    raise Exception((f"shape uncertainty must affect either dnn response or weight,"
+                                    f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
+                
+                h.fill(**{
+                    f"{shape_name}{variable_name}": fill_arr, 
+                    "weight": weight, 
+                })
 
-        # ABCD method
-        # take shape from region "C"
-        h_qcd = qcd_hists["os_noniso"]
-        # get the intgral and its uncertainty from region "B"
-        num_val = qcd_hists["ss_iso"].sum().value
-        num_var = qcd_hists["ss_iso"].sum().variance
-        # get the intgral and its uncertainty from region "D"
-        denom_val = qcd_hists["ss_noniso"].sum().value
-        denom_var = qcd_hists["ss_noniso"].sum().variance
-        # stop if any yield is negative (due to more MC than data)
-        if num_val <= 0 or denom_val <= 0:
-            print(
-                f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
-                f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
-            )
-        else:
-            # create the normalization correction including uncorrelated uncertainty propagation
-            corr_val = num_val / denom_val
-            corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
-            # scale the shape by updating values and variances in-place
-            val = h_qcd.view().value
-            _var = h_qcd.view().variance
-            new_val = val * corr_val
-            _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
-            val[:] = new_val
-            # set negative values to epsilon values but keep potentially large uncertainties
-            val[val <= 0] = 1.0e-5
-            # store it
-            hists["QCD"] = h_qcd
+            # add epsilon values at positions where bin contents are not positive
+            nom = h.view().value
+            mask = nom <= 0
+            nom[mask] = 1.0e-5
+            h.view().variance[mask] = 1.0e-5
+
+            # store it with the corresponding pattern from line 1265
+            shape_hists[f"{process_name}_{shape_name}_{direction}"] = {"hist":h,
+                                                            "parameter": shape_name,
+                                                            "direction": direction}
+
+            if qcd_estimation:
+                if fnmatch(shape_data["processes"], "QCD"):
+                    qcd_hists_shape = {}
+                    for region_name, _qcd_data in qcd_data_shapes.items():
+                        # create a histogram that is filled with both data and negative background
+                        h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+                        for sample_name, data in _qcd_data.items():
+                            weight = 1
+                            if not processes[sample_processes[sample_name]].get("data", False):
+                                weight = -1 * data[shape_data["klub_name"].format(direction)] * _scale
+                            variable_name = shape_data['dnn_shape_pattern'].format(direction)
+                            h.fill(**{variable_name: data[variable_name], "weight": weight})
+                        qcd_hists_shape[region_name] = h
+                    h_qcd_shape = estimate_qcd(qcd_hists_shape, category, spin, mass)
+                    shape_hists[f"QCD_{shape_name}_{direction}"] = {"hist":h_qcd_shape,
+                                                                    "parameter": shape_name,
+                                                                    "direction": direction}
+                
 
     # fake data using the sum of all backgrounds
     hists["data_obs"] = (
@@ -1978,7 +1967,7 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal_distance", "flats", "ud_flats", "ud", "tt_dy_driven"),
+        choices=("equal_distance", "flat_s", "ud_flats", "ud", "tt_dy_driven"),
         default="equal_distance",
         help="binning strategy to use; default: equal",
     )
