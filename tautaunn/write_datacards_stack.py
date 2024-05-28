@@ -204,6 +204,10 @@ ShapeNuisance.new(
     weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p8to1p2_up", "idFakeSF_mutauFR_eta0p8to1p2_down")},
 )
 ShapeNuisance.new(
+    name="id_mutauFR_eta1p2to1p7",
+    weights={"idFakeSF": ("idFakeSF_mutauFR_eta1p2to1p7_up", "idFakeSF_mutauFR_eta1p2to1p7_down")},
+)
+ShapeNuisance.new(
     name="id_mutauFR_etaGt1p7",
     weights={"idFakeSF": ("idFakeSF_mutauFR_etaGt1p7_up", "idFakeSF_mutauFR_etaGt1p7_down")},
 )
