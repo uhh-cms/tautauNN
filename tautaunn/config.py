@@ -584,6 +584,7 @@ klub_index_columns = [
 klub_category_columns = [
     "pairType",
     "nleps",
+    "isOS",
     "nbjetscand",
     "bjet1_bID_deepFlavor",
     "bjet2_bID_deepFlavor",
@@ -595,6 +596,7 @@ klub_category_columns = [
     "dau1_iso",
     "dau1_eleMVAiso",
     "dau1_deepTauVsJet",
+    "dau2_deepTauVsJet",
     # preemptively add pt and eta values
     *[
         f"{obj}_{f}"
