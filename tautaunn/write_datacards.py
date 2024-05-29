@@ -1091,6 +1091,7 @@ def estimate_qcd(qcd_hists,
             f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
             f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
         )
+        h_qcd *= 0.0
     else:
         # create the normalization correction including uncorrelated uncertainty propagation
         corr_val = num_val / denom_val
