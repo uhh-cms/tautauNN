@@ -388,68 +388,138 @@ stat_model_2018 = {
     "lumi_13TeV_1718": {"*": "1.002"},
 }
 
-stat_model_shapes = {
-    **{f"CMS_JES_{unc}": {"channels": ["mutau", "etau", "tautau"],
-                          "categories": ["boosted", "resolved1b", "resolved2b"],
-                          "processes": "*[!QCD]",
-                          "klub_name": "bTagweightReshape_jet{direction}%i"%i, #klub naming scheme is different for jes things......
-                          "dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
-       for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
-    **{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
-                                        "categories": ["resolved1b", "resolved2b"],
-                                        "processes": "*[!QCD]",
-                                        "klub_name": "bTagweightReshape_%s{direction}"%s}
-     for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
-    **{f"CMS_eff_t_id_Stat{s}": {"channels": ["mutau", "etau", "tautau"],
-                             "categories": ["boosted", "resolved1b", "resolved2b"],
-                             "processes": "*[!QCD]",
-                             "klub_name": "idFakeSF_tauid_2d_stat%s{direction}",}
-       for s in ['0', '1', 'gt140']},
-    **{f"CMS_eff_t_id_DM{s}": {"channels": ["mutau", "etau", "tautau"],
-                                 "categories": ["boosted", "resolved1b", "resolved2b"],
-                             "processes": "*[!QCD]",
-                             "klub_name": "idFakeSF_tauid_2d_systcorrdm%s{direction}"%s,}
-       for s in ['eras', 'uncorreras']},
-    **{f"CMS_eff_t_id_syst{s}": {"channels": ["mutau", "etau", "tautau"],
-                                 "categories": ["boosted", "resolved1b", "resolved2b"],
-                             "processes": "*[!QCD]",
-                             "klub_name": "idFakeSF_tauid_2d_syst%s{direction}"%s,}
-       for s in ['correrasgt140', 'uncorrdmeras']},
-}
+#stat_model_shapes = {
+    #**{f"CMS_JES_{unc}": {"channels": ["mutau", "etau", "tautau"],
+                          #"categories": ["boosted", "resolved1b", "resolved2b"],
+                          #"processes": "*[!QCD]",
+                          #"klub_name": "bTagweightReshape_jet{direction}%i"%i, #klub naming scheme is different for jes things......
+                          #"dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
+       #for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
+    #**{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
+                                        #"categories": ["resolved1b", "resolved2b"],
+                                        #"processes": "*[!QCD]",
+                                        #"klub_name": "bTagweightReshape_%s{direction}"%s}
+     #for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+    #**{f"CMS_eff_t_id_Stat{s}": {"channels": ["mutau", "etau", "tautau"],
+                             #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_stat%s{direction}",}
+       #for s in ['0', '1', 'gt140']},
+    #**{f"CMS_eff_t_id_DM{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_systcorrdm%s{direction}"%s,}
+       #for s in ['eras', 'uncorreras']},
+    #**{f"CMS_eff_t_id_syst{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_syst%s{direction}"%s,}
+       #for s in ['correrasgt140', 'uncorrdmeras']},
+#}
 
-stat_model_shapes_year_dependent = {
-    f"{year}": {
-        **{f"CMS_JES_{unc}_{year}": {"channels": ["mutau", "etau", "tautau"],
-                                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                                     "processes": "*[!QCD]",
-                                     "klub_name": "bTagweightReshape_jet{direction}%i"%i,
-                                     "dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
-           for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
-        **{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
-                                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*",
-                                        "klub_name": "idFakeSF_etauFR_%s_{direction}" %be}
-           for be in ["barrel", "endcap"]},
-        f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
-                                       "categories": ["boosted", "resolved1b", "resolved2b"],
-                                       "processes": "*",
-                                       "klub_name": "trigSF_ele_{direction}"},
-        f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
-                                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*",
-                                        "klub_name": "trigSF_mu_{direction}"},
-        f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
-                                       "categories": ["boosted", "resolved1b", "resolved2b"],
-                                        "processes": "*",
-                                        "klub_name": "trigSF_stau_{direction}"},
-        **{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
-                                              "categories": ["boosted", "resolved1b", "resolved2b"],
-                                              "processes": "*",
-                                              "klub_name": "trigSF_%s_{direction}"%dm}
-           for dm in ["DM0", "DM1", "DM10", "DM11"]},
-    }
-    for year in ["UL16", "UL16APV", "UL17", "UL18"]
+#stat_model_shapes_year_dependent = {
+    #f"{year}": {
+        #**{f"CMS_JES_{unc}_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                     #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                     #"processes": "*[!QCD]",
+                                     #"klub_name": "bTagweightReshape_jet{direction}%i"%i,
+                                     #"dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
+           #for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
+        #**{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "idFakeSF_etauFR_%s_{direction}" %be}
+           #for be in ["barrel", "endcap"]},
+        #f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                       #"processes": "*",
+                                       #"klub_name": "trigSF_ele_{direction}"},
+        #f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "trigSF_mu_{direction}"},
+        #f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "trigSF_stau_{direction}"},
+        #**{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
+                                              #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                              #"processes": "*",
+                                              #"klub_name": "trigSF_%s_{direction}"%dm}
+           #for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    #}
+    #for year in ["UL16", "UL16APV", "UL17", "UL18"]
+#}
+
+stat_model_shapes = {
+    **{f"jes_{i}": {"channels": ["mutau", "etau", "tautau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "*",
+                    "klub_name": "bTagweightReshape_jet{direction}%i"%i,
+                    "dnn_shape_pattern": "{variable_name}_jes_%i_{direction}"%i}
+        for i in range(1,12)},
+    **{f"btag_{s}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["resolved1b", "resolved2b"],
+                     "processes": "*",
+                     "klub_name": "bTagweightReshape_%s_{direction}"%s}
+        for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+    **{f"id_tauid_{s}": {"channels": ["mutau", "etau", "tautau"],
+                         "categories": ["boosted", "resolved1b", "resolved2b"],
+                         "processes": "*",
+                         "klub_name": "idFakeSF_tauid_2d_%s_{direction}"%s}
+       for s in ["stat0", "stat1", "statgt140", "systuncorrdmeras"]},
+    **{f"id_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                          "categories": ["boosted", "resolved1b", "resolved2b"],
+                          "processes": "*",
+                          "klub_name": "idFakeSF_etauFR_%s_{direction}"%be}
+       for be in ["barrel", "endcap"]},
+    **{f"id_mutauFR_eta{rng}": {"channels": ["mutau", "etau", "tautau"],
+                               "categories": ["boosted", "resolved1b", "resolved2b"],
+                               "processes": "*",
+                               "klub_name": "idFakeSF_mutauFR_eta%s_{direction}"%rng}
+       for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]},
+    **{f"trigSF_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                       "processes": "*",
+                       "klub_name": "trigSF_%s_{direction}"%dm}
+         for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    "trigSF_ele": {"channels": ["etau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "*",
+                    "klub_name": "trigSF_ele_{direction}"},
+    "trigSF_mu": {"channels": ["mutau"],
+                   "categories": ["boosted", "resolved1b", "resolved2b"],
+                   "processes": "*",
+                   "klub_name": "trigSF_mu_{direction}"},
+    "trigSF_stau": {"channels": ["tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "*",
+                     "klub_name": "trigSF_stau_{direction}"},
+    "trigSF_met": {"channels": ["mutau", "etau", "tautau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "*",
+                    "klub_name": "trigSF_met_{direction}"},
+    **{f"ees_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "*",
+                     "dnn_shape_pattern": "{variable_name}_ees_%s_{direction}"%dm}
+       for dm in ["DM0", "DM1"]},
+    **{f"tes_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "*",
+                     "dnn_shape_pattern": "{variable_name}_tes_%s_{direction}"%dm}
+         for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    "mes": {"channels": ["mutau", "etau", "tautau"],
+            "categories": ["boosted", "resolved1b", "resolved2b"],
+            "processes": "*",
+            "dnn_shape_pattern": "{variable_name}_mes_{direction}"},
+    "pu_jet_id": {"channels": ["mutau", "etau", "tautau"],
+                   "categories": ["boosted", "resolved1b", "resolved2b"],
+                   "processes": "*",
+                   "klub_name": "PUjetID_SF_{direction}"},
 }
+    
+       
 categories = {}
 
 
@@ -705,15 +775,11 @@ def category_factory(
 
 for channel in channels:
     cats_2016APV = category_factory(year="2016APV", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2016APV.items():
-        # build the shapes model
-        shapes_model = {}
         for shape_name, model_dict in stat_model_shapes.items():
             if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
-        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL16APV"].items():
-            if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
+                shapes_model[shape_name] = model_dict
         categories[f"2016APV_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
@@ -723,14 +789,11 @@ for channel in channels:
             **sel.extra,
         }
     cats_2016 = category_factory(year="2016", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2016.items():
-        shapes_model = {}
         for shape_name, model_dict in stat_model_shapes.items():
             if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
-        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL16"].items():
-            if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
+                shapes_model[shape_name] = model_dict
         categories[f"2016_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
@@ -740,14 +803,11 @@ for channel in channels:
             **sel.extra,
         }
     cats_2017 = category_factory(year="2017", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2017.items():
-        shapes_model = {}
         for shape_name, model_dict in stat_model_shapes.items():
             if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
-        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL17"].items():
-            if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
+                shapes_model[shape_name] = model_dict
         categories[f"2017_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
@@ -757,14 +817,11 @@ for channel in channels:
             **sel.extra,
         }
     cats_2018 = category_factory(year="2018", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2018.items():
-        shapes_model = {}
         for shape_name, model_dict in stat_model_shapes.items():
             if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
-        for shape_name, model_dict in stat_model_shapes_year_dependent[f"UL18"].items():
-            if channel in model_dict["channels"] and name in model_dict["categories"]:
-                shapes_model = merge_dicts(shapes_model, model_dict)
+                shapes_model[shape_name] = model_dict
         categories[f"2018_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
@@ -1337,13 +1394,7 @@ def _write_datacard(
 
     # complain when nan's were found
     for sample_name, data in sample_data.items():
-        n_nonfinite = np.sum(~np.isfinite(data[variable_name]))
         n_nonfinite_dnn = np.sum(~np.isfinite(dnn_data[sample_name][variable_name]))
-        if n_nonfinite:
-            print(
-                f"{n_nonfinite} / {len(data)} of events in {sample_name} after {category} "
-                "selection are non-finite (nan or inf)",
-            )
         if n_nonfinite_dnn:
             print(
                 f"{n_nonfinite_dnn} / {len(dnn_data[sample_name])} of events in {sample_name} after {category} "
@@ -1576,7 +1627,7 @@ def _write_datacard(
             )
         signal_process_name = signal_process_names[0]
         signal_values = ak.concatenate([
-            sample_data[sample_name][variable_name]
+            dnn_data[sample_name][variable_name]
             for sample_name in sample_map[signal_process_name]
         ], axis=0)
         signal_weights = ak.concatenate([
@@ -1640,7 +1691,7 @@ def _write_datacard(
         _scale = signal_scale if processes[process_name].get("signal", False) else scale
         for sample_name in sample_names:
             h.fill(**{
-                variable_name: sample_data[sample_name][variable_name],
+                variable_name: dnn_data[sample_name][variable_name],
                 "weight": sample_data[sample_name].full_weight * _scale,
             })
 
@@ -1656,72 +1707,78 @@ def _write_datacard(
     # actual qcd estimation
     if qcd_estimation:
         qcd_hists = {}
-        for region_name, _qcd_data in qcd_data.items():
+        for region_name, _qcd_data in qcd_data_shapes.items():
             # create a histogram that is filled with both data and negative background
             h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
             for sample_name, data in _qcd_data.items():
                 weight = 1
                 if not processes[sample_processes[sample_name]].get("data", False):
-                    weight = -1 * data.full_weight * _scale
+                    weight = -1 * qcd_data[region_name][sample_name].full_weight * _scale
                 h.fill(**{variable_name: data[variable_name], "weight": weight})
             qcd_hists[region_name] = h
         h_qcd = estimate_qcd(qcd_hists, category, spin, mass)
         hists["QCD"] = h_qcd
                              
     shape_hists = {}
-    for shape_name, shape_data in shapes_model.items():
-        for direction in ["up", "down"]:
-            h = hist.Hist.new.Variable(bin_edges, name=f"{variable_name}_{shape_name}_{direction}").Weight()
-            for sample_name in sample_names:
-                if "dnn_shape_pattern" and "klub_name" in shape_data:
-                    # variations that affect both weight and dnn response
-                    fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
-                    weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
-                elif "klub_name" and not "dnn_shape_pattern" in shape_data:
-                    # variations that only affect the weight
-                    fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
-                    weight = sample_data[sample_name][shape_data["klub_name"].format(direction)] * _scale
-                elif "dnn_shape_pattern" and not "klub_name" in shape_data:
-                    # variations that only affect the dnn response
-                    fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(direction)]
-                    weight = sample_data[sample_name].full_weight * _scale
-                else:
-                    raise Exception((f"shape uncertainty must affect either dnn response or weight,"
-                                    f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
-                
-                h.fill(**{
-                    f"{shape_name}{variable_name}": fill_arr, 
-                    "weight": weight, 
-                })
+    for process_name, sample_names in sample_map.items():
+        # skip data
+        if processes[process_name].get("data", False):
+            continue
+        for shape_name, shape_data in shapes_model.items():
+            for direction in ["up", "down"]:
+                h = hist.Hist.new.Variable(bin_edges, name=f"{variable_name}_{shape_name}_{direction}").Weight()
+                for sample_name in sample_names:
+                    if all([s in shape_data for s in ["dnn_shape_pattern", "klub_name"]]):
+                        # variations that affect both weight and dnn response
+                        fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                    elif ("klub_name" in shape_data) and (not "dnn_shape_pattern" in shape_data):
+                        # variations that only affect the weight
+                        fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
+                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                    elif ("dnn_shape_pattern") and (not "klub_name" in shape_data):
+                        # variations that only affect the dnn response
+                        fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                        weight = sample_data[sample_name].full_weight * _scale
+                    else:
+                        raise Exception((f"shape uncertainty must affect either dnn response or weight,"
+                                        f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
+                    
+                    h.fill(**{
+                        f"{variable_name}_{shape_name}_{direction}": fill_arr, 
+                        "weight": weight, 
+                    })
 
-            # add epsilon values at positions where bin contents are not positive
-            nom = h.view().value
-            mask = nom <= 0
-            nom[mask] = 1.0e-5
-            h.view().variance[mask] = 1.0e-5
+                # add epsilon values at positions where bin contents are not positive
+                nom = h.view().value
+                mask = nom <= 0
+                nom[mask] = 1.0e-5
+                h.view().variance[mask] = 1.0e-5
 
-            # store it with the corresponding pattern from line 1265
-            shape_hists[f"{process_name}_{shape_name}_{direction}"] = {"hist":h,
-                                                            "parameter": shape_name,
-                                                            "direction": direction}
+                # store it with the corresponding pattern from line 1265
+                shape_hists[f"{process_name}_{shape_name}_{direction}"] = {"hist":h,
+                                                                "parameter": shape_name,
+                                                                "process": process_name,
+                                                                "direction": direction}
 
-            if qcd_estimation:
-                if fnmatch(shape_data["processes"], "QCD"):
-                    qcd_hists_shape = {}
-                    for region_name, _qcd_data in qcd_data_shapes.items():
-                        # create a histogram that is filled with both data and negative background
-                        h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
-                        for sample_name, data in _qcd_data.items():
-                            weight = 1
-                            if not processes[sample_processes[sample_name]].get("data", False):
-                                weight = -1 * data[shape_data["klub_name"].format(direction)] * _scale
-                            variable_name = shape_data['dnn_shape_pattern'].format(direction)
-                            h.fill(**{variable_name: data[variable_name], "weight": weight})
-                        qcd_hists_shape[region_name] = h
-                    h_qcd_shape = estimate_qcd(qcd_hists_shape, category, spin, mass)
-                    shape_hists[f"QCD_{shape_name}_{direction}"] = {"hist":h_qcd_shape,
-                                                                    "parameter": shape_name,
-                                                                    "direction": direction}
+                if qcd_estimation:
+                    if fnmatch(shape_data["processes"], "QCD"):
+                        qcd_hists_shape = {}
+                        for region_name, _qcd_data in qcd_data_shapes.items():
+                            # create a histogram that is filled with both data and negative background
+                            h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+                            for sample_name, data in _qcd_data.items():
+                                weight = 1
+                                if not processes[sample_processes[sample_name]].get("data", False):
+                                    weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction)] * _scale
+                                variable_name = shape_data['dnn_shape_pattern'].format(direction)
+                                h.fill(**{variable_name: data[variable_name], "weight": weight})
+                            qcd_hists_shape[region_name] = h
+                        h_qcd_shape = estimate_qcd(qcd_hists_shape, category, spin, mass)
+                        shape_hists[f"QCD_{shape_name}_{direction}"] = {"hist":h_qcd_shape,
+                                                                        "parameter": shape_name,
+                                                                        "process": "QCD",
+                                                                        "direction": direction}
                 
 
     # fake data using the sum of all backgrounds
@@ -1750,12 +1807,12 @@ def _write_datacard(
         for process_name, h in hists.items():
             shape_name = shape_patterns["nom"].format(category=category, process=process_name)
             root_file[shape_name] = h
-        for process_name, shapes_hist_data in shape_hists.items():
-            shape_name = shape_patterns["syst"].format(category=category,
-                                                       process=process_name,
+        for shape_name, shapes_hist_data in shape_hists.items():
+            hist_name = shape_patterns["syst"].format(category=category,
+                                                       process=shapes_hist_data["process"],
                                                        parameter=shapes_hist_data["parameter"],
-                                                       direction=shapes_hist_data["direction"])
-            root_file[shape_name] = shapes_hist_data["hist"] 
+                                                       direction=shapes_hist_data["direction"].capitalize())
+            root_file[hist_name] = shapes_hist_data["hist"] 
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
@@ -1826,11 +1883,11 @@ def _write_datacard(
         if set(effect_line) != {"-"}:
             blocks["tabular_parameters"].append((param_name, "lnN", *effect_line))
             added_param_names.append(param_name)
-    shapes_model = categories[category]["shapes_model"]
+
     for shape_name, shape_data in shapes_model.items():
         effect_line = []
         for process_name in exp_processes:
-            process_pattern = shape_data["process_pattern"]
+            process_pattern = shape_data["processes"]
             if fnmatch(process_name, process_pattern):
                 effect = "1.0"
             else:
