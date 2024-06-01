@@ -1087,10 +1087,6 @@ def estimate_qcd(qcd_hists,
     denom_var = qcd_hists["ss_noniso"].sum().variance
     # stop if any yield is negative (due to more MC than data)
     if num_val <= 0 or denom_val <= 0:
-        print(
-            f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
-            f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
-        )
         h_qcd *= 0.0
     else:
         # create the normalization correction including uncorrelated uncertainty propagation
@@ -1725,28 +1721,22 @@ def _write_datacard(
         # skip data
         if processes[process_name].get("data", False):
             continue
+
         for shape_name, shape_data in shapes_model.items():
+            if not fnmatch(process_name, shape_data["processes"]):
+                continue
             for direction in ["up", "down"]:
-                h = hist.Hist.new.Variable(bin_edges, name=f"{variable_name}_{shape_name}_{direction}").Weight()
+                hist_name = f"{process_name}_{shape_name}_{direction}"
+                h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
                 for sample_name in sample_names:
-                    if all([s in shape_data for s in ["dnn_shape_pattern", "klub_name"]]):
-                        # variations that affect both weight and dnn response
+                    weight = sample_data[sample_name].full_weight * _scale # nominal weight
+                    fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
+                    if "klub_name" in shape_data:
+                        weight = -1 * sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                    if "dnn_shape_pattern" in shape_data:
                         fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
-                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
-                    elif ("klub_name" in shape_data) and (not "dnn_shape_pattern" in shape_data):
-                        # variations that only affect the weight
-                        fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
-                        weight = sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
-                    elif ("dnn_shape_pattern") and (not "klub_name" in shape_data):
-                        # variations that only affect the dnn response
-                        fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
-                        weight = sample_data[sample_name].full_weight * _scale
-                    else:
-                        raise Exception((f"shape uncertainty must affect either dnn response or weight,"
-                                        f"but {shape_name} does not have an entry for either 'klub_name' or 'dnn_shape_pattern"))
-                    
                     h.fill(**{
-                        f"{variable_name}_{shape_name}_{direction}": fill_arr, 
+                        hist_name: fill_arr, 
                         "weight": weight, 
                     })
 
@@ -1757,29 +1747,33 @@ def _write_datacard(
                 h.view().variance[mask] = 1.0e-5
 
                 # store it with the corresponding pattern from line 1265
-                shape_hists[f"{process_name}_{shape_name}_{direction}"] = {"hist":h,
-                                                                "parameter": shape_name,
-                                                                "process": process_name,
-                                                                "direction": direction}
+                shape_hists[hist_name] = {"hist":h,
+                                          "parameter": shape_name,
+                                          "process": process_name,
+                                          "direction": direction}
 
                 if qcd_estimation:
-                    if fnmatch(shape_data["processes"], "QCD"):
+                    if fnmatch("QCD", shape_data["processes"]):
                         qcd_hists_shape = {}
                         for region_name, _qcd_data in qcd_data_shapes.items():
                             # create a histogram that is filled with both data and negative background
-                            h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+                            hist_name = f"QCD_{shape_name}_{direction}"
+                            h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
                             for sample_name, data in _qcd_data.items():
                                 weight = 1
+                                fill_arr = data[variable_name]
                                 if not processes[sample_processes[sample_name]].get("data", False):
-                                    weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction)] * _scale
-                                variable_name = shape_data['dnn_shape_pattern'].format(direction)
-                                h.fill(**{variable_name: data[variable_name], "weight": weight})
+                                    if "klub_name" in shape_data:
+                                        weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                                    if "dnn_shape_pattern" in shape_data:
+                                        fill_arr = data[shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                                h.fill(**{hist_name: fill_arr, "weight": weight})
                             qcd_hists_shape[region_name] = h
                         h_qcd_shape = estimate_qcd(qcd_hists_shape, category, spin, mass)
-                        shape_hists[f"QCD_{shape_name}_{direction}"] = {"hist":h_qcd_shape,
-                                                                        "parameter": shape_name,
-                                                                        "process": "QCD",
-                                                                        "direction": direction}
+                        shape_hists[hist_name] = {"hist":h_qcd_shape,
+                                                    "parameter": shape_name,
+                                                    "process": "QCD",
+                                                    "direction": direction}
                 
 
     # fake data using the sum of all backgrounds
