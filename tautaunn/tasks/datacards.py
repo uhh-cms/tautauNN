@@ -432,22 +432,21 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("flats", "equal", "ud", "ud_flats", "tt_dy_driven"),
-        description="binning to use; choices: flats, equal, ud (uncertainty-driven) ud_flats (uncertainty-driven with "
-        "flat signal distribution), tt_dy_driven (tt+dy-driven) default: flats",
+        choices=("equal", "flats", "flatsguarded"),
+        description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
     )
     n_bins = luigi.IntParameter(
         default=10,
         description="number of bins to use; default: 10",
     )
-    uncertainty = luigi.FloatParameter(
-        default=0.1,
-        description="uncertainty to use for the ud binning; default: 0.1",
-    )
-    signal_uncertainty = luigi.FloatParameter(
-        default=0.5,
-        description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
-    )
+    # uncertainty = luigi.FloatParameter(
+    #     default=0.1,
+    #     description="uncertainty to use for the ud binning; default: 0.1",
+    # )
+    # signal_uncertainty = luigi.FloatParameter(
+    #     default=0.5,
+    #     description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
+    # )
     variable = luigi.Parameter(
         default="pdnn_m{mass}_s{spin}_hh",
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "

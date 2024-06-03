@@ -192,6 +192,7 @@ EOF
             "hist" \
             "vector" \
             "shap" \
+            "uniplot" \
             "git+https://github.com/riga/law.git@master" \
             || return "$?"
     fi

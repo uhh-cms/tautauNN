@@ -66,7 +66,14 @@ klub_weight_columns = [
 klub_extra_columns = [
     # "DNNoutSM_kl_1",
 ]
-
+# "years" in all structures above actually mean "era", so define "datacard year" as the actual year of an era
+# for datacard purposes, as, for instance, eras "2016APV" and "2016" are both considered as datacard year "2016"
+datacard_years = {
+    "2016APV": "2016",
+    "2016": "2016",
+    "2017": "2017",
+    "2018": "2018",
+}
 shape_nuisances = {}
 
 
@@ -1407,7 +1414,6 @@ def _write_datacard(
     for year, _map in sample_map.items():
         if cat_data["year"] not in (None, year):
             continue
-
         for process_name, sample_names in _map.items():
             # skip some signals
             if (
@@ -1600,9 +1606,14 @@ def _write_datacard(
                 if processes[process_name].get("data", False):
                     _hist_name = _process_name = "data_obs"
                 for year in _map.keys():
-                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=year)
-                    h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
-                    hists[(year, _process_name)][(nuisance.get_combine_name(year=year), direction)] = h
+                    datacard_year = datacard_years[year]
+                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
+                    try:
+                        h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
+                    except:
+                        print(f"creating histogram in ({category},{spin},{mass}) with edges {bin_edges} failed")
+                        raise
+                    hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)] = h
 
             # fill histograms
             for process_name, _map in process_map.items():
@@ -1620,8 +1631,9 @@ def _write_datacard(
 
                 # fill the histogram
                 for year, sample_names in _map.items():
-                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=year)
-                    h = hists[(year, _process_name)][(nuisance.get_combine_name(year=year), direction)]
+                    datacard_year = datacard_years[year]
+                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
+                    h = hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)]
                     scale = 1 if is_data else luminosities[year]
                     if processes[process_name].get("signal", False):
                         scale *= br_hh_bbtt
@@ -1648,8 +1660,9 @@ def _write_datacard(
                 # create data-minus-background histograms in the 4 regions
                 for region_name, _qcd_data in qcd_data.items():
                     for year, data in _qcd_data.items():
+                        datacard_year = datacard_years[year]
                         # create a histogram that is filled with both data and negative background
-                        full_hist_name = ShapeNuisance.create_full_name(hist_name, year=year)
+                        full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
                         h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                         for sample_name, _data in data.items():
                             process_name = sample_processes[year][sample_name]
@@ -1679,6 +1692,7 @@ def _write_datacard(
                 # ABCD method per year
                 # TODO: consider using averaging between the two options where the shape is coming from
                 for year, region_hists in qcd_hists.items():
+                    datacard_year = datacard_years[year]
                     # take shape from region "C"
                     h_qcd = region_hists["os_noniso"]
                     # get the intgral and its uncertainty from region "B"
@@ -1710,15 +1724,15 @@ def _write_datacard(
                     hval = h_qcd.view().value
                     hval[hval <= 0] = 1.0e-5
                     # store it
-                    hists[(year, "QCD")][(nuisance.get_combine_name(year=year), direction)] = h_qcd
+                    hists[(year, "QCD")][(nuisance.get_combine_name(year=datacard_year), direction)] = h_qcd
                     any_qcd_valid[year] |= not qcd_invalid
 
     # drop qcd shapes in years where no valid estimation was found
     for year, qcd_valid in any_qcd_valid.items():
         if not qcd_valid:
             print(
-                f"\n  completey dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
-                "created for any nuisance\n",
+                f"  completely dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
+                "created for any nuisance",
             )
             del hists[(year, "QCD")]
 
@@ -1760,33 +1774,26 @@ def _write_datacard(
                     shape_name = shape_patterns["syst"].format(
                         category=category,
                         process=full_process_name,
-                        parameter=nuisance.name,
+                        parameter=full_nuisance_name,
                         direction=direction.capitalize(),
                     )
-                # if process_name == "data_obs":
-                #     from IPython import embed; embed(header="writing data")
                 # the shape name be unique when it's not data
                 if shape_name in content:
                     if process_name != "data_obs":
                         raise Exception(f"shape name {shape_name} already exists in histograms to write")
                     # add on top
-                    from IPython import embed; embed(header="overwrite data")
                     content[shape_name] += h
                 else:
                     content[shape_name] = h
 
         # write all histogarms to file
         root_file = uproot.recreate(path)
-        for key, h in content:
+        for key, h in content.items():
             root_file[key] = h
 
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
-            write(tmp.name)
-            shutil.copy2(tmp.name, abs_shapes_path)
-    except:
-        import traceback; traceback.print_exc()
-        from IPython import embed; embed(header="exception raised during shape writing")
+    with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
+        write(tmp.name)
+        shutil.copy2(tmp.name, abs_shapes_path)
 
     #
     # write the text file
@@ -1845,35 +1852,48 @@ def _write_datacard(
     ]
     separators.add("rates")
 
+    # list of years used for naming nuisances in datacards
+    # (years for which data was loaded, but mapped to datacard years, e.g. dropping 2016APV)
+    nuisance_years = []
+    for year in sample_data.keys():
+        datacard_year = datacard_years[year]
+        if datacard_year not in nuisance_years:
+            nuisance_years.append(datacard_year)
+
     # tabular-style parameters
     blocks["tabular_parameters"] = []
     # rate nuisances from the statistical model
     added_rate_params = []
     for param_name, effects in stat_model.items():
-        effect_lines = defaultdict(list)
-        for year, process_name, _ in exp_processes:
-            full_param_name = ShapeNuisance.create_full_name(param_name, year=year)
-            for process_pattern, effect in effects.items():
-                if isinstance(effect, dict):
-                    # the effect is a dict year_pattern -> effect
-                    for year_pattern, _effect in effect.items():
-                        if fnmatch(year, year_pattern):
-                            effect = _effect
-                            break
-                    else:
-                        effect = "-"
-                # pattern negated?
-                negated = False
-                if process_pattern.startswith("!"):
-                    negated = True
-                    process_pattern = process_pattern[1:]
-                if fnmatch(process_name, process_pattern) != negated:
-                    # matched, so break the loop such that the effect is used
-                    break
-            else:
+        year_dependent = ShapeNuisance.create_full_name(param_name, year="X") != param_name
+        for nuisance_year in (nuisance_years if year_dependent else [None]):
+            full_param_name = ShapeNuisance.create_full_name(param_name, year=nuisance_year)
+            effect_line = []
+            for year, process_name, _ in exp_processes:
                 effect = "-"
-            effect_lines[full_param_name].append(effect)
-        for full_param_name, effect_line in effect_lines.items():
+                if not year_dependent or datacard_years[year] == nuisance_year:
+                    for process_pattern, _effect in effects.items():
+                        # process pattern matched?
+                        negated = False
+                        if process_pattern.startswith("!"):
+                            negated = True
+                            process_pattern = process_pattern[1:]
+                        if fnmatch(process_name, process_pattern) == negated:
+                            # not matched
+                            continue
+                        # the nuisance name might be year-independent, but its effect might be (and then it's a dict)
+                        if isinstance(_effect, dict):
+                            # the effect is a dict year_pattern -> effect
+                            for year_pattern, __effect in _effect.items():
+                                if fnmatch(year, year_pattern):
+                                    _effect = __effect
+                                    break
+                            else:
+                                _effect = "-"
+                        # one the first match, store the effect and stop
+                        effect = _effect
+                        break
+                effect_line.append(effect)
             if set(effect_line) != {"-"}:
                 blocks["tabular_parameters"].append((full_param_name, "lnN", *effect_line))
                 added_rate_params.append(full_param_name)
@@ -1882,15 +1902,24 @@ def _write_datacard(
     for nuisance in shape_nuisances.values():
         if nuisance.skip or nuisance.is_nominal or not nuisance.applies_to_channel(cat_data["channel"]):
             continue
-        effect_lines = defaultdict(list)
-        for year, process_name, _ in exp_processes:
-            # count occurances of the nuisance in the hists
-            full_nuisance_name = nuisance.get_combine_name(year=year)
-            count = sum(1 for (nuisance_name, _) in hists[(year, process_name)] if full_nuisance_name == nuisance_name)
-            if count not in [0, 2]:
-                raise Exception(f"nuisance {full_nuisance_name} has {count} occurances in {year} {process_name}")
-            effect_lines[full_nuisance_name].append("1" if count else "-")
-        for full_nuisance_name, effect_line in effect_lines.items():
+        year_dependent = nuisance.get_combine_name(year="X") != nuisance.combine_name
+        for nuisance_year in (nuisance_years if year_dependent else [None]):
+            full_nuisance_name = nuisance.get_combine_name(year=nuisance_year)
+            effect_line = []
+            for year, process_name, _ in exp_processes:
+                effect = "-"
+                if not year_dependent or datacard_years[year] == nuisance_year:
+                    # count occurances of the nuisance in the hists
+                    count = sum(
+                        1
+                        for (nuisance_name, _) in hists[(year, process_name)]
+                        if full_nuisance_name == nuisance_name
+                    )
+                    if count == 2:
+                        effect = "1"
+                    elif count != 0:
+                        raise Exception(f"nuisance {full_nuisance_name} has {count} occurances in {year} {process_name}")
+                effect_line.append(effect)
             if set(effect_line) != {"-"}:
                 blocks["tabular_parameters"].append((full_nuisance_name, "shape", *effect_line))
                 added_shape_params.append(full_nuisance_name)
@@ -1960,7 +1989,6 @@ def align_lines(
 
     lengths = {len(line) for line in lines}
     if len(lengths) > 1:
-        from IPython import embed; embed(header="line alignment failed")
         raise Exception(
             f"line alignment cannot be performed with lines of varying lengths: {lengths}",
         )
