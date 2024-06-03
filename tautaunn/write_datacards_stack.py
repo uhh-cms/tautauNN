@@ -1684,19 +1684,10 @@ def _write_datacard(
                         n_dy >= 1 and
                         n_tt + n_dy >= 3 and
                         # yields must be positive to avoid negative sums of weights per process
-                        y_tt >= 0 and
-                        y_dy >= 0
+                        y_tt > 0 and
+                        y_dy > 0
                     )
-                    if not constraints_met:
-                        # constraints not met, advance index to include the next tt or dy event and try again
-                        next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
-                        if len(next_bkg_indices) == 0:
-                            # no more background events left, move to the last position and let the stopping condition 3
-                            # below handle the rest
-                            next_idx = len(rec)
-                        else:
-                            next_idx += next_bkg_indices[0] + 1
-                    else:
+                    if constraints_met:
                         # TODO: maybe also check if the background conditions are just barely met and advance next_idx
                         # to the middle between the current value and the next one that would change anything about the
                         # background predictions; this might be more stable as the current implementation can highly
@@ -1705,6 +1696,14 @@ def _write_datacard(
 
                         # bin found, stop
                         break
+                    # constraints not met, advance index to include the next tt or dy event and try again
+                    next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
+                    if len(next_bkg_indices) == 0:
+                        # no more background events left, move to the last position and let the stopping condition 3
+                        # below handle the rest
+                        next_idx = len(rec)
+                    else:
+                        next_idx += next_bkg_indices[0] + 1
                 else:
                     # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
                     # constraints; however, this should practically never happen
