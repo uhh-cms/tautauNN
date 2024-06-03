@@ -1357,7 +1357,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal", "flats"]
+    assert binning_algo in {"equal", "flats", "flatsguarded"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -1484,8 +1484,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    else:  # flat_s
-        # TODO: background constraints, include shape nuisances
+    else:  # flats or flatsguarded
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1498,68 +1497,242 @@ def _write_datacard(
         for year, names in signal_process_names.items():
             if len(names) != 1:
                 raise Exception(
-                    f"either none or too many signal processes found for year {year} to obtain flat_s binning: {names}",
+                    f"either none or too many signal processes found for year {year} to obtain flats binning: {names}",
                 )
         signal_process_name = {year: names[0] for year, names in signal_process_names.items()}
-        signal_values = ak.concatenate(
-            sum(
-                ([
-                    data[sample_name][variable_name]
-                    for sample_name in sample_map[year][signal_process_name[year]]
-                ] for year, data in sample_data.items()),
-                [],
-            ),
-            axis=0,
-        )
-        signal_weights = ak.concatenate(
-            sum(
-                ([
-                    data[sample_name].full_weight_nominal * luminosities[year] * br_hh_bbtt
-                    for sample_name in sample_map[year][signal_process_name[year]]
-                ] for year, data in sample_data.items()),
-                [],
-            ),
-            axis=0,
-        )
-        # apply axis limits and complain
-        outlier_mask = (signal_values < x_min) | (signal_values > x_max)
-        if ak.any(outlier_mask):
-            print(f"  found {ak.sum(outlier_mask)} outliers in ({category},{spin},{mass})")
-        signal_values = signal_values[~outlier_mask]
-        signal_weights = signal_weights[~outlier_mask]
-        # the number of bins cannot be larger than the amount of unique signal values
-        _n_bins_max = len(set(signal_values))
-        if n_bins > _n_bins_max:
-            print(
-                f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
-                f"due to limited signal statistics of process {signal_process_name}",
+
+        # helper to get values of weights of a process
+        def get_values_and_weights(process_name: str | dict[str, str], weight_scale: float | int = 1.0):
+            if isinstance(process_name, str):
+                process_name = {year: process_name for year in sample_data}
+
+            def extract(getter):
+                return ak.concatenate(
+                    sum(
+                        (
+                            [getter(year, data, sample_name) for sample_name in sample_map[year][process_name[year]]]
+                            for year, data in sample_data.items()
+                        ),
+                        [],
+                    ),
+                    axis=0,
+                )
+
+            values = extract(lambda year, data, sample_name: data[sample_name][variable_name])
+            weights = extract(lambda year, data, sample_name: data[sample_name].full_weight_nominal * luminosities[year] * weight_scale)  # noqa
+
+            # complain when values are out of bounds or non-finite
+            outlier_mask = (values < x_min) | (values > x_max) | ~np.isfinite(values)
+            if ak.any(outlier_mask):
+                print(
+                    f"  found {ak.sum(outlier_mask)} outliers in ({category},{spin},{mass}) for process {process_name}",
+                )
+                values = values[~outlier_mask]
+                weights = weights[~outlier_mask]
+
+            return np.asarray(values), np.asarray(weights)
+
+        # helper to sort values and weights by values
+        def sort_values_and_weights(values, weights, inc=True):
+            sort_indices = np.argsort(values)
+            values, weights = values[sort_indices], weights[sort_indices]
+            return (values if inc else np.flip(values, axis=0)), (weights if inc else np.flip(weights, axis=0))
+
+        hh_values, hh_weights = get_values_and_weights(signal_process_name, weight_scale=br_hh_bbtt)
+
+        # distinguish non-guarded and guarded flats binnings from here on
+        if binning_algo == "flats":
+            # the number of bins cannot be larger than the amount of unique signal values
+            _n_bins_max = len(set(hh_values))
+            if n_bins > _n_bins_max:
+                print(
+                    f"  reducing n_bins from {n_bins} to {_n_bins_max} in ({category},{spin},{mass}) "
+                    f"due to limited signal statistics of process {signal_process_name}",
+                )
+                n_bins = _n_bins_max
+            if n_bins < 1:
+                print(f"  do not write datacard in ({category},{spin},{mass})")
+                return (None, None, None)
+            # sort by increasing value
+            hh_values, hh_weights = sort_values_and_weights(hh_values, hh_weights)
+            # compute quantiles
+            weighted_quantiles = (
+                (np.cumsum(hh_weights) - 0.5 * hh_weights) /
+                np.sum(hh_weights)
             )
-            n_bins = _n_bins_max
-        if n_bins < 1:
-            print(f"  do not write datacard in ({category},{spin},{mass})")
-            return (None, None, None)
-        # sort by increasing value
-        sort_indices = ak.argsort(signal_values)
-        signal_values = signal_values[sort_indices]
-        signal_weights = signal_weights[sort_indices]
-        # compute quantiles
-        weighted_quantiles = (
-            (np.cumsum(signal_weights) - 0.5 * signal_weights) /
-            np.sum(signal_weights)
-        )
-        # obtain edges
-        thresholds = np.linspace(x_min, x_max, n_bins + 1)[1:-1]
-        inner_edges = np.interp(thresholds, weighted_quantiles, signal_values)
-        bin_edges = [x_min] + inner_edges.tolist() + [x_max]
-        # floating point protection, round to 5 digits and sort
-        bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
-        _n_bins_actual = len(bin_edges) - 1
-        if _n_bins_actual < n_bins:
-            print(
-                f"  reducing n_bins from {n_bins} to {_n_bins_actual} in ({category},{spin},{mass}) "
-                f"due to edge value rounding in process {signal_process_name}",
+            # obtain edges
+            thresholds = np.linspace(x_min, x_max, n_bins + 1)[1:-1]
+            inner_edges = np.interp(thresholds, weighted_quantiles, hh_values)
+            bin_edges = [x_min] + inner_edges.tolist() + [x_max]
+            # floating point protection, round to 5 digits and sort
+            bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
+            _n_bins_actual = len(bin_edges) - 1
+            if _n_bins_actual < n_bins:
+                print(
+                    f"  reducing n_bins from {n_bins} to {_n_bins_actual} in ({category},{spin},{mass}) "
+                    f"due to edge value rounding in process {signal_process_name}",
+                )
+                n_bins = _n_bins_actual
+
+        else:  # flatsguarded
+            #
+            # step 1: data preparation
+            #
+
+            # get tt and dy data
+            tt_values, tt_weights = get_values_and_weights("TT")
+            dy_values, dy_weights = get_values_and_weights("DY")
+            # create a record array with eight entries:
+            # - value
+            # - process (0: hh, 1: tt, 2: dy)
+            # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
+            # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
+            all_values_list = [hh_values, tt_values, dy_values]
+            rec = np.core.records.fromarrays(
+                [
+                    # value
+                    (all_values := np.concatenate(all_values_list, axis=0)),
+                    # process
+                    np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
+                    # counts and weights per process
+                    (izeros := np.zeros(len(all_values), dtype=np.int32)),
+                    (fzeros := np.zeros(len(all_values), dtype=np.float32)),
+                    izeros,
+                    fzeros,
+                    izeros,
+                    fzeros,
+                ],
+                names="value,process,hh_count_cs,hh_weight_cs,tt_count_cs,tt_weight_cs,dy_count_cs,dy_weight_cs",
             )
-            n_bins = _n_bins_actual
+            # insert counts and weights into columns for correct processes
+            # (faster than creating arrays above which then get copied anyway when the recarray is created)
+            HH, TT, DY = range(3)
+            rec.hh_count_cs[rec.process == HH] = 1
+            rec.tt_count_cs[rec.process == TT] = 1
+            rec.dy_count_cs[rec.process == DY] = 1
+            rec.hh_weight_cs[rec.process == HH] = hh_weights
+            rec.tt_weight_cs[rec.process == TT] = tt_weights
+            rec.dy_weight_cs[rec.process == DY] = dy_weights
+            # sort by decreasing value to start binning from "the right" later on
+            rec.sort(order="value")
+            rec = np.flip(rec, axis=0)
+            # replace counts and weights with their cumulative sums
+            rec.hh_count_cs[:] = np.cumsum(rec.hh_count_cs)
+            rec.tt_count_cs[:] = np.cumsum(rec.tt_count_cs)
+            rec.dy_count_cs[:] = np.cumsum(rec.dy_count_cs)
+            rec.hh_weight_cs[:] = np.cumsum(rec.hh_weight_cs)
+            rec.tt_weight_cs[:] = np.cumsum(rec.tt_weight_cs)
+            rec.dy_weight_cs[:] = np.cumsum(rec.dy_weight_cs)
+            # eager cleanup
+            del all_values, izeros, fzeros
+            del hh_values, hh_weights
+            del tt_values, tt_weights
+            del dy_values, dy_weights
+            # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
+            # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
+            # but rather through simple subtraction of values at the respective indices instead
+
+            #
+            # step 2: binning
+            #
+
+            # determine the approximate hh yield per bin
+            hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
+            # keep track of bin edges and the hh yield accumulated so far
+            bin_edges = [x_max]
+            hh_yield_binned = 0.0
+            min_hh_yield = 1.0e-5
+            # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
+            offset = 0
+            # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
+            get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
+            # bookkeep reasons for stopping binning
+            stop_reason = ""
+            # start binning
+            while len(bin_edges) < n_bins:
+                # stopping condition 1: reached end of events
+                if offset >= len(rec):
+                    stop_reason = "no more events left"
+                    break
+                # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
+                remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
+                if remaining_hh_yield < min_hh_yield:
+                    stop_reason = "remaining signal yield insufficient"
+                    break
+                # find the index of the event that would result in a hh yield increase of more than the expected
+                # per-bin yield; this index would mark the start of the next bin given all constraints are met
+                if remaining_hh_yield >= hh_yield_per_bin:
+                    threshold = hh_yield_binned + hh_yield_per_bin
+                    next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
+                else:
+                    # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
+                    next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
+                # advance the index until backgrounds constraints are met
+                while next_idx < len(rec):
+                    # get the number of tt events and their yield
+                    n_tt = get_integral(rec.tt_count_cs, next_idx)
+                    y_tt = get_integral(rec.tt_weight_cs, next_idx)
+                    # get the number of dy events and their yield
+                    n_dy = get_integral(rec.dy_count_cs, next_idx)
+                    y_dy = get_integral(rec.dy_weight_cs, next_idx)
+                    # evaluate constraints
+                    # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
+                    #       on dy, and vice-versa
+                    constraints_met = (
+                        # tt and dy events
+                        n_tt >= 1 and
+                        n_dy >= 1 and
+                        n_tt + n_dy >= 3 and
+                        # yields must be positive to avoid negative sums of weights per process
+                        y_tt >= 0 and
+                        y_dy >= 0
+                    )
+                    if not constraints_met:
+                        # constraints not met, advance index to include the next tt or dy event and try again
+                        next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
+                        if len(next_bkg_indices) == 0:
+                            # no more background events left, move to the last position and let the stopping condition 3
+                            # below handle the rest
+                            next_idx = len(rec)
+                        else:
+                            next_idx += next_bkg_indices[0] + 1
+                    else:
+                        # TODO: maybe also check if the background conditions are just barely met and advance next_idx
+                        # to the middle between the current value and the next one that would change anything about the
+                        # background predictions; this might be more stable as the current implementation can highly
+                        # depend on the exact value of a single event (the one that tips the constraints over the edge
+                        # to fulfillment)
+
+                        # bin found, stop
+                        break
+                else:
+                    # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
+                    # constraints; however, this should practically never happen
+                    stop_reason = "no more events left while trying to fulfill constraints"
+                    break
+                # next_idx found, update values
+                edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
+                bin_edges.append(max(min(edge_value, x_max), x_min))
+                hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
+                offset = next_idx
+
+            # make sure the minimum is included
+            if bin_edges[-1] != x_min:
+                if len(bin_edges) > n_bins:
+                    raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
+                bin_edges.append(x_min)
+
+            # reverse edges and optionally re-set n_bins
+            bin_edges = sorted(set(bin_edges))
+            n_bins_actual = len(bin_edges) - 1
+            if n_bins_actual > n_bins:
+                raise Exception("number of actual bins ended up larger than requested (implementation bug)")
+            if n_bins_actual < n_bins:
+                print(
+                    f"  reducing n_bins from {n_bins} to {n_bins_actual} in ({category},{spin},{mass})\n"
+                    f"    -> reason: {stop_reason or 'NO REASON!?'}",
+                )
+                n_bins = n_bins_actual
 
     #
     # write shapes
