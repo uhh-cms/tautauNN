@@ -454,33 +454,33 @@ stat_model_2018 = {
 stat_model_shapes = {
     **{f"jes_{i}": {"channels": ["mutau", "etau", "tautau"],
                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                    "processes": "*",
+                    "processes": "!QCD",
                     "klub_name": "bTagweightReshape_jet{direction}%i"%i,
                     "dnn_shape_pattern": "{variable_name}_jes_%i_{direction}"%i}
         for i in range(1,12)},
     **{f"btag_{s}": {"channels": ["mutau", "etau", "tautau"],
                      "categories": ["resolved1b", "resolved2b"],
-                     "processes": "*",
+                     "processes": "!QCD",
                      "klub_name": "bTagweightReshape_%s_{direction}"%s}
         for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
     **{f"id_tauid_{s}": {"channels": ["mutau", "etau", "tautau"],
                          "categories": ["boosted", "resolved1b", "resolved2b"],
-                         "processes": "*",
+                         "processes": "!QCD",
                          "klub_name": "idFakeSF_tauid_2d_%s_{direction}"%s}
        for s in ["stat0", "stat1", "statgt140", "systuncorrdmeras"]},
     **{f"id_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
                           "categories": ["boosted", "resolved1b", "resolved2b"],
-                          "processes": "*",
+                          "processes": "!QCD",
                           "klub_name": "idFakeSF_etauFR_%s_{direction}"%be}
        for be in ["barrel", "endcap"]},
     **{f"id_mutauFR_eta{rng}": {"channels": ["mutau", "etau", "tautau"],
                                "categories": ["boosted", "resolved1b", "resolved2b"],
-                               "processes": "*",
+                               "processes": "!QCD",
                                "klub_name": "idFakeSF_mutauFR_eta%s_{direction}"%rng}
        for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]},
     **{f"trigSF_{dm}": {"channels": ["mutau", "etau", "tautau"],
                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                       "processes": "*",
+                       "processes": "!QCD",
                        "klub_name": "trigSF_%s_{direction}"%dm}
          for dm in ["DM0", "DM1", "DM10", "DM11"]},
     "trigSF_ele": {"channels": ["etau"],
@@ -501,21 +501,21 @@ stat_model_shapes = {
                     "klub_name": "trigSF_met_{direction}"},
     **{f"ees_{dm}": {"channels": ["mutau", "etau", "tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
-                     "processes": "*",
+                     "processes": "!QCD",
                      "dnn_shape_pattern": "{variable_name}_ees_%s_{direction}"%dm}
        for dm in ["DM0", "DM1"]},
     **{f"tes_{dm}": {"channels": ["mutau", "etau", "tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
-                     "processes": "*",
+                     "processes": "!QCD",
                      "dnn_shape_pattern": "{variable_name}_tes_%s_{direction}"%dm}
          for dm in ["DM0", "DM1", "DM10", "DM11"]},
     "mes": {"channels": ["mutau", "etau", "tautau"],
             "categories": ["boosted", "resolved1b", "resolved2b"],
-            "processes": "*",
+            "processes": "!QCD",
             "dnn_shape_pattern": "{variable_name}_mes_{direction}"},
     "pu_jet_id": {"channels": ["mutau", "etau", "tautau"],
                    "categories": ["boosted", "resolved1b", "resolved2b"],
-                   "processes": "*",
+                   "processes": "!QCD",
                    "klub_name": "PUjetID_SF_{direction}"},
 }
     
