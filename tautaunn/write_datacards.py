@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import gc
+import re
 import itertools
 import hashlib
 import pickle
@@ -41,6 +42,8 @@ from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
 from tautaunn.binning_algorithms import uncertainty_driven, tt_dy_driven, flat_signal_ud
 
+import tautaunn.config as cfg
+
 
 #
 # configurations
@@ -61,9 +64,129 @@ klub_weight_columns = [
     "PUjetID_SF",
     "bTagweightReshape",
 ]
+
+klub_selection_columns = [
+    "pairType",
+    "isOS",
+    "isLeptrigger",
+    "isMETtrigger",
+    "isSingleTautrigger",
+    "dau1_deepTauVsJet",
+    "dau2_deepTauVsJet",
+    "dau1_iso",
+    "dau1_eleMVAiso",
+    "nleps",
+    "nbjetscand",
+    "isBoosted",
+]
+
+klub_weight_variation_map = {
+    "trigSF" : [*[
+            f"trigSF_{s}_{ud}"
+            for s in ["ele", "met", "mu", "stau",
+                    *[
+                        f"DM{i}"
+                        for i in [0, 1, 10, 11]
+                    ]]
+            for ud in ["up", "down"]
+        ]
+    ],
+    "IdFakeSF_deep_2d" :[
+        *[
+            f"idFakeSF_etauFR_{be}_{ud}"
+            for be in ["barrel", "endcap"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_mutauFR_eta{rng}_{ud}"
+            for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_stat{i}_{ud}"
+            for i in ['0', '1', 'gt140']
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_systcorrdm{s}_{ud}"
+            for s in ["eras", "uncorreras"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"idFakeSF_tauid_2d_syst{s}_{ud}"
+            for s in ["correrasgt140", "uncorrdmeras"]
+            for ud in ["up", "down"]
+        ],
+    ],
+    "PUjetID_SF" : [*[
+            f"PUjetID_SF_{s}{ud}"
+            for s in ["",
+                    *[f"{em}{s}"
+                        for em in ["eff_", "mistag_"] 
+                        for s in ["", 
+                                *[f"eta_{ls}2p5_"
+                                    for ls in ["l", "s"]]
+                                ]
+                        ]
+                    ]
+            for ud in ["up", "down"]
+        ],
+    ],
+    "bTagweightReshape": [*[
+            f"bTagweightReshape_jet{ud}{i}"
+            for ud in ["up", "down"]
+            for i in range(1, 12)
+        ],
+        *[
+            f"bTagweightReshape_{lh}f{s}_{ud}"
+            for lh in ["l", "h"]
+            for s in ["", "stats1", "stats2"]
+            for ud in ["up", "down"]
+        ],
+        *[
+            f"bTagweightReshape_cferr{i}_{ud}"
+            for i in range(1,3)
+            for ud in ["up", "down"]
+        ]
+    ]
+}
+
+klub_weight_variation_columns = list(itertools.chain(*klub_weight_variation_map.values()))
+
 klub_extra_columns = [
     # "DNNoutSM_kl_1",
 ]
+
+dnn_shape_columns = [
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_mes_{ud}"
+        for mass in masses
+        for spin in spins
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_ees_{dm}_{ud}"
+        for mass in masses
+        for spin in spins
+        for dm in ["DM0", "DM1"]
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_tes_{dm}_{ud}"
+        for mass in masses
+        for spin in spins
+        for dm in ["DM0", "DM1", "DM10", "DM11"]
+        for ud in ["up", "down"]
+    ],
+    *[
+        f"pdnn_m{mass}_s{spin}_hh_jes_{i}_{ud}"
+        for mass in masses
+        for spin in spins
+        for i in range(1,12)
+        for ud in ["up", "down"]
+    ],
+]
+
 processes = OrderedDict({
     "TT": {
         "id": 1,
@@ -264,6 +387,139 @@ stat_model_2018 = {
     "lumi_13TeV_correlated": {"*": "1.020"},
     "lumi_13TeV_1718": {"*": "1.002"},
 }
+
+#stat_model_shapes = {
+    #**{f"CMS_JES_{unc}": {"channels": ["mutau", "etau", "tautau"],
+                          #"categories": ["boosted", "resolved1b", "resolved2b"],
+                          #"processes": "*[!QCD]",
+                          #"klub_name": "bTagweightReshape_jet{direction}%i"%i, #klub naming scheme is different for jes things......
+                          #"dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
+       #for i, unc in zip([1,3,5,7,8,10],["Abs", "BBEC1", "EC2", "FlavQCD", "HF", "RelBal"])},
+    #**{f"CMS_btag_{s}_2016_2017_2018": {"channels": ["mutau", "etau", "tautau"],
+                                        #"categories": ["resolved1b", "resolved2b"],
+                                        #"processes": "*[!QCD]",
+                                        #"klub_name": "bTagweightReshape_%s{direction}"%s}
+     #for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+    #**{f"CMS_eff_t_id_Stat{s}": {"channels": ["mutau", "etau", "tautau"],
+                             #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_stat%s{direction}",}
+       #for s in ['0', '1', 'gt140']},
+    #**{f"CMS_eff_t_id_DM{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_systcorrdm%s{direction}"%s,}
+       #for s in ['eras', 'uncorreras']},
+    #**{f"CMS_eff_t_id_syst{s}": {"channels": ["mutau", "etau", "tautau"],
+                                 #"categories": ["boosted", "resolved1b", "resolved2b"],
+                             #"processes": "*[!QCD]",
+                             #"klub_name": "idFakeSF_tauid_2d_syst%s{direction}"%s,}
+       #for s in ['correrasgt140', 'uncorrdmeras']},
+#}
+
+#stat_model_shapes_year_dependent = {
+    #f"{year}": {
+        #**{f"CMS_JES_{unc}_{year}": {"channels": ["mutau", "etau", "tautau"],
+                                     #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                     #"processes": "*[!QCD]",
+                                     #"klub_name": "bTagweightReshape_jet{direction}%i"%i,
+                                     #"dnn_shape_pattern": "pdnn_*_jes_%i_{direction}"%i}
+           #for i, unc in zip([2,4,6,9,11], ["Abs", "BBEC1", "EC2", "HF", "RelSample"])},
+        #**{f"CMS_bbtt_{year}_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "idFakeSF_etauFR_%s_{direction}" %be}
+           #for be in ["barrel", "endcap"]},
+        #f"CMS_bbtt_{year}_trigSFEle": {"channels": ["etau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                       #"processes": "*",
+                                       #"klub_name": "trigSF_ele_{direction}"},
+        #f"CMS_bbtt_{year}_trigSFMu": {"channels": ["mutau"],
+                                        #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "trigSF_mu_{direction}"},
+        #f"CMS_bbtt_{year}_trigSFSingleTau": {"channels": ["tautau"],
+                                       #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                        #"processes": "*",
+                                        #"klub_name": "trigSF_stau_{direction}"},
+        #**{f"CMS_bbtt_{year}_trigSFTau{dm}": {"channels": ["tautau"],
+                                              #"categories": ["boosted", "resolved1b", "resolved2b"],
+                                              #"processes": "*",
+                                              #"klub_name": "trigSF_%s_{direction}"%dm}
+           #for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    #}
+    #for year in ["UL16", "UL16APV", "UL17", "UL18"]
+#}
+
+stat_model_shapes = {
+    **{f"jes_{i}": {"channels": ["mutau", "etau", "tautau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "!QCD",
+                    "klub_name": "bTagweightReshape_jet{direction}%i"%i,
+                    "dnn_shape_pattern": "{variable_name}_jes_%i_{direction}"%i}
+        for i in range(1,12)},
+    **{f"btag_{s}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["resolved1b", "resolved2b"],
+                     "processes": "!QCD",
+                     "klub_name": "bTagweightReshape_%s_{direction}"%s}
+        for s in ["lf", "hf", "cferr1", "cferr2", "hfstats1", "hfstats2", "lfstats1", "lfstats2"]},
+    **{f"id_tauid_{s}": {"channels": ["mutau", "etau", "tautau"],
+                         "categories": ["boosted", "resolved1b", "resolved2b"],
+                         "processes": "!QCD",
+                         "klub_name": "idFakeSF_tauid_2d_%s_{direction}"%s}
+       for s in ["stat0", "stat1", "statgt140", "systuncorrdmeras"]},
+    **{f"id_etauFR_{be}": {"channels": ["mutau", "etau", "tautau"],
+                          "categories": ["boosted", "resolved1b", "resolved2b"],
+                          "processes": "!QCD",
+                          "klub_name": "idFakeSF_etauFR_%s_{direction}"%be}
+       for be in ["barrel", "endcap"]},
+    **{f"id_mutauFR_eta{rng}": {"channels": ["mutau", "etau", "tautau"],
+                               "categories": ["boosted", "resolved1b", "resolved2b"],
+                               "processes": "!QCD",
+                               "klub_name": "idFakeSF_mutauFR_eta%s_{direction}"%rng}
+       for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]},
+    **{f"trigSF_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                       "categories": ["boosted", "resolved1b", "resolved2b"],
+                       "processes": "!QCD",
+                       "klub_name": "trigSF_%s_{direction}"%dm}
+         for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    "trigSF_ele": {"channels": ["etau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "!QCD",
+                    "klub_name": "trigSF_ele_{direction}"},
+    "trigSF_mu": {"channels": ["mutau"],
+                   "categories": ["boosted", "resolved1b", "resolved2b"],
+                   "processes": "!QCD",
+                   "klub_name": "trigSF_mu_{direction}"},
+    "trigSF_stau": {"channels": ["tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "!QCD",
+                     "klub_name": "trigSF_stau_{direction}"},
+    "trigSF_met": {"channels": ["mutau", "etau", "tautau"],
+                    "categories": ["boosted", "resolved1b", "resolved2b"],
+                    "processes": "!QCD",
+                    "klub_name": "trigSF_met_{direction}"},
+    **{f"ees_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "!QCD",
+                     "dnn_shape_pattern": "{variable_name}_ees_%s_{direction}"%dm}
+       for dm in ["DM0", "DM1"]},
+    **{f"tes_{dm}": {"channels": ["mutau", "etau", "tautau"],
+                     "categories": ["boosted", "resolved1b", "resolved2b"],
+                     "processes": "!QCD",
+                     "dnn_shape_pattern": "{variable_name}_tes_%s_{direction}"%dm}
+         for dm in ["DM0", "DM1", "DM10", "DM11"]},
+    "mes": {"channels": ["mutau", "etau", "tautau"],
+            "categories": ["boosted", "resolved1b", "resolved2b"],
+            "processes": "!QCD",
+            "dnn_shape_pattern": "{variable_name}_mes_{direction}"},
+    "pu_jet_id": {"channels": ["mutau", "etau", "tautau"],
+                   "categories": ["boosted", "resolved1b", "resolved2b"],
+                   "processes": "!QCD",
+                   "klub_name": "PUjetID_SF_{direction}"},
+}
+    
+       
 categories = {}
 
 
@@ -341,12 +597,12 @@ def sel_iso_first_lep(array: ak.Array) -> ak.Array:
 
 
 @selector(
-    needs=["isLeptrigger", "isMETtrigger", "isSingleTauTrigger"],
-    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTauTrigger == 1))",
+    needs=["isLeptrigger", "isMETtrigger", "isSingleTautrigger"],
+    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
 )
 def sel_trigger(array: ak.Array) -> ak.Array:
     return (
-        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTauTrigger == 1)
+        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1)
     )
 
 
@@ -421,49 +677,6 @@ def category_factory(
             (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
         )
 
-    # @selector(needs=["isVBF", "VBFjj_mass", "VBFjj_deltaEta"])
-    # def sel_vbf(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.isVBF == 1) &
-    #         (array.VBFjj_mass > 500) &
-    #         (array.VBFjj_deltaEta > 3)
-    #     )
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh1_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 335)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh2_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 335) & (array.HHKin_mass < 475)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh3_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 475) & (array.HHKin_mass < 725)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh4_resolved(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 725) & (array.HHKin_mass < 1100)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh5_resolved(array: ak.Array) -> ak.Array:
-    #     return array.HHKin_mass >= 1100
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh1_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 250) & (array.HHKin_mass < 625)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh2_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 625) & (array.HHKin_mass < 775)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh3_boosted(array: ak.Array) -> ak.Array:
-    #     return (array.HHKin_mass >= 755) & (array.HHKin_mass < 1100)
-
-    # @selector(needs=["HHKin_mass"])
-    # def sel_mhh4_boosted(array: ak.Array) -> ak.Array:
-    #     return array.HHKin_mass >= 1100
 
     def sel_combinations(main_sel, sub_sels):
         def create(sub_sel):
@@ -478,89 +691,6 @@ def category_factory(
 
         return [create(sub_sel) for sub_sel in sub_sels]
 
-    # mhh_sels_resolved = [
-    #     sel_mhh1_resolved,
-    #     sel_mhh2_resolved,
-    #     sel_mhh3_resolved,
-    #     sel_mhh4_resolved,
-    #     sel_mhh5_resolved,
-    # ]
-
-    # mhh_sels_boosted = [
-    #     sel_mhh1_boosted,
-    #     sel_mhh2_boosted,
-    #     sel_mhh3_boosted,
-    #     sel_mhh4_boosted,
-    # ]
-
-    # mdnn_columns = [
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__dy",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_fh",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tt_lep",
-    #     "mdnn__v5__kl1_c2v1_c31_vbf__tth",
-    # ]
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_ggf(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_vbf(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_tth(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > array.mdnn__v5__kl1_c2v1_c31_vbf__dy) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__tth > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_dy(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (array.mdnn__v5__kl1_c2v1_c31_vbf__dy > tt)
-    #     )
-
-    # @selector(needs=mdnn_columns)
-    # def sel_mdnn_tt(array: ak.Array) -> ak.Array:
-    #     tt = array.mdnn__v5__kl1_c2v1_c31_vbf__tt_lep + array.mdnn__v5__kl1_c2v1_c31_vbf__tt_fh
-    #     return (
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_ggf) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__hh_vbf) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__tth) &
-    #         (tt > array.mdnn__v5__kl1_c2v1_c31_vbf__dy)
-    #     )
-
-    # mdnn_sels = [
-    #     sel_mdnn_ggf,
-    #     sel_mdnn_vbf,
-    #     sel_mdnn_tth,
-    #     sel_mdnn_dy,
-    #     sel_mdnn_tt,
-    # ]
-
-    # mdnn_sel_names = ["ggf", "vbf", "tth", "dy", "tt"]
 
     @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
     def sel_btag_m(array: ak.Array) -> ak.Array:
@@ -578,34 +708,6 @@ def category_factory(
             (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
-
-    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    # def sel_btag_ll(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
-    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
-    #     )
-
-    # @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    # def sel_btag_m_first(array: ak.Array) -> ak.Array:
-    #     return (
-    #         (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
-    #         (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-    #     )
-
-    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    # def sel_mass_window_resolved(array: ak.Array) -> ak.Array:
-    #     return (
-    #         ((array.tauH_SVFIT_mass - 129.0) / 53.0)**2.0 +
-    #         ((array.bH_mass_raw - 169.0) / 145.0)**2.0
-    #     ) < 1.0
-
-    # @selector(needs=["tauH_SVFIT_mass", "bH_mass_raw"])
-    # def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
-    #     return (
-    #         ((array.tauH_SVFIT_mass - 128.0) / 60.0)**2.0 +
-    #         ((array.bH_mass_raw - 159.0) / 94.0)**2.0
-    #     ) < 1.0
 
     @selector(
         needs=[sel_baseline],
@@ -627,14 +729,6 @@ def category_factory(
             sel_btag_m(array)
         )
 
-    # @selector(
-    #     needs=[cat_resolved_1b, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_resolved_1b_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_resolved_1b(array) & sel_mass_window_resolved(array)
-
     @selector(
         needs=[sel_baseline, sel_boosted, sel_btag_mm],
         year=year,
@@ -647,14 +741,6 @@ def category_factory(
             sel_btag_mm(array)
         )
 
-    # @selector(
-    #     needs=[cat_resolved_2b, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_resolved_2b_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_resolved_2b(array) & sel_mass_window_resolved(array)
-
     @selector(
         needs=[sel_baseline, sel_boosted],
         year=year,
@@ -666,69 +752,12 @@ def category_factory(
             sel_boosted(array)
         )
 
-    # @selector(
-    #     needs=[cat_boosted, sel_mass_window_resolved],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_boosted_mwc(array: ak.Array) -> ak.Array:
-    #     return cat_boosted(array) & sel_mass_window_resolved(array)
-
-    # @selector(
-    #     needs=[sel_baseline, sel_channel, sel_btag_ll, sel_boosted, sel_vbf, sel_btag_m_first],
-    #     year=year,
-    #     channel=channel,
-    # )
-    # def cat_vbf(array: ak.Array) -> ak.Array:
-    #     return (
-    #         sel_baseline(array) &
-    #         sel_channel(array) &
-    #         sel_vbf(array) &
-    #         sel_btag_m_first(array)
-    #     )
-
     # create a dict of all selectors, but without subdivision into regions
     selectors = {
         "baseline": cat_baseline,
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
-        # "vbf": cat_vbf,
-        # # mass window cuts
-        # "resolved1bmwc": cat_resolved_1b_mwc,
-        # "resolved2bmwc": cat_resolved_2b_mwc,
-        # "boostedmwc": cat_boosted_mwc,
-        # # mhh bins in resolved and boosted
-        # **{
-        #     f"resolved1bmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"resolved2bmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"boostedmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_boosted, mhh_sels_boosted))
-        # },
-        # # mdnn in vbf
-        # **{
-        #     f"vbfmdnn{mdnn_sel_names[i]}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_vbf, mdnn_sels))
-        # },
-        # # mass window cuts and mhh bins in resolved and boosted
-        # **{
-        #     f"resolved1bmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_1b_mwc, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"resolved2bmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_resolved_2b_mwc, mhh_sels_resolved))
-        # },
-        # **{
-        #     f"boostedmwcmhh{i + 1}": sel
-        #     for i, sel in enumerate(sel_combinations(cat_boosted_mwc, mhh_sels_boosted))
-        # },
     }
 
     # add all region combinations
@@ -746,39 +775,59 @@ def category_factory(
 
 for channel in channels:
     cats_2016APV = category_factory(year="2016APV", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2016APV.items():
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model[shape_name] = model_dict
         categories[f"2016APV_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2016),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2016 = category_factory(year="2016", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2016.items():
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model[shape_name] = model_dict
         categories[f"2016_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2016),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2017 = category_factory(year="2017", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2017.items():
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model[shape_name] = model_dict
         categories[f"2017_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2017),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
     cats_2018 = category_factory(year="2018", channel=channel)
+    shapes_model = {}
     for name, sel in cats_2018.items():
+        for shape_name, model_dict in stat_model_shapes.items():
+            if channel in model_dict["channels"] and name in model_dict["categories"]:
+                shapes_model[shape_name] = model_dict
         categories[f"2018_{channel}_{name}"] = {
             "selection": sel,
             "n_bins": 10,
             "scale": luminosities[sel.extra["year"]],
             "stat_model": merge_dicts(stat_model_common, stat_model_2018),
+            "shapes_model": shapes_model,
             **sel.extra,
         }
 
@@ -793,7 +842,7 @@ def load_klub_file(
     file_name: str,
 ) -> tuple[ak.Array, float]:
     # prepare expressions
-    expressions = klub_index_columns + klub_weight_columns + klub_extra_columns + sel_baseline.flat_columns
+    expressions = klub_index_columns + klub_weight_columns + klub_weight_variation_columns + klub_extra_columns + sel_baseline.flat_columns
 
     # add all columns potentially necessary for selections
     expressions += sum([
@@ -814,6 +863,17 @@ def load_klub_file(
         reduce(mul, (array[c] for c in klub_weight_columns)),
         "full_weight",
     )
+    # add all weight variations
+    for weight_name in klub_weight_variation_map:
+        for replacement in klub_weight_variation_map[weight_name]:
+            weight_list = [w for w in klub_weight_columns if w != weight_name]
+            weight_list.append(replacement)
+            array = ak.with_field(
+                array,
+                reduce(mul, (array[c] for c in weight_list)),
+                replacement,
+            )
+        
     mask = ~np.isfinite(array.full_weight)
     if np.any(mask):
         print(
@@ -833,7 +893,7 @@ def load_klub_file(
     return array, sum_gen_mc_weights
 
 
-def load_dnn_file(
+def load_nominal_dnn(
     eval_directory: str,
     sample_name: str,
     file_name: str,
@@ -845,8 +905,23 @@ def load_dnn_file(
 
     # load the array
     f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
-    array = f["evaluation"].arrays(filter_name=expressions)
+    array = f["hbtres"].arrays(filter_name=expressions)
+    return array
 
+
+def load_shapes_dnn(
+    eval_directory: str,
+    sample_name: str,
+    file_name: str,
+    dnn_output_columns: list[str],
+) -> ak.Array:
+    # prepare expressions
+    expressions = klub_index_columns + dnn_output_columns + dnn_shape_columns
+    expressions = list(set(expressions))
+
+    # load the array
+    f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name))
+    array = f["hbtres"].arrays(filter_name=expressions)
     return array
 
 
@@ -856,51 +931,19 @@ def load_file(
     sample_name: str,
     file_name: str,
     dnn_output_columns: list[str],
-) -> tuple[ak.Array, float]:
+) -> tuple[ak.Array, float, ak.Array]:
     # load the klub file
     klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, file_name)
 
     # load the dnn output file
     if eval_directory:
-        dnn_array = load_dnn_file(eval_directory, sample_name, file_name, dnn_output_columns)
 
-        # use klub array index to filter dnn array
-        dnn_mask = np.isin(dnn_array[klub_index_columns], klub_array[klub_index_columns])
-        if ak.sum(dnn_mask) != len(klub_array):
-            klub_path = os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name)
-            eval_path = os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), file_name)
-            raise Exception(
-                f"the number of matching dnn array columns ({ak.sum(dnn_mask)}) does not match the "
-                f"number of elements in the klub array ({len(klub_array)}) for file {file_name} "
-                f"(klub: {klub_path}, dnn: {eval_path})",
-            )
-        dnn_array = dnn_array[dnn_mask]
-
-        # exact (event, run, lumi) index check to make sure the order is identical as well
-        matches = (
-            (klub_array.EventNumber == dnn_array.EventNumber) &
-            (klub_array.RunNumber == dnn_array.RunNumber) &
-            (klub_array.lumi == dnn_array.lumi)
-        )
-        if not ak.all(matches):
-            raise Exception(
-                f"found event mismatch between klub and dnn files in {int(ak.sum(~matches))} cases "
-                f"in file {file_name}",
-            )
-
-    # drop index columns
-    array = klub_array
-    for field in klub_index_columns:
-        array = ak.without_field(array, field)
-
-    # add dnn columns
-    if eval_directory:
-        for field in dnn_array.fields:
-            if field in klub_index_columns:
-                continue
-            array = ak.with_field(array, dnn_array[field], field)
-
-    return array, sum_gen_mc_weights
+        dnn_array = load_shapes_dnn(eval_directory,
+                                           sample_name,
+                                           file_name.replace(".root", "_systs.root"),
+                                           dnn_output_columns)
+        
+    return klub_array, sum_gen_mc_weights, dnn_array
 
 
 def load_file_mp(args: tuple[Any]) -> tuple[ak.Array, float]:
@@ -955,8 +998,9 @@ def load_sample_data(
     cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, sample_name, dnn_output_columns or [])
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
+        print(cache_path)
         with open(cache_path, "rb") as f:
-            array = pickle.load(f)
+            array, dnn_array = pickle.load(f)
 
     else:
         # determine file names and build arguments for the parallel load implementation
@@ -975,32 +1019,41 @@ def load_sample_data(
             ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
 
         # combine values
-        array = ak.concatenate([arr for arr, _ in ret], axis=0)
-        sum_gen_mc_weights = sum(f for _, f in ret)
+        array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
+        sum_gen_mc_weights = sum([f for _, f, _ in ret])
+        dnn_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
         del ret
         gc.collect()
 
         # update the full weight
         array = ak.with_field(array, array.full_weight / sum_gen_mc_weights, "full_weight")
 
+        # update all other weights
+        for replacement in klub_weight_variation_columns:
+            array = ak.with_field(array, array[replacement] / sum_gen_mc_weights, replacement)
+
         # add to cache?
         if cache_path:
             print("writing to cache")
-            with tempfile.NamedTemporaryFile(suffix=".pkl") as tmp:
-                with open(tmp.name, "wb") as f:
-                    pickle.dump(array, f)
-                shutil.copy2(tmp.name, cache_path)
+            with open(cache_path, "wb") as f:
+                pickle.dump((array, dnn_array), f)
 
     # remove unnecessary columns
-    keep_columns = dnn_output_columns + klub_extra_columns + ["full_weight"] + (selection_columns or [])
+    keep_columns = dnn_output_columns + klub_index_columns + dnn_shape_columns + klub_weight_variation_columns + klub_extra_columns + ["full_weight"] + (selection_columns or [])
     for c in array.fields:
         if c not in keep_columns:
             array = ak.without_field(array, c)
             gc.collect()
+    # slice array to remove all non-cat events
+    dnn_mask = np.isin(dnn_array[klub_index_columns], array[klub_index_columns])
+    array = array[dnn_mask]
+    # add selection columns to dnn array
+    for c in selection_columns:
+        dnn_array = ak.with_field(dnn_array, array[c], c)
 
     print("done")
 
-    return array
+    return array, dnn_array
 
 
 def expand_categories(category: str | Sequence[str]) -> list[str]:
@@ -1018,6 +1071,33 @@ def expand_categories(category: str | Sequence[str]) -> list[str]:
             _categories.append(pattern)
     return _categories
 
+
+def estimate_qcd(qcd_hists):
+    # ABCD method
+    # take shape from region "C"
+    h_qcd = qcd_hists["os_noniso"]
+    # get the intgral and its uncertainty from region "B"
+    num_val = qcd_hists["ss_iso"].sum().value
+    num_var = qcd_hists["ss_iso"].sum().variance
+    # get the intgral and its uncertainty from region "D"
+    denom_val = qcd_hists["ss_noniso"].sum().value
+    denom_var = qcd_hists["ss_noniso"].sum().variance
+    # stop if any yield is negative (due to more MC than data)
+    if num_val <= 0 or denom_val <= 0:
+        h_qcd *= 0.0
+    else:
+        # create the normalization correction including uncorrelated uncertainty propagation
+        corr_val = num_val / denom_val
+        corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
+        # scale the shape by updating values and variances in-place
+        val = h_qcd.view().value
+        _var = h_qcd.view().variance
+        new_val = val * corr_val
+        _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
+        val[:] = new_val
+        # set negative values to epsilon values but keep potentially large uncertainties
+        val[val <= 0] = 1.0e-5
+    return h_qcd
 
 #
 # functions for writing datacards
@@ -1061,7 +1141,7 @@ def write_datacards(
 
     # get a list of all sample names in the skim directory
     all_sample_names = [
-        dir_name[5:]
+        dir_name.replace("SKIM_", "")
         for dir_name in os.listdir(skim_directory)
         if (
             os.path.isdir(os.path.join(skim_directory, dir_name)) and
@@ -1121,6 +1201,7 @@ def write_datacards(
         dnn_output_columns.append(variable_pattern.format(spin=spin, mass=mass))
 
     # prepare loading data
+    # reduce for debugging
     print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
     data_gen = (
         load_sample_data(
@@ -1134,13 +1215,6 @@ def write_datacards(
         )
         for sample_name in matched_sample_names
     )
-
-    # for debugging: just load data and free memory
-    # print("just load data and exit")
-    # for _ in data_gen:
-    #     gc.collect()
-    # print("done loading data, exit")
-    # return
 
     # actually load
     sample_data = dict(zip(matched_sample_names, data_gen))
@@ -1184,7 +1258,7 @@ def write_datacards(
 
 def _write_datacard(
     sample_map: dict[str, list[str]],
-    sample_data: dict[str, ak.Array],
+    sample_data: dict[str, tuple[ak.Array, ak.Array]],
     spin: int,
     mass: int,
     category: str,
@@ -1262,8 +1336,15 @@ def _write_datacard(
             categories[category]["channel"] in processes[process_name]["channels"]
         )
     }
+    dnn_data = {sample_name: data[1] for sample_name, data in sample_data.items()}
+    sample_data = {sample_name: data[0] for sample_name, data in sample_data.items()}
 
-    # reversed map to assign processes to samples
+    #for sample_name, data in sample_data.items():
+        ##slice down sample_data to match the length of dnn_data
+        #dnn_mask = np.isin(dnn_data[sample_name][klub_index_columns], data[klub_index_columns])
+        #sample_data[sample_name] = data[dnn_mask] 
+
+        # reversed map to assign processes to samples
     sample_processes = {}
     for process_name, sample_names in sample_map.items():
         sample_processes.update({sample_name: process_name for sample_name in sample_names})
@@ -1280,6 +1361,16 @@ def _write_datacard(
             for region_name, qcd_category in qcd_categories.items()
         }
 
+        qcd_data_shapes = {
+            region_name: {
+                sample_name: dnn_data[sample_name][categories[qcd_category]["selection"](dnn_data[sample_name])]
+                for sample_name, process_name in sample_processes.items()
+                # skip signal
+                if not processes[process_name].get("signal", False)
+            }
+            for region_name, qcd_category in qcd_categories.items()
+        }
+
     # apply the category selection to sample data
     sample_data = {
         sample_name: sample_data[sample_name][categories[category]["selection"](sample_data[sample_name])]
@@ -1288,18 +1379,27 @@ def _write_datacard(
         if not processes[process_name].get("data", False)
     }
 
+    dnn_data = {
+        sample_name: dnn_data[sample_name][categories[category]["selection"](dnn_data[sample_name])]
+        for sample_name, process_name in sample_processes.items()
+        # skip data for now as were are using fake data from background-only below
+        if not processes[process_name].get("data", False)
+    }
+
     # complain when nan's were found
     for sample_name, data in sample_data.items():
-        n_nonfinite = np.sum(~np.isfinite(data[variable_name]))
-        if n_nonfinite:
+        n_nonfinite_dnn = np.sum(~np.isfinite(dnn_data[sample_name][variable_name]))
+        if n_nonfinite_dnn:
             print(
-                f"{n_nonfinite} / {len(data)} of events in {sample_name} after {category} "
-                "selection are non-finite (nan or inf)",
+                f"{n_nonfinite_dnn} / {len(dnn_data[sample_name])} of events in {sample_name} after {category} "
+                "selection are non-finite (nan or inf) in DNN data",
             )
 
     # prepare the scaling values, signal is scaled to 1pb * br
     scale = categories[category]["scale"]
     signal_scale = scale * br_hh_bbtt
+    # retrieve the shapes model
+    shapes_model = categories[category]["shapes_model"]
 
     # derive bin edges
     if binning_algo == "equal_distance":
@@ -1521,7 +1621,7 @@ def _write_datacard(
             )
         signal_process_name = signal_process_names[0]
         signal_values = ak.concatenate([
-            sample_data[sample_name][variable_name]
+            dnn_data[sample_name][variable_name]
             for sample_name in sample_map[signal_process_name]
         ], axis=0)
         signal_weights = ak.concatenate([
@@ -1585,7 +1685,7 @@ def _write_datacard(
         _scale = signal_scale if processes[process_name].get("signal", False) else scale
         for sample_name in sample_names:
             h.fill(**{
-                variable_name: sample_data[sample_name][variable_name],
+                variable_name: dnn_data[sample_name][variable_name],
                 "weight": sample_data[sample_name].full_weight * _scale,
             })
 
@@ -1601,45 +1701,77 @@ def _write_datacard(
     # actual qcd estimation
     if qcd_estimation:
         qcd_hists = {}
-        for region_name, _qcd_data in qcd_data.items():
+        for region_name, _qcd_data in qcd_data_shapes.items():
             # create a histogram that is filled with both data and negative background
             h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
             for sample_name, data in _qcd_data.items():
                 weight = 1
                 if not processes[sample_processes[sample_name]].get("data", False):
-                    weight = -1 * data.full_weight * scale
+                    weight = -1 * qcd_data[region_name][sample_name].full_weight * _scale
                 h.fill(**{variable_name: data[variable_name], "weight": weight})
             qcd_hists[region_name] = h
+        h_qcd = estimate_qcd(qcd_hists)
+        hists["QCD"] = h_qcd
+                             
+    shape_hists = {}
+    for process_name, sample_names in sample_map.items():
+        # skip data
+        if processes[process_name].get("data", False):
+            continue
 
-        # ABCD method
-        # take shape from region "C"
-        h_qcd = qcd_hists["os_noniso"]
-        # get the intgral and its uncertainty from region "B"
-        num_val = qcd_hists["ss_iso"].sum().value
-        num_var = qcd_hists["ss_iso"].sum().variance
-        # get the intgral and its uncertainty from region "D"
-        denom_val = qcd_hists["ss_noniso"].sum().value
-        denom_var = qcd_hists["ss_noniso"].sum().variance
-        # stop if any yield is negative (due to more MC than data)
-        if num_val <= 0 or denom_val <= 0:
-            print(
-                f"  skipping QCD estimation in ({category},{spin},{mass}) due to negative yields "
-                f"in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",
-            )
-        else:
-            # create the normalization correction including uncorrelated uncertainty propagation
-            corr_val = num_val / denom_val
-            corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
-            # scale the shape by updating values and variances in-place
-            val = h_qcd.view().value
-            _var = h_qcd.view().variance
-            new_val = val * corr_val
-            _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
-            val[:] = new_val
-            # set negative values to epsilon values but keep potentially large uncertainties
-            val[val <= 0] = 1.0e-5
-            # store it
-            hists["QCD"] = h_qcd
+        for shape_name, shape_data in shapes_model.items():
+            if not fnmatch(process_name, shape_data["processes"]):
+                continue
+            for direction in ["up", "down"]:
+                hist_name = f"{process_name}_{shape_name}_{direction}"
+                h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
+                for sample_name in sample_names:
+                    weight = sample_data[sample_name].full_weight * _scale # nominal weight
+                    fill_arr = dnn_data[sample_name][variable_name] # nominal dnn
+                    if "klub_name" in shape_data:
+                        weight = -1 * sample_data[sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                    if "dnn_shape_pattern" in shape_data:
+                        fill_arr = dnn_data[sample_name][shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                    h.fill(**{
+                        hist_name: fill_arr, 
+                        "weight": weight, 
+                    })
+
+                # add epsilon values at positions where bin contents are not positive
+                nom = h.view().value
+                mask = nom <= 0
+                nom[mask] = 1.0e-5
+                h.view().variance[mask] = 1.0e-5
+
+                # store it with the corresponding pattern from line 1265
+                shape_hists[hist_name] = {"hist":h,
+                                          "parameter": shape_name,
+                                          "process": process_name,
+                                          "direction": direction}
+
+                if qcd_estimation:
+                    if fnmatch("QCD", shape_data["processes"]):
+                        qcd_hists_shape = {}
+                        for region_name, _qcd_data in qcd_data_shapes.items():
+                            # create a histogram that is filled with both data and negative background
+                            hist_name = f"QCD_{shape_name}_{direction}"
+                            h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
+                            for sample_name, data in _qcd_data.items():
+                                weight = 1
+                                fill_arr = data[variable_name]
+                                if not processes[sample_processes[sample_name]].get("data", False):
+                                    if "klub_name" in shape_data:
+                                        weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                                    if "dnn_shape_pattern" in shape_data:
+                                        fill_arr = data[shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                                h.fill(**{hist_name: fill_arr, "weight": weight})
+                            qcd_hists_shape[region_name] = h
+                        h_qcd_shape = estimate_qcd(qcd_hists_shape)
+                        shape_hists[hist_name] = {"hist":h_qcd_shape,
+                                                    "parameter": shape_name,
+                                                    "process": "QCD",
+                                                    "direction": direction}
+                
 
     # fake data using the sum of all backgrounds
     hists["data_obs"] = (
@@ -1667,6 +1799,12 @@ def _write_datacard(
         for process_name, h in hists.items():
             shape_name = shape_patterns["nom"].format(category=category, process=process_name)
             root_file[shape_name] = h
+        for shape_name, shapes_hist_data in shape_hists.items():
+            hist_name = shape_patterns["syst"].format(category=category,
+                                                       process=shapes_hist_data["process"],
+                                                       parameter=shapes_hist_data["parameter"],
+                                                       direction=shapes_hist_data["direction"].capitalize())
+            root_file[hist_name] = shapes_hist_data["hist"] 
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
@@ -1737,6 +1875,19 @@ def _write_datacard(
         if set(effect_line) != {"-"}:
             blocks["tabular_parameters"].append((param_name, "lnN", *effect_line))
             added_param_names.append(param_name)
+
+    for shape_name, shape_data in shapes_model.items():
+        effect_line = []
+        for process_name in exp_processes:
+            process_pattern = shape_data["processes"]
+            if fnmatch(process_name, process_pattern):
+                effect = "1.0"
+            else:
+                effect = "-"
+            effect_line.append(effect)
+        if set(effect_line) != {"-"}:
+            blocks["tabular_parameters"].append((shape_name, "shape", *effect_line))
+            added_param_names.append(shape_name)
     if blocks["tabular_parameters"]:
         empty_lines.add("tabular_parameters")
 
@@ -1874,7 +2025,7 @@ def main():
         "--categories",
         "-c",
         type=csv,
-        default=(default_cats := "2017_*tau_resolved?b_os_iso,2017_*tau_boosted_os_iso,2017_*tau_vbf_os_iso"),
+        default=(default_cats := "2017_*tau_resolved?b_os_iso,2017_*tau_boosted_os_iso"),
         help=f"comma separated list of categories or patterns; default: {default_cats}",
     )
     parser.add_argument(
@@ -1885,8 +2036,8 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal", "flats", "ud_flats", "ud", "tt_dy_driven"),
-        default="equal",
+        choices=("equal_distance", "flat_s", "ud_flats", "ud", "tt_dy_driven"),
+        default="equal_distance",
         help="binning strategy to use; default: equal",
     )
     parser.add_argument(
@@ -1894,13 +2045,13 @@ def main():
         "-u",
         type=float,
         default=None,
-        help="uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: None",
+        help="uncertainty to use for uncertainty-driven binning; default: None",
     )
     parser.add_argument(
         "--signal-uncertainty",
         type=float,
         default=0.5,
-        help="signal uncertainty to use for uncertainty-driven binning (0.1 for 10%).; default: 0.5",
+        help="signal uncertainty to use for uncertainty-driven binning; default: 0.5",
     )
     parser.add_argument(
         "--n-bins",
