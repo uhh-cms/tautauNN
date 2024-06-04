@@ -1019,9 +1019,9 @@ def load_sample_data(
             ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
 
         # combine values
-        array = ak.concatenate([arr for arr, _, _ in ret if not arr is None], axis=0)
-        sum_gen_mc_weights = sum(f for _, f, _ in ret if not arr is None)
-        dnn_array = ak.concatenate([arr for _, _, arr in ret if not arr is None], axis=0)
+        array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
+        sum_gen_mc_weights = sum([f for _, f, _ in ret])
+        dnn_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
         del ret
         gc.collect()
 
@@ -1072,10 +1072,7 @@ def expand_categories(category: str | Sequence[str]) -> list[str]:
     return _categories
 
 
-def estimate_qcd(qcd_hists,
-                 category,
-                 spin,
-                 mass):
+def estimate_qcd(qcd_hists):
     # ABCD method
     # take shape from region "C"
     h_qcd = qcd_hists["os_noniso"]
@@ -1713,7 +1710,7 @@ def _write_datacard(
                     weight = -1 * qcd_data[region_name][sample_name].full_weight * _scale
                 h.fill(**{variable_name: data[variable_name], "weight": weight})
             qcd_hists[region_name] = h
-        h_qcd = estimate_qcd(qcd_hists, category, spin, mass)
+        h_qcd = estimate_qcd(qcd_hists)
         hists["QCD"] = h_qcd
                              
     shape_hists = {}
@@ -1769,7 +1766,7 @@ def _write_datacard(
                                         fill_arr = data[shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
                                 h.fill(**{hist_name: fill_arr, "weight": weight})
                             qcd_hists_shape[region_name] = h
-                        h_qcd_shape = estimate_qcd(qcd_hists_shape, category, spin, mass)
+                        h_qcd_shape = estimate_qcd(qcd_hists_shape)
                         shape_hists[hist_name] = {"hist":h_qcd_shape,
                                                     "parameter": shape_name,
                                                     "process": "QCD",
