@@ -485,19 +485,19 @@ stat_model_shapes = {
          for dm in ["DM0", "DM1", "DM10", "DM11"]},
     "trigSF_ele": {"channels": ["etau"],
                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                    "processes": "*",
+                    "processes": "!QCD",
                     "klub_name": "trigSF_ele_{direction}"},
     "trigSF_mu": {"channels": ["mutau"],
                    "categories": ["boosted", "resolved1b", "resolved2b"],
-                   "processes": "*",
+                   "processes": "!QCD",
                    "klub_name": "trigSF_mu_{direction}"},
     "trigSF_stau": {"channels": ["tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
-                     "processes": "*",
+                     "processes": "!QCD",
                      "klub_name": "trigSF_stau_{direction}"},
     "trigSF_met": {"channels": ["mutau", "etau", "tautau"],
                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                    "processes": "*",
+                    "processes": "!QCD",
                     "klub_name": "trigSF_met_{direction}"},
     **{f"ees_{dm}": {"channels": ["mutau", "etau", "tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
@@ -1019,9 +1019,9 @@ def load_sample_data(
             ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
 
         # combine values
-        array = ak.concatenate([arr for arr, _, _ in ret], axis=0)
-        sum_gen_mc_weights = sum(f for _, f, _ in ret)
-        dnn_array = ak.concatenate([arr for _, _, arr in ret], axis=0)
+        array = ak.concatenate([arr for arr, _, _ in ret if not arr is None], axis=0)
+        sum_gen_mc_weights = sum(f for _, f, _ in ret if not arr is None)
+        dnn_array = ak.concatenate([arr for _, _, arr in ret if not arr is None], axis=0)
         del ret
         gc.collect()
 
