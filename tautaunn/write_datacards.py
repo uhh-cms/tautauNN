@@ -48,6 +48,7 @@ import tautaunn.config as cfg
 #
 # configurations
 #
+skip_files = ["/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16/MuonH/output_45.root"]
 
 br_hh_bbtt = 0.073056256
 channels = {
@@ -480,24 +481,24 @@ stat_model_shapes = {
        for rng in ["0p4to0p8", "0p8to1p2", "1p2to1p7", "Gt1p7", "Lt0p4"]},
     **{f"trigSF_{dm}": {"channels": ["mutau", "etau", "tautau"],
                        "categories": ["boosted", "resolved1b", "resolved2b"],
-                       "processes": "!QCD",
+                       "processes": "*",
                        "klub_name": "trigSF_%s_{direction}"%dm}
          for dm in ["DM0", "DM1", "DM10", "DM11"]},
     "trigSF_ele": {"channels": ["etau"],
                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                    "processes": "!QCD",
+                    "processes": "*",
                     "klub_name": "trigSF_ele_{direction}"},
     "trigSF_mu": {"channels": ["mutau"],
                    "categories": ["boosted", "resolved1b", "resolved2b"],
-                   "processes": "!QCD",
+                   "processes": "*",
                    "klub_name": "trigSF_mu_{direction}"},
     "trigSF_stau": {"channels": ["tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
-                     "processes": "!QCD",
+                     "processes": "*",
                      "klub_name": "trigSF_stau_{direction}"},
     "trigSF_met": {"channels": ["mutau", "etau", "tautau"],
                     "categories": ["boosted", "resolved1b", "resolved2b"],
-                    "processes": "!QCD",
+                    "processes": "*",
                     "klub_name": "trigSF_met_{direction}"},
     **{f"ees_{dm}": {"channels": ["mutau", "etau", "tautau"],
                      "categories": ["boosted", "resolved1b", "resolved2b"],
@@ -1001,13 +1002,12 @@ def load_sample_data(
         print(cache_path)
         with open(cache_path, "rb") as f:
             array, dnn_array = pickle.load(f)
-
     else:
         # determine file names and build arguments for the parallel load implementation
         load_args = [
             (skim_directory, eval_directory, sample_name, file_name, dnn_output_columns or [])
             for file_name in os.listdir(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name)))
-            if fnmatch(file_name, "output_*.root")
+            if fnmatch(file_name, "output_*.root") and not os.path.join(skim_directory, sample_name_to_skim_dir(sample_name),file_name) in skip_files
         ]
 
         # run in parallel
@@ -1084,7 +1084,7 @@ def estimate_qcd(qcd_hists):
     denom_var = qcd_hists["ss_noniso"].sum().variance
     # stop if any yield is negative (due to more MC than data)
     if num_val <= 0 or denom_val <= 0:
-        h_qcd *= 0.0
+        return None
     else:
         # create the normalization correction including uncorrelated uncertainty propagation
         corr_val = num_val / denom_val
@@ -1279,7 +1279,7 @@ def _write_datacard(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["equal_distance", "flat_s", "ud", "ud_flats", "tt_dy_driven"]
+    assert binning_algo in ["equal_distance", "flat_s", "flatsguarded", "ud", "ud_flats", "tt_dy_driven"]
 
     # prepare the output paths
     datacard_path = f"datacard_{output_name}.txt"
@@ -1607,6 +1607,200 @@ def _write_datacard(
             x_min=x_min,
             x_max=x_max,
         )
+    elif binning_algo == "flatsguarded":
+
+        signal_process_names = [
+            process_name
+            for process_name in sample_map
+            # dict.get() returns the key if it exits, otherwise the default value (False here)
+            if processes[process_name].get("signal", False)
+        ]
+        if len(signal_process_names) != 1:
+            raise Exception(
+                "either none or too many signal processes found to obtain uncertainty_driven binning: "
+                f"{signal_process_names}",
+            )
+        signal_process_name = signal_process_names[0]
+        # helper to get values of weights of a process
+        hh_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        hh_weights = ak.concatenate([
+            sample_data[sample_name].full_weight * signal_scale
+            for sample_name in sample_map[signal_process_name]
+        ], axis=0)
+        #
+        # step 1: data preparation
+        #
+
+        # get tt and dy data
+        tt_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        tt_weights = ak.concatenate([
+            sample_data[sample_name].full_weight
+            for sample_name in sample_map["TT"]
+        ], axis=0)
+        dy_values = ak.concatenate([
+            sample_data[sample_name][variable_name]
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        dy_weights = ak.concatenate([
+            sample_data[sample_name].full_weight
+            for sample_name in sample_map["DY"]
+        ], axis=0)
+        # create a record array with eight entries:
+        # - value
+        # - process (0: hh, 1: tt, 2: dy)
+        # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
+        # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
+        all_values_list = [hh_values, tt_values, dy_values]
+        rec = np.core.records.fromarrays(
+            [
+                # value
+                (all_values := np.concatenate(all_values_list, axis=0)),
+                # process
+                np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
+                # counts and weights per process
+                (izeros := np.zeros(len(all_values), dtype=np.int32)),
+                (fzeros := np.zeros(len(all_values), dtype=np.float32)),
+                izeros,
+                fzeros,
+                izeros,
+                fzeros,
+            ],
+            names="value,process,hh_count_cs,hh_weight_cs,tt_count_cs,tt_weight_cs,dy_count_cs,dy_weight_cs",
+        )
+        # insert counts and weights into columns for correct processes
+        # (faster than creating arrays above which then get copied anyway when the recarray is created)
+        HH, TT, DY = range(3)
+        rec.hh_count_cs[rec.process == HH] = 1
+        rec.tt_count_cs[rec.process == TT] = 1
+        rec.dy_count_cs[rec.process == DY] = 1
+        rec.hh_weight_cs[rec.process == HH] = hh_weights
+        rec.tt_weight_cs[rec.process == TT] = tt_weights
+        rec.dy_weight_cs[rec.process == DY] = dy_weights
+        # sort by decreasing value to start binning from "the right" later on
+        rec.sort(order="value")
+        rec = np.flip(rec, axis=0)
+        # replace counts and weights with their cumulative sums
+        rec.hh_count_cs[:] = np.cumsum(rec.hh_count_cs)
+        rec.tt_count_cs[:] = np.cumsum(rec.tt_count_cs)
+        rec.dy_count_cs[:] = np.cumsum(rec.dy_count_cs)
+        rec.hh_weight_cs[:] = np.cumsum(rec.hh_weight_cs)
+        rec.tt_weight_cs[:] = np.cumsum(rec.tt_weight_cs)
+        rec.dy_weight_cs[:] = np.cumsum(rec.dy_weight_cs)
+        # eager cleanup
+        del all_values, izeros, fzeros
+        del hh_values, hh_weights
+        del tt_values, tt_weights
+        del dy_values, dy_weights
+        # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
+        # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
+        # but rather through simple subtraction of values at the respective indices instead
+
+        #
+        # step 2: binning
+        #
+
+        # determine the approximate hh yield per bin
+        hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
+        # keep track of bin edges and the hh yield accumulated so far
+        bin_edges = [x_max]
+        hh_yield_binned = 0.0
+        min_hh_yield = 1.0e-5
+        # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
+        offset = 0
+        # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
+        get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
+        # bookkeep reasons for stopping binning
+        stop_reason = ""
+        # start binning
+        while len(bin_edges) < n_bins:
+            # stopping condition 1: reached end of events
+            if offset >= len(rec):
+                stop_reason = "no more events left"
+                break
+            # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
+            remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
+            if remaining_hh_yield < min_hh_yield:
+                stop_reason = "remaining signal yield insufficient"
+                break
+            # find the index of the event that would result in a hh yield increase of more than the expected
+            # per-bin yield; this index would mark the start of the next bin given all constraints are met
+            if remaining_hh_yield >= hh_yield_per_bin:
+                threshold = hh_yield_binned + hh_yield_per_bin
+                next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
+            else:
+                # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
+                next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
+            # advance the index until backgrounds constraints are met
+            while next_idx < len(rec):
+                # get the number of tt events and their yield
+                n_tt = get_integral(rec.tt_count_cs, next_idx)
+                y_tt = get_integral(rec.tt_weight_cs, next_idx)
+                # get the number of dy events and their yield
+                n_dy = get_integral(rec.dy_count_cs, next_idx)
+                y_dy = get_integral(rec.dy_weight_cs, next_idx)
+                # evaluate constraints
+                # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
+                #       on dy, and vice-versa
+                constraints_met = (
+                    # tt and dy events
+                    n_tt >= 1 and
+                    n_dy >= 1 and
+                    n_tt + n_dy >= 3 and
+                    # yields must be positive to avoid negative sums of weights per process
+                    y_tt > 0 and
+                    y_dy > 0
+                )
+                if constraints_met:
+                    # TODO: maybe also check if the background conditions are just barely met and advance next_idx
+                    # to the middle between the current value and the next one that would change anything about the
+                    # background predictions; this might be more stable as the current implementation can highly
+                    # depend on the exact value of a single event (the one that tips the constraints over the edge
+                    # to fulfillment)
+
+                    # bin found, stop
+                    break
+                # constraints not met, advance index to include the next tt or dy event and try again
+                next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
+                if len(next_bkg_indices) == 0:
+                    # no more background events left, move to the last position and let the stopping condition 3
+                    # below handle the rest
+                    next_idx = len(rec)
+                else:
+                    next_idx += next_bkg_indices[0] + 1
+            else:
+                # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
+                # constraints; however, this should practically never happen
+                stop_reason = "no more events left while trying to fulfill constraints"
+                break
+            # next_idx found, update values
+            edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
+            bin_edges.append(max(min(edge_value, x_max), x_min))
+            hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
+            offset = next_idx
+
+        # make sure the minimum is included
+        if bin_edges[-1] != x_min:
+            if len(bin_edges) > n_bins:
+                raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
+            bin_edges.append(x_min)
+
+        # reverse edges and optionally re-set n_bins
+        bin_edges = sorted(set(bin_edges))
+        n_bins_actual = len(bin_edges) - 1
+        if n_bins_actual > n_bins:
+            raise Exception("number of actual bins ended up larger than requested (implementation bug)")
+        if n_bins_actual < n_bins:
+            print(
+                f"  reducing n_bins from {n_bins} to {n_bins_actual} in ({category},{spin},{mass})\n"
+                f"    -> reason: {stop_reason or 'NO REASON!?'}",
+            )
+            n_bins = n_bins_actual
     else:  # flat_s
         # get the signal values and weights
         signal_process_names = [
@@ -1711,7 +1905,8 @@ def _write_datacard(
                 h.fill(**{variable_name: data[variable_name], "weight": weight})
             qcd_hists[region_name] = h
         h_qcd = estimate_qcd(qcd_hists)
-        hists["QCD"] = h_qcd
+        if not h_qcd is None:
+            hists["QCD"] = h_qcd
                              
     shape_hists = {}
     for process_name, sample_names in sample_map.items():
@@ -1751,26 +1946,28 @@ def _write_datacard(
 
                 if qcd_estimation:
                     if fnmatch("QCD", shape_data["processes"]):
-                        qcd_hists_shape = {}
-                        for region_name, _qcd_data in qcd_data_shapes.items():
-                            # create a histogram that is filled with both data and negative background
-                            hist_name = f"QCD_{shape_name}_{direction}"
-                            h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
-                            for sample_name, data in _qcd_data.items():
-                                weight = 1
-                                fill_arr = data[variable_name]
-                                if not processes[sample_processes[sample_name]].get("data", False):
-                                    if "klub_name" in shape_data:
-                                        weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
-                                    if "dnn_shape_pattern" in shape_data:
-                                        fill_arr = data[shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
-                                h.fill(**{hist_name: fill_arr, "weight": weight})
-                            qcd_hists_shape[region_name] = h
-                        h_qcd_shape = estimate_qcd(qcd_hists_shape)
-                        shape_hists[hist_name] = {"hist":h_qcd_shape,
-                                                    "parameter": shape_name,
-                                                    "process": "QCD",
-                                                    "direction": direction}
+                        if not h_qcd is None:
+                            qcd_hists_shape = {}
+                            for region_name, _qcd_data in qcd_data_shapes.items():
+                                # create a histogram that is filled with both data and negative background
+                                hist_name = f"QCD_{shape_name}_{direction}"
+                                h = hist.Hist.new.Variable(bin_edges, name=hist_name).Weight()
+                                for sample_name, data in _qcd_data.items():
+                                    weight = 1
+                                    fill_arr = data[variable_name]
+                                    if not processes[sample_processes[sample_name]].get("data", False):
+                                        if "klub_name" in shape_data:
+                                            weight = -1 * qcd_data[region_name][sample_name][shape_data["klub_name"].format(direction=direction)] * _scale
+                                        if "dnn_shape_pattern" in shape_data:
+                                            fill_arr = data[shape_data['dnn_shape_pattern'].format(variable_name=variable_name, direction=direction)]
+                                    h.fill(**{hist_name: fill_arr, "weight": weight})
+                                qcd_hists_shape[region_name] = h
+                            h_qcd_shape = estimate_qcd(qcd_hists_shape)
+                            if not h_qcd_shape is None:
+                                shape_hists[hist_name] = {"hist":h_qcd_shape,
+                                                            "parameter": shape_name,
+                                                            "process": "QCD",
+                                                            "direction": direction}
                 
 
     # fake data using the sum of all backgrounds
@@ -1804,7 +2001,10 @@ def _write_datacard(
                                                        process=shapes_hist_data["process"],
                                                        parameter=shapes_hist_data["parameter"],
                                                        direction=shapes_hist_data["direction"].capitalize())
-            root_file[hist_name] = shapes_hist_data["hist"] 
+            try:   
+                root_file[hist_name] = shapes_hist_data["hist"] 
+            except TypeError:
+                from IPython import embed; embed()
 
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
@@ -1881,7 +2081,12 @@ def _write_datacard(
         for process_name in exp_processes:
             process_pattern = shape_data["processes"]
             if fnmatch(process_name, process_pattern):
-                effect = "1.0"
+                if process_name != "QCD":
+                    effect = "1.0"
+                else:
+                    qcd_valid = all([h in shape_hists.keys() for h in [f"QCD_{shape_name}_up", f"QCD_{shape_name}_down"]])
+                    if qcd_valid:
+                        effect = "1.0"
             else:
                 effect = "-"
             effect_line.append(effect)
@@ -2036,7 +2241,7 @@ def main():
     parser.add_argument(
         "--binning",
         "-b",
-        choices=("equal_distance", "flat_s", "ud_flats", "ud", "tt_dy_driven"),
+        choices=("equal_distance", "flat_s", "flatsguarded", "ud_flats", "ud", "tt_dy_driven"),
         default="equal_distance",
         help="binning strategy to use; default: equal",
     )
