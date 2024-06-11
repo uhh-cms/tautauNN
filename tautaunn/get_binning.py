@@ -300,7 +300,7 @@ def load_sample_data(
             print("writing to cache")
             try:
                 with open(cache_path, "wb") as f:
-                    pickle.dump((array, dnn_array), f)
+                    pickle.dump(array, f)
             except:
                 try:
                     os.remove(cache_path)
@@ -421,6 +421,7 @@ def get_binnings(
     # prepare loading data
     # reduce for debugging
     print(f"going to load {len(matched_sample_names)} samples: {', '.join(matched_sample_names)}")
+    print(f"using cache directory: {cache_directory}")
     data_gen = (
         load_sample_data(
             skim_directory,
@@ -856,7 +857,6 @@ def main():
         ),
     )
 
-    from IPython import embed; embed()
     # prepare kwargs
     kwargs = dict(
         spin=args.spin,
