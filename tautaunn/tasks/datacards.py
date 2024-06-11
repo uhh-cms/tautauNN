@@ -469,7 +469,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         # reduce skim_names to only needed ones
         self.skim_names = [
             name for name in self.skim_names
-            if any([s in name for s in ["TT_", "DY_", "Rad", "Grav"]])
+            if any([s in name for s in ["TT_", "DY_", "Rad", "Grav"]]) and self.year == name.split("_")[0]
         ]
 
             
