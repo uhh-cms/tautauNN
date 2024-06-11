@@ -142,7 +142,7 @@ region_sels = [
 region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
 
 
-def category_factory(channel: str) -> dict[str, Callable]:
+def category_factory(channel: str, no_qcd: bool = False) -> dict[str, Callable]:
     pair_type = channels[channel]
 
     @selector(needs=["pairType"])
@@ -253,6 +253,8 @@ def category_factory(channel: str) -> dict[str, Callable]:
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
     }
+    if no_qcd:
+        region_sel_names = ["os_iso"]
 
     # add all region combinations
     for name, sel in list(selectors.items()):
