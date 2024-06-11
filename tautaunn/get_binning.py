@@ -267,7 +267,7 @@ def load_sample_data(
         print("reading from cache")
         print(cache_path)
         with open(cache_path, "rb") as f:
-            array, dnn_array = pickle.load(f)
+            array = pickle.load(f)
     else:
         # determine file names and build arguments for the parallel load implementation
         load_args = [
@@ -446,10 +446,8 @@ def get_binnings(
             spin,
             mass,
             category,
-            output_directory,
             variable_pattern.format(spin=spin, mass=mass),
             binning,
-            skip_existing,
         ))
 
     print(f"\nwriting datacard{'s' if len(datacard_args) > 1 else ''} ...")
@@ -475,9 +473,8 @@ def get_binnings(
         with open(bin_edges_file, "r") as f:
             all_bin_edges = json.load(f)
     # update with new bin edges
-    for args, res in zip(datacard_args, binning_results):
+    for args, edges in zip(datacard_args, binning_results):
         spin, mass, category = args[2:5]
-        edges = res[2]
         key = f"{category}__s{spin}__m{mass}"
         # do not overwrite when edges are None (in case the datacard was skipped)
         if key in all_bin_edges and not edges:
@@ -569,7 +566,7 @@ def _get_binning(
         for sample_name in sample_map[signal_process_name]
     ], axis=0)
     hh_weights = ak.concatenate([
-        sample_data[sample_name].full_weight * signal_scale
+        sample_data[sample_name].full_weight_nominal * signal_scale
         for sample_name in sample_map[signal_process_name]
     ], axis=0)
 
@@ -579,7 +576,7 @@ def _get_binning(
         for sample_name in sample_map["TT"]
     ], axis=0)
     tt_weights = ak.concatenate([
-        sample_data[sample_name].full_weight
+        sample_data[sample_name].full_weight_nominal
         for sample_name in sample_map["TT"]
     ], axis=0)
     dy_values = ak.concatenate([
@@ -587,7 +584,7 @@ def _get_binning(
         for sample_name in sample_map["DY"]
     ], axis=0)
     dy_weights = ak.concatenate([
-        sample_data[sample_name].full_weight
+        sample_data[sample_name].full_weight_nominal
         for sample_name in sample_map["DY"]
     ], axis=0)
     # create a record array with eight entries:
