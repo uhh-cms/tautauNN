@@ -67,7 +67,7 @@ channels = {
 
 categories = {}
 for channel in channels:
-    for name, sel in category_factory(channel=channel, no_qcd=True).items():
+    for name, sel in category_factory(channel=channel).items():
         # categories per year
         for year in ["2016", "2016APV", "2017", "2018"]:
             categories[f"{year}_{channel}_{name}"] = {
