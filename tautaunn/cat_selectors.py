@@ -142,9 +142,7 @@ region_sels = [
 region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
 
 
-def category_factory(channel: str,
-                     no_baseline: bool = False,
-                     no_qcd: bool = False) -> dict[str, Callable]:
+def category_factory(channel: str) -> dict[str, Callable]:
     pair_type = channels[channel]
 
     @selector(needs=["pairType"])
