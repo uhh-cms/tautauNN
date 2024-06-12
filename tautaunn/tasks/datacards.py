@@ -416,7 +416,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-_default_categories = ("{year}_*tau_resolved?b_os_iso", "{year}_*tau_boosted_os_iso")
+_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
 
 class GetBinning(MultiSkimTask, EvaluationParameters):
