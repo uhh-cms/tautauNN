@@ -36,23 +36,24 @@ def make_parser():
 
 def load_hists(filename: str | Path,
                dirname: str,
-               signal_name: str) -> tuple[Stack, Hist]:
+               signal_name: str,
+               year: str) -> tuple[Stack, Hist]:
     with uproot.open(filename) as file:
         objects = file[dirname].classnames()
         sig = file[dirname][signal_name].to_hist()
         mc_bkgds = ['TT', 'ST', 'DY', 'W', 'EWK']
-        stack_dict = {i: file[dirname][i].to_hist() for i in mc_bkgds}
+        stack_dict = {i: file[dirname][f"{i}_{year}"].to_hist() for i in mc_bkgds}
         # merge
         vv = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        vv = file[dirname]['WW'].to_hist()+file[dirname]['WZ'].to_hist()+file[dirname]['ZZ'].to_hist()
+        vv = file[dirname][f'WW_{year}'].to_hist()+file[dirname][f'WZ_{year}'].to_hist()+file[dirname][f'ZZ_{year}'].to_hist()
         sm_h = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        sm_h = file[dirname]['ggH_htt'].to_hist()+file[dirname]['qqH_htt'].to_hist()
+        sm_h = file[dirname][f'ggH_{year}_htt'].to_hist()+file[dirname][f'qqH_{year}_htt'].to_hist()
         vh = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        vh = file[dirname]['ZH_htt'].to_hist()+file[dirname]['WH_htt'].to_hist()
+        vh = file[dirname][f'ZH_{year}_htt'].to_hist()+file[dirname][f'WH_{year}_htt'].to_hist()
         tth = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        tth = file[dirname]['ttH_htt'].to_hist()+file[dirname]['ttH_hbb'].to_hist()
+        tth = file[dirname][f'ttH_{year}_htt'].to_hist()+file[dirname][f'ttH_{year}_hbb'].to_hist()
         other = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        other = file[dirname]['VVV'].to_hist()+file[dirname]['TTV'].to_hist()+file[dirname]['TTVV'].to_hist()
+        other = file[dirname][f'VVV_{year}'].to_hist()+file[dirname][f'TTV_{year}'].to_hist()+file[dirname][f'TTVV_{year}'].to_hist()
 
         stack_dict['VV'] = vv
         stack_dict['SM H'] = sm_h
@@ -165,8 +166,8 @@ def make_plots(input_dir: str | Path,
         filename = Path(file)
         _, _, year, channel, cat, sign, isolation, _, spin, _, mass = filename.stem.split("_")
         dirname = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
-        signal_name = f"ggf_spin_{spin}_mass_{mass}_hbbhtt"
-        stack, sig = load_hists(filename, dirname, signal_name)
+        signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
+        stack, sig = load_hists(filename, dirname, signal_name, year)
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
         else: 
