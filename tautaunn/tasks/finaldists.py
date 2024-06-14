@@ -19,16 +19,16 @@ class MakeFinalDistPlots(WriteDatacards, Task):
     
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         self.output_dir = ""
+        output_path = self.output().targets[self.card_names[0]].abs_dirname
         
         path_user = (pathlist := self.input().dir.path.split("/"))[int(pathlist.index("user")+1)]
         if path_user != os.environ["USER"]: 
-            old_path = self.output().targets[self.card_names[0]].abs_dirname
-            user_path = old_path.replace(path_user, os.environ["USER"])
+            new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
             yn = input("continue? [y/n] ")
             if yn.lower() != "y":
-                user_path = input(f"enter the correct path (should point to your $TN_STORE_DIR/{self.__class__.__name__}): ")
-        self.output_dir = user_path
+                new_path = input(f"enter the correct path (should point to your $TN_STORE_DIR/{self.__class__.__name__}): ")
+            self.output_dir = new_path
 
     def requires(self):
         return WriteDatacards.req(self,
