@@ -180,14 +180,14 @@ def plot_hist_cms_style(bkgd_stack: hist.Stack,
     mu, tau = '\u03BC','\u03C4'
     chn_map = {"etau": r"$bb\;e$"+tau, "tautau":r"$bb\;$"+tau+tau, "mutau": r"$bb\;$"+mu+tau}
     hep.cms.lumitext(r"{} $fb^{{-1}}$ (13 TeV)".format(lumi), fontsize=20, ax = ax)
-    ax.text(0.32, 1.01, chn_map[channel], fontsize=13,transform=ax.transAxes)
-    ax.text(0.39, 1.01, cat, fontsize=13, transform=ax.transAxes)
+    ax.text(0.32, 1.02, chn_map[channel], fontsize=13,transform=ax.transAxes)
+    ax.text(0.39, 1.02, cat, fontsize=13, transform=ax.transAxes)
     bkgd_stack.plot(stack=True, ax=ax, color=[plt.cm.tab20.colors[i] for i in range(len(bkgd_stack))], histtype='fill')
     signal_hist.plot(color='black', ax=ax, label=signal_name)
     lgd = ax.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=4,
                     frameon=True, facecolor='white', edgecolor='black')
     lgd.get_frame().set_boxstyle("Square", pad=0.0)
-    ax.set_xticks(signal_hist.axes[0].edges, [round(i, 5) for i in bin_edges], rotation=60)
+    ax.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
     ax.set_yscale("log")
     ax.set_xlabel("pDNN Score")
     ax.set_ylabel("N")
