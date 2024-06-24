@@ -4,6 +4,8 @@ import numpy as np
 from pathlib import Path
 from glob import glob
 from tqdm import tqdm
+from functools import reduce
+from operator import add
 import os
 
 import uproot
@@ -13,7 +15,7 @@ from hist import Hist, Stack
 
 import matplotlib.pyplot as plt
 import mplhep as hep
-plt.style.use(hep.style.CMS)
+hep.style.use("CMS")
 
 
 luminosities = {  # in /fb
@@ -54,32 +56,15 @@ def load_hists(filename: str | Path,
         nominal_objects = [o.strip(";1") for o in objects if not any(s in o for s in ["Up", "Down"])]
         hists = {o: f[dirname][o].to_hist() for o in nominal_objects if o != signal_name and o != 'data_obs'}
         bin_edges = hists[list(hists.keys())[0]].axes[0].edges
-        equal_width_hists = {name: histo_equalwidth(hists[name])[0] for name in hists}
+        equal_width_hists = {name.replace(f"_{year}", ""): histo_equalwidth(hists[name])[0] for name in hists}
 
-        bkgd_stack = hist.Stack.from_dict({name.replace(f"_{year}", ""): hist for name, hist in equal_width_hists.items() if name != signal_name and name != 'data_obs'})
         sig = histo_equalwidth(f[dirname][signal_name].to_hist())[0]
-        #sig = file[dirname][signal_name].to_hist()
-        #mc_bkgds = ['TT', 'ST', 'DY', 'W', 'EWK']
-        #stack_dict = {i: file[dirname][f"{i}_{year}"].to_hist() for i in mc_bkgds}
-        ## merge
-        #vv = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        #vv = file[dirname][f'WW_{year}'].to_hist()+file[dirname][f'WZ_{year}'].to_hist()+file[dirname][f'ZZ_{year}'].to_hist()
-        #sm_h = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        #sm_h = file[dirname][f'ggH_{year}_htt'].to_hist()+file[dirname][f'qqH_{year}_htt'].to_hist()
-        #vh = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        #vh = file[dirname][f'ZH_{year}_htt'].to_hist()+file[dirname][f'WH_{year}_htt'].to_hist()
-        #tth = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        #tth = file[dirname][f'ttH_{year}_htt'].to_hist()+file[dirname][f'ttH_{year}_hbb'].to_hist()
-        #other = Hist.new.Variable(sig.axes.edges[0], name=sig.axes.name[0], label=sig.axes.label[0])
-        #other = file[dirname][f'VVV_{year}'].to_hist()+file[dirname][f'TTV_{year}'].to_hist()+file[dirname][f'TTVV_{year}'].to_hist()
-
-        #stack_dict['VV'] = vv
-        #stack_dict['SM H'] = sm_h
-        #stack_dict['VH'] = vh
-        #stack_dict['tth'] = tth
-        #stack_dict['VVV & TTV & TTVV'] = other
-        #stack_dict = dict(sorted(stack_dict.items(), key=lambda item: item[1].sum().value, reverse=True))
-        #stack = hist.Stack.from_dict(stack_dict)
+        main_bkgds = ['TT', 'ST', 'DY', 'W', 'QCD']
+        bkgd_dict  = {name: h for name, h in equal_width_hists.items() if any(name == s for s in main_bkgds)}
+        others = reduce(add, (h for name, h in equal_width_hists.items() if name not in bkgd_dict))
+        bkgd_dict["Others"] = others
+        sorted_bkgd_dict = dict(sorted(bkgd_dict.items(), key=lambda x: x[1].sum().value, reverse=False))
+        bkgd_stack = hist.Stack.from_dict(sorted_bkgd_dict)
     return bkgd_stack, sig, bin_edges
 
 
@@ -174,23 +159,40 @@ def plot_hist_cms_style(bkgd_stack: hist.Stack,
                         channel: str,
                         cat: str,
                         savename: str | Path) -> None:
+    # map those hexcodes to the bkgds:
+    color_map = {
+        "DY": "#7a21dd",
+        "TT": "#9c9ca1",
+        "ST": "#e42536",
+        "W": "#964a8b",
+        "QCD": "#5790fc",
+        "Others":"#f89c20",
+    }
     fig, ax = plt.subplots()
     hep.cms.text(" Preliminary", fontsize=20, ax=ax)
     lumi = {"2016APV": "19.5", "2016": "16.8", "2017": "41.5", "2018": "59.7"}[year]
     mu, tau = '\u03BC','\u03C4'
-    chn_map = {"etau": r"$bb\;e$"+tau, "tautau":r"$bb\;$"+tau+tau, "mutau": r"$bb\;$"+mu+tau}
+    chn_map = {"etau": r"$bbe$"+tau, "tautau":r"$bb$"+tau+tau, "mutau": r"$bb$"+mu+tau}
     hep.cms.lumitext(r"{} $fb^{{-1}}$ (13 TeV)".format(lumi), fontsize=20, ax = ax)
-    ax.text(0.32, 1.02, chn_map[channel], fontsize=13,transform=ax.transAxes)
-    ax.text(0.39, 1.02, cat, fontsize=13, transform=ax.transAxes)
-    bkgd_stack.plot(stack=True, ax=ax, color=[plt.cm.tab20.colors[i] for i in range(len(bkgd_stack))], histtype='fill')
+    ax.text(0.32, 1.013, chn_map[channel], fontsize=13,transform=ax.transAxes)
+    ax.text(0.39, 1.013, cat, fontsize=13, transform=ax.transAxes)
+    bkgd_stack.plot(stack=True, ax=ax, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
     signal_hist.plot(color='black', ax=ax, label=signal_name)
-    lgd = ax.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=4,
+    lgd = ax.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
                     frameon=True, facecolor='white', edgecolor='black')
     lgd.get_frame().set_boxstyle("Square", pad=0.0)
     ax.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
     ax.set_yscale("log")
+    # find the right y-axis limit
+    #min_y = 0.1 * min([*[bkgd_stack[h].values().min() for h in ["DY", "TT"]],signal_hist.values().min()])
+    min_y = 0.1 * min([bkgd_stack[h].values().min() for h in ["DY", "TT"]])
+    summed_hist = reduce(add, [h for h in bkgd_stack])
+    max_y = 1.5 * summed_hist.values().max() 
+
+    ax.set_ylim((min_y, max_y))
+
     ax.set_xlabel("pDNN Score")
-    ax.set_ylabel("N")
+    ax.set_ylabel("Events")
     if not Path(savename).parent.exists():
         os.makedirs(Path(savename).parent)
     plt.savefig(savename, bbox_inches='tight', pad_inches=0.05)
