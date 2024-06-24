@@ -1658,6 +1658,8 @@ def _write_datacard(
                 remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
                 if remaining_hh_yield < min_hh_yield:
                     stop_reason = "remaining signal yield insufficient"
+                    # remove the last bin edge and stop
+                    bin_edges.pop()
                     break
                 # find the index of the event that would result in a hh yield increase of more than the expected
                 # per-bin yield; this index would mark the start of the next bin given all constraints are met
