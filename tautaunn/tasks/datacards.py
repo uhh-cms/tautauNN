@@ -418,120 +418,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 
 _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
-
-class GetBinning(MultiSkimTask, EvaluationParameters):
     
-    year = luigi.ChoiceParameter(
-        default="2017",
-        choices=("2016", "2016APV", "2017", "2018"),
-        description="year to use; default: 2017",
-    )
-    categories = law.CSVParameter(
-        default=_default_categories,
-        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
-        brace_expand=True,
-    )
-    binning = luigi.ChoiceParameter(
-        default="flatsguarded",
-        choices=("flatsguarded", "flats"),
-        description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
-    )
-    n_bins = luigi.IntParameter(
-        default=10,
-        description="number of bins to use; default: 10",
-    )
-    variable = luigi.Parameter(
-        default="pdnn_m{mass}_s{spin}_hh",
-        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
-        "default: 'pdnn_m{mass}_s{spin}_hh'",
-    )
-    parallel_read = luigi.IntParameter(
-        default=4,
-        description="number of parallel processes to use for reading; default: 4",
-    )
-    parallel_write = luigi.IntParameter(
-        default=4,
-        description="number of parallel processes to use for writing; default: 4",
-    )
-    output_suffix = luigi.Parameter(
-        default=law.NO_STR,
-        description="suffix to append to the output directory; default: ''",
-    )
-    rewrite_existing = luigi.BoolParameter(
-        default=False,
-        significant=False,
-        description="whether to rewrite existing datacards; default: False",
-    )
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        # reduce skim_names to only needed ones
-        self.skim_names = [
-            name for name in self.skim_names
-            if any([s in name for s in ["TT_", "DY_", "Rad", "Grav"]]) and self.year == name.split("_")[0]
-        ]
-
-            
-    def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
-    
-    def output(self):
-        # prepare the output directory
-        dirname = f"{self.binning}{self.n_bins}"
-        if self.output_suffix not in ("", law.NO_STR):
-            dirname += f"_{self.output_suffix.lstrip('_')}"
-        d = self.local_target(dirname, dir=True)
-        # hotfix location in case TN_STORE_DIR is set to Marcel's
-        pathlist = d.abs_dirname.split("/")
-        path_user = pathlist[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
-            abspath = d.abs_dirname.replace(path_user, os.environ["USER"])
-            print(f"changing output path from {d.abs_dirname} to {abspath}")
-            yn = input("continue? [y/n] ")
-            if yn.lower() != "y":
-                abspath = input("enter the correct path (should point to your $TN_STORE_DIR/GetBinning): ")
-            d = law.LocalDirectoryTarget(abspath)
-        return d.child("binnings.json", type="f")
-
-
-    def run(self):
-        from tautaunn.get_binning import get_binnings
-        
-        # prepare inputs
-        inp = self.input()
-
-        
-        # prepare skim and eval directories
-        skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
-        eval_directory = inp[self.skim_names[0]].collection.dir.parent.path
-
-        # define arguments
-        binning_kwargs = dict(
-            spin=list(self.spins),
-            mass=list(self.masses),
-            category=[c.format(year=self.year) for c in self.categories],
-            skim_directory=skim_directory,
-            eval_directory=eval_directory,
-            output_directory=self.output().abs_dirname,
-            variable_pattern=self.variable,
-            # force using all samples, disabling the feature to select a subset
-            # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
-            binning=(self.n_bins, 0.0, 1.0, self.binning),
-            n_parallel_read=self.parallel_read,
-            n_parallel_write=self.parallel_write,
-            cache_directory=os.path.join(os.environ["TN_DATA_DIR"], "datacard_cache"),
-            skip_existing=not self.rewrite_existing,
-        )
-
-        # create the cards
-        get_binnings(**binning_kwargs)
-    
-        
-
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     categories = law.CSVParameter(
@@ -581,6 +468,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
+
     @property
     def card_names(self):
         if self._card_names is None:
@@ -612,6 +500,16 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.abs_dirname
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]: 
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            yn = input("continue? [y/n] ")
+            if yn.lower() != "y":
+                new_path = input(f"enter the correct path (should point to your $TN_STORE_DIR/{self.__class__.__name__}): ")
+            d = self.local_target(new_path, dir=True)
 
         return law.SiblingFileCollection({
             name: {
@@ -665,3 +563,5 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # create the cards
         write_datacards(**datacard_kwargs)
+
+
