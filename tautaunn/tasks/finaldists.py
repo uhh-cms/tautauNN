@@ -13,6 +13,7 @@ class MakeFinalDistPlots(WriteDatacards, Task):
         default=law.NO_STR,
         description="suffix to append to the output directory; default: ''",
     )
+    
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -25,10 +26,6 @@ class MakeFinalDistPlots(WriteDatacards, Task):
         if path_user != os.environ["USER"]: 
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
-            yn = input("continue? [y/n] ")
-            if yn.lower() != "y":
-                new_path = input(f"enter the correct path (should point to your $TN_STORE_DIR/{self.__class__.__name__}): ")
-            self.output_dir = new_path
 
     def requires(self):
         return WriteDatacards.req(self,
