@@ -663,6 +663,9 @@ def _get_binning(
         remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
         if remaining_hh_yield < min_hh_yield:
             stop_reason = "remaining signal yield insufficient"
+            # remove the last bin edge and stop
+            if len(bin_edges) > 1:
+                bin_edges.pop()
             break
         # find the index of the event that would result in a hh yield increase of more than the expected
         # per-bin yield; this index would mark the start of the next bin given all constraints are met
@@ -792,7 +795,7 @@ def main():
     parser.add_argument(
         "--skim-directory",
         default="$TN_SKIMS_{year}",
-        help="dnn evaluation directory; default: $TN_SKIMS_{year}",
+        help="KLUB Skims directory; default: $TN_SKIMS_{year}",
     )
     parser.add_argument(
         "--eval-directory",
