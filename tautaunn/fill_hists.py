@@ -60,6 +60,7 @@ for channel in channels:
 def load_klub_file(skim_directory: str,
                    sample_name: str,
                    file_name: str,
+                   sum_weights: float,
                    is_data: bool = False,
                    treename: str = "HTauTauTree"):
     # define the branches to read here:
@@ -91,7 +92,7 @@ def load_klub_file(skim_directory: str,
                 weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
                 array = ak.with_field(
                     array,
-                    reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns)),
+                    reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns))/sum_weights,
                     weight_name,
                 )
                 mask = ~np.isfinite(array[weight_name])
@@ -147,9 +148,15 @@ def load_file(
     eval_file_name: str,
     dnn_output_columns: list[str],
     is_data: bool,
+    sum_weights: float = 1.0,
 ) -> tuple[ak.Array, float]:
     # load the klub file
-    klub_array = load_klub_file(skim_directory, sample_name, klub_file_name, is_data)
+    if is_data:
+        assert sum_weights == 1.0
+    else:
+        assert sum_weights != 1.0
+
+    klub_array = load_klub_file(skim_directory, sample_name, klub_file_name, sum_weights, is_data)
 
     # load the dnn output file
     if eval_directory:
@@ -198,6 +205,7 @@ def fill_hists(binnings: dict,
                eval_directory: str,
                sample_name: str,
                klub_file_name: str,
+               sum_weights: float = 1.0, 
                variable_pattern: str = "pdnn_m{mass}_s{spin}_hh"):
 
     # corresponding eval file name
@@ -247,8 +255,8 @@ def fill_hists(binnings: dict,
                     hist_name = (variable_name if nuisance.is_nominal else f"{variable_name}_{nuisance.name}{direction}")
                     varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
                     varied_weight_field = nuisance.get_varied_full_weight(direction)
-                    #full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
-                    combine_name = ShapeNuisance.get_combine_name(hist_name, year=datacard_year)
+                    full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
+                    combine_name = nuisance.get_combine_name(year=datacard_year)
 
                     h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                     h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
@@ -277,6 +285,7 @@ def main():
         parser.add_argument("--eval-directory", "-e", type=str, required=True)
         parser.add_argument("--output-directory", "-o", type=str, required=True)
         parser.add_argument("--sample-name", "-n", type=str, required=True)
+        parser.add_argument("--sum-weights", "-w", type=float, default=1.0)
         parser.add_argument("--klub-file-name", "-k", type=str, required=True)
         return parser
     
@@ -290,7 +299,6 @@ def main():
                        args.eval_directory,
                        args.sample_name,
                        args.klub_file_name,)
-    from IPython import embed; embed()
     write_root_file(hists,
                     args.output_directory,
                     args.sample_name,
