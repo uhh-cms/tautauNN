@@ -142,7 +142,7 @@ class NNInterface(object):
         f.httfatjet_pz = f.htt_pz + f.fatjet_pz
 
         # mask bjet-related features when there was actually no bjet pair
-        bj_mask = f.has_bjet_pair == 1
+        bj_mask = f.has_bjet_pair != 1
         f.bjet1_e[bj_mask] = f.bjet1_px[bj_mask] = f.bjet1_py[bj_mask] = f.bjet1_pz[bj_mask] = 0.0  # noqa
         f.bjet2_e[bj_mask] = f.bjet2_px[bj_mask] = f.bjet2_py[bj_mask] = f.bjet2_pz[bj_mask] = 0.0  # noqa
         f.bjet1_btag_df[bj_mask] = f.bjet1_cvsb[bj_mask] = f.bjet1_cvsl[bj_mask] = -1.0
@@ -151,7 +151,7 @@ class NNInterface(object):
         f.htthbb_e[bj_mask] = f.htthbb_px[bj_mask] = f.htthbb_py[bj_mask] = f.htthbb_pz[bj_mask] = 0.0  # noqa
 
         # mask fatjet features when there was actually no fatjet
-        fj_mask = f.is_boosted == 1
+        fj_mask = f.is_boosted != 1
         f.fatjet_e[fj_mask] = f.fatjet_px[fj_mask] = f.fatjet_py[fj_mask] = f.fatjet_pz[fj_mask] = 0.0  # noqa
 
         # build input tensors
