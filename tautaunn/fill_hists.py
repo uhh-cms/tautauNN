@@ -15,7 +15,7 @@ from tautaunn.shape_nuisances import shape_nuisances, ShapeNuisance
 from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years
 
 from tautaunn.cat_selectors import selector, sel_baseline, category_factory
-from tautaunn.config import luminosities
+from tautaunn.config import luminosities, Sample, get_sample
 
 _spins = [0,2]
 _masses = [250,260,270,280,300,320,350,400,450,500,550,600,650,700,750,800,850,900,1000,1250,1500,1750,2000,2500,3000]
@@ -58,6 +58,7 @@ for channel in channels:
                 **sel.extra,
             }
 
+del channel, name, sel, year
 
 def load_klub_file(skim_directory: str,
                    sample_name: str,
@@ -223,12 +224,18 @@ def fill_hists(binnings: dict,
         for spin, mass in itertools.product(_spins, _masses)
     ]
 
-    # get the process name
-    process = sample_name_to_process(sample_name)
-
     # get the year
     year = skim_directory_to_year(skim_directory) 
     datacard_year = datacard_years[year]
+    # get the process name
+    process = sample_name_to_process(sample_name)
+    # in case of signal reduce cols to the ones we need
+    sample = get_sample(f"{year}_{sample_name}")
+    if sample.is_signal:
+        dnn_output_columns = [c for c in dnn_output_columns if
+                              ((f"_m{int(sample.mass)}_" in c)
+                              and (f"_s{int(sample.spin)}_" in c))]
+
     # load the files
     array = load_file(skim_directory,
                       eval_directory,
@@ -239,12 +246,13 @@ def fill_hists(binnings: dict,
                       is_data,
                       sum_weights)
 
-    hists = defaultdict(lambda: defaultdict(dict))
+    hists = {} 
 
     for key, bin_edges in binnings.items():
         cat_name, s, m = key.split("__")
         spin, mass = s[1:], m[1:]
-
+        if sample.is_signal and ((int(spin) != sample.spin) or (int(mass) != sample.mass)):
+            continue
         for region in ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]:
             cat = categories[cat_name.replace("os_iso", region)]
             cat_array = array[cat["selection"](array, year=year)]
@@ -269,7 +277,7 @@ def fill_hists(binnings: dict,
 
                     h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                     h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
-                    hists[cat["channel"]][region][combine_name] = h
+                    hists[f"{combine_name}__{cat['channel']}__{region}__s{spin}__m{mass}"] = h
     return hists
 
 
