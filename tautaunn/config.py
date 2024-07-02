@@ -148,6 +148,10 @@ class Sample:
     @property
     def year_flag(self) -> int:
         return self.YEAR_FLAGS[self.year]
+    
+    @property
+    def is_signal(self) -> bool:
+        return self.name.startswith(("Rad", "Grav"))
 
     @property
     def is_data(self) -> bool:
