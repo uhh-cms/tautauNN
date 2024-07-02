@@ -93,10 +93,11 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
 
             
     def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
+        #return {
+            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            #for skim_name in self.skim_names
+        #}
+        return
     
     def output(self):
         # prepare the output directory
@@ -121,13 +122,16 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         from tautaunn.get_binning import get_binnings
         
         # prepare inputs
-        inp = self.input()
+        # inp = self.input()
 
         
         # prepare skim and eval directories
         skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
-        eval_directory = inp[self.skim_names[0]].collection.dir.parent.path
-
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
+        eval_directory = os.path.join(eval_dir, self.year)
         # define arguments
         binning_kwargs = dict(
             spin=list(self.spins),
@@ -213,36 +217,31 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
         "default: 'pdnn_m{mass}_s{spin}_hh'",
     )
+    binning_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a binning file; default: ''",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.sample_name, self.skim_year = self.split_skim_name(self.skim_name)
+
 
     def requires(self):
-        evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
-        get_binning_requirement =  GetBinning.req(self,
-                                                    year=self.year,
-                                                    spins=self.spins,
-                                                    masses=self.masses,
-                                                    categories=self.categories,
-                                                    binning=self.binning,
-                                                    n_bins=self.n_bins,
-                                                    variable=self.variable)
-        get_sumw_requirement = GetSumW.req(self, year=self.year)
-
-        # TODO: also add option for stacked histogramming to GetBinning and FillHists
-        #if self.stacked:
-            #get_binning_requirement = GetBinning.req(self,
-                                                     #stacked=True,
-                                                     #spins=self.spins,
-                                                     #masses=self.masses,
-                                                     #categories=self.categories,
-                                                     #binning=self.binning,
-                                                     #n_bins=self.n_bins,
-                                                     #variable=self.variable)
-            #get_sumw_requirement = {year: GetSumW.req(self, year=year)
-                                    #for year in ["2016", "2016APV", "2017", "2018"]} 
-        return (evaluate_skims_requirement, get_binning_requirement, get_sumw_requirement)
+        #evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
+        get_sumw_requirement = GetSumW.req(self, year=self.skim_year)
+        if self.binning_file == law.NO_STR:
+            get_binning_requirement = GetBinning.req(self,
+                                                     year=self.skim_year,
+                                                     spins=self.spins,
+                                                     masses=self.masses,
+                                                     binning=self.binning,
+                                                     n_bins=self.n_bins,
+                                                     variable=self.variable)
+            return get_sumw_requirement, get_binning_requirement
+        else:
+            return get_sumw_requirement
 
     
     def store_parts(self):
@@ -250,10 +249,52 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         
 
     def output(self):
-        return law.FileCollection({num: self.local_target(f"output_{num}_hists.root", type="f")
-                                   for num in self.skim_nums}) 
+        return self.local_target(f"output_{self.branch_data}_hists.root")
+
 
     def run(self):
-        pass
+        from tautaunn.fill_hists import fill_hists, write_root_file
+        inp = self.input()
+        if isinstance(inp, tuple):
+            assert inp[0].exists(), f"sum_weights file {inp[0]} does not exist"
+            assert inp[1].exists(), f"binnings file {inp[1]} does not exist"
+        else:
+            assert inp.exists(), f"sum_weights file {inp} does not exist"
+            if self.binning_file == law.NO_STR:
+                raise ValueError("binning file is not provided")
+
+        binnings_file = inp[1].path if isinstance(inp, tuple) else self.binning_file
+        sum_weights_file = inp[0].path if isinstance(inp, tuple) else inp.path
+        with open(binnings_file, "r") as file:
+            binnings = json.load(file)
+        with open(sum_weights_file, "r") as file:
+            sum_weights = json.load(file)
         
+        sum_w = sum_weights[self.sample_name]
+        # hardcode eval dir 
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
+
+        
+        hists = fill_hists(binnings=binnings,
+                           skim_directory=self.skim_dir,
+                           eval_directory=os.path.join(eval_dir, self.skim_year),
+                           sample_name=self.sample_name,
+                           klub_file_name=f"output_{self.branch_data}.root",
+                           sum_weights=sum_w,)
+        write_root_file(hists=hists,
+                        filepath=self.output().path)
+        
+
+class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
+
+    def requires(self):
+        return {
+            skim_name: FillHists.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
+
+                           
 

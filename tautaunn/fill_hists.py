@@ -22,7 +22,9 @@ _masses = [250,260,270,280,300,320,350,400,450,500,550,600,650,700,750,800,850,9
 
 
 def skim_directory_to_year(skim_directory: str) -> str:
-    year_suffix = skim_directory.split("/")[-1].split("_")[-1]
+    skim_drectory_list = skim_directory.split("/")
+    year_idx = skim_drectory_list.index("HHSkims") + 1
+    year_suffix = skim_drectory_list[year_idx].split("_")[-1]
     if year_suffix in ["2016", "2017", "2018", "2016APV"]:
         return year_suffix
     elif year_suffix.startswith("UL"):
@@ -228,7 +230,14 @@ def fill_hists(binnings: dict,
     year = skim_directory_to_year(skim_directory) 
     datacard_year = datacard_years[year]
     # load the files
-    array = load_file(skim_directory, eval_directory, sample_name, klub_file_name, eval_file_name, dnn_output_columns, is_data)
+    array = load_file(skim_directory,
+                      eval_directory,
+                      sample_name,
+                      klub_file_name,
+                      eval_file_name,
+                      dnn_output_columns,
+                      is_data,
+                      sum_weights)
 
     hists = defaultdict(lambda: defaultdict(dict))
 
@@ -265,10 +274,8 @@ def fill_hists(binnings: dict,
 
 
 def write_root_file(hists: dict,
-                    output_dir: str,
-                    sample_name: str,
-                    output_file_name: str) -> None:
-    with uproot.recreate(os.path.join(output_dir, sample_name, output_file_name)) as f:
+                    filepath: str,):
+    with uproot.recreate(filepath) as f:
         for channel, regions in hists.items():
             for region, hist_dict in regions.items():
                 for hist_name, hist in hist_dict.items():
