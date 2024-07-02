@@ -43,7 +43,6 @@ def get_sumw(skim_directory: str,
         pbar.set_description(f"Processing {process}")
         if process_data.get("data", False):
             continue
-        print(f"Processing {process}")
         for pattern in process_data["sample_patterns"]:
             samples = glob(os.path.join(skim_directory, pattern))
             for sample in samples:
@@ -60,8 +59,8 @@ def main():
     args = parser.parse_args()
     sum_weights = get_sumw(args.skim_directory,
                            args.output_directory)
-    from IPython import embed; embed()
-    with open(os.path.join(args.output_directory, "sum_weights.json"), "w") as file:
+    filename = os.path.join(args.output_directory, "sum_weights.json")
+    with open(filename, "w") as file:
         json.dump(sum_weights, file)
         
 

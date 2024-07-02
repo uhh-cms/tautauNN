@@ -162,7 +162,8 @@ class GetSumW(Task):
 
     def output(self):
         dirname = f"{self.year}"
-        return self.local_target(f"{dirname}/sum_weights.json", type="f")
+        d = self.local_target(dirname, dir=True)
+        return d.child("sum_weights.json", type="f")
 
     def run(self):
         from tautaunn.get_sumw import get_sumw
@@ -172,6 +173,8 @@ class GetSumW(Task):
 
         skim_directory = os.environ[f"TN_SKIMS_{self.year}"]
         output_directory = self.output().abs_dirname
+        if not os.path.exists(output_directory):
+            os.makedirs(output_directory)
         # define arguments
         get_sumw(
             skim_directory=skim_directory,
