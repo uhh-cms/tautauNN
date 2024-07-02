@@ -93,29 +93,26 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
 
             
     def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
-        return
+        return {
+            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
+        #return
     
     def output(self):
         # prepare the output directory
-        dirname = f"{self.binning}{self.n_bins}"
+        dirname = f"{self.year}/{self.binning}{self.n_bins}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
-        pathlist = d.abs_dirname.split("/")
+        pathlist = d.path.split("/")
         path_user = pathlist[int(pathlist.index("user")+1)]
         if path_user != os.environ["USER"]: 
-            abspath = d.abs_dirname.replace(path_user, os.environ["USER"])
-            print(f"changing output path from {d.abs_dirname} to {abspath}")
-            yn = input("continue? [y/n] ")
-            if yn.lower() != "y":
-                abspath = input("enter the correct path (should point to your $TN_STORE_DIR/GetBinning): ")
-            d = law.LocalDirectoryTarget(abspath)
-        return d.child("binnings.json", type="f")
+            new_path = d.path.replace(path_user, os.environ["USER"])
+            print(f"changing output path from {d.path} to {new_path}")
+        d = self.local_target(new_path, dir=True)
+        return d.child("bin_edges.json", type="f")
 
 
     def run(self):
@@ -123,8 +120,8 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         
         # prepare inputs
         # inp = self.input()
-
         
+        from IPython import embed; embed()
         # prepare skim and eval directories
         skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
@@ -139,7 +136,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
             category=self.categories,
             skim_directory=skim_directory,
             eval_directory=eval_directory,
-            output_directory=self.output().abs_dirname,
+            output_file=self.output().path,
             variable_pattern=self.variable,
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
@@ -194,7 +191,7 @@ class FillHistsWorkflow(SkimWorkflow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-        self.chunk_size = 10
+        #self.chunk_size = 10
         
 
 class FillHists(FillHistsWorkflow, EvaluationParameters):

@@ -339,7 +339,7 @@ def get_binnings(
     category: str | Sequence[str],
     skim_directory: str,
     eval_directory: str,
-    output_directory: str,
+    output_file: str,
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     sample_names: list[str] | None = None,
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flatsguarded"),
@@ -405,11 +405,6 @@ def get_binnings(
             continue
         sample_map[process_name] = _sample_names
 
-    # ensure that the output directory exists
-    output_directory = os.path.expandvars(os.path.expanduser(output_directory))
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-
     # prepare dnn output columns
     dnn_output_columns = [
         "DNNoutSM_kl_1",
@@ -465,12 +460,10 @@ def get_binnings(
         ))
     print("done")
 
-    # write bin edges into a file
-    bin_edges_file = os.path.join(output_directory, "bin_edges.json")
     # load them first when the file is existing
     all_bin_edges = {}
-    if os.path.exists(bin_edges_file):
-        with open(bin_edges_file, "r") as f:
+    if os.path.exists(output_file):
+        with open(output_file, "r") as f:
             all_bin_edges = json.load(f)
     # update with new bin edges
     for args, edges in zip(datacard_args, binning_results):
@@ -481,7 +474,7 @@ def get_binnings(
             continue
         all_bin_edges[key] = edges
     # write them
-    with open(bin_edges_file, "w") as f:
+    with open(output_file, "w") as f:
         json.dump(all_bin_edges, f, indent=4)
 
 
