@@ -6,6 +6,7 @@ import re
 import time
 import itertools
 from collections import defaultdict
+import json
 
 import luigi
 import law
@@ -176,10 +177,13 @@ class GetSumW(Task):
         if not os.path.exists(output_directory):
             os.makedirs(output_directory)
         # define arguments
-        get_sumw(
+        sum_weights = get_sumw(
             skim_directory=skim_directory,
             output_directory=output_directory,
         )
+        filename = os.path.join(output_directory, "sum_weights.json")
+        with open(filename, "w") as file:
+            json.dump(sum_weights, file)
 
 
 class FillHistsWorkflow(SkimWorkflow):
