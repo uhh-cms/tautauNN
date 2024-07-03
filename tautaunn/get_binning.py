@@ -18,6 +18,7 @@ from typing import Any, Sequence
 from functools import reduce
 from operator import mul
 from fnmatch import fnmatch
+from pathlib import Path
 
 import uproot
 import numpy as np
@@ -35,7 +36,8 @@ from tautaunn.write_datacards_stack import processes
 from tautaunn.cat_selectors import selector, sel_baseline
 
 
-skip_files = ["/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16/MuonH/output_45.root"]
+#skip_files = ["/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16/MuonH/output_45.root"]
+skip_files = []
 
 klub_weight_columns = [
     "MC_weight",
@@ -168,7 +170,7 @@ def load_file(
 ) -> tuple[ak.Array, float]:
     eval_file_name = klub_file_name.replace(".root", "_systs.root")
     if not os.path.exists(os.path.join(eval_directory, sample_name, eval_file_name)):
-        raise Exception(f"evaluation file {eval_file_name} does not exist")
+        raise Exception(f"evaluation file {os.path.join(eval_directory, sample_name, eval_file_name)} does not exist")
     # load the klub file
     klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, klub_file_name)
 
@@ -474,6 +476,8 @@ def get_binnings(
             continue
         all_bin_edges[key] = edges
     # write them
+    if not Path(output_file).parent.exists():
+        Path(output_file).parent.mkdir(parents=True)
     with open(output_file, "w") as f:
         json.dump(all_bin_edges, f, indent=4)
 
@@ -709,6 +713,8 @@ def _get_binning(
             # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
             # constraints; however, this should practically never happen
             stop_reason = "no more events left while trying to fulfill constraints"
+            if len(bin_edges) > 1:
+                bin_edges.pop()
             break
         # next_idx found, update values
         edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
