@@ -246,10 +246,11 @@ def fill_hists(binnings: dict,
                       is_data,
                       sum_weights)
 
-    hists = {} 
+    hists = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
     for key, bin_edges in binnings.items():
-        cat_name, s, m = key.split("__")
+        cat_name, s, m = key.split("__") # cat_name is of the form year_channel_jet-cat_region__s{spin}_m{mass}
+        jet_cat = cat_name.split("_")[2] # jet category like reolved{1,2}b, boosted
         spin, mass = s[1:], m[1:]
         if sample.is_signal and ((int(spin) != sample.spin) or (int(mass) != sample.mass)):
             continue
@@ -277,17 +278,18 @@ def fill_hists(binnings: dict,
 
                     h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                     h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
-                    hists[f"{combine_name}__{cat['channel']}__{region}__s{spin}__m{mass}"] = h
+                    hists[cat['channel']][jet_cat][region][f"{combine_name}__s{spin}__m{mass}"] = h
     return hists
 
 
 def write_root_file(hists: dict,
                     filepath: str,):
     with uproot.recreate(filepath) as f:
-        for channel, regions in hists.items():
-            for region, hist_dict in regions.items():
-                for hist_name, hist in hist_dict.items():
-                    f[f"{channel}/{region}/{hist_name}"] = hist
+        for channel, cat_dict in hists.items():
+            for jet_cat, region_dict in cat_dict.items():
+                for region, hist_dict in region_dict.items():
+                    for name, hist in hist_dict.items():
+                        f[f"{channel}/{jet_cat}/{region}/{name}"] = hist
 
 
 def main():
