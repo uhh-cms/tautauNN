@@ -111,7 +111,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         if path_user != os.environ["USER"]: 
             new_path = d.path.replace(path_user, os.environ["USER"])
             print(f"changing output path from {d.path} to {new_path}")
-        d = self.local_target(new_path, dir=True)
+            d = self.local_target(new_path, dir=True)
         return d.child("bin_edges.json", type="f")
 
 
@@ -121,13 +121,14 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         # prepare inputs
         # inp = self.input()
         
-        from IPython import embed; embed()
         # prepare skim and eval directories
         skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                     "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directory = os.path.join(eval_dir, self.year)
         # define arguments
         binning_kwargs = dict(
@@ -224,6 +225,16 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
 
         self.sample_name, self.skim_year = self.split_skim_name(self.skim_name)
 
+
+    @property
+    def priority(self):
+        # higher priority value = picked earlier by scheduler
+        # priotize (tt, ttH, ttZ > data > rest) across all years
+        if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToLLNuNu)$", self.sample.name):
+            return 10
+        if re.match(r"^(EGamma|MET|Muon|Tau)(A|B|C|D|E|F|G|H)$", self.sample.name):
+            return 5
+        return 1
 
     def requires(self):
         #evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
