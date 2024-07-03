@@ -278,7 +278,11 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         with open(sum_weights_file, "r") as file:
             sum_weights = json.load(file)
         
-        sum_w = sum_weights[self.sample_name]
+        sample = cfg.Sample(self.sample_name, year=self.skim_year)
+        if sample.is_data:
+            sum_w = 1.0
+        else:
+            sum_w = sum_weights[self.sample_name]
         # hardcode eval dir 
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"

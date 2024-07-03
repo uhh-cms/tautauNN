@@ -82,6 +82,7 @@ def load_klub_file(skim_directory: str,
     if is_data:
         # fake weight for data
         array = ak.with_field(array, 1.0, "full_weight_nominal")
+        persistent_columns.append("full_weight_nominal")
     else:
         # aliases do not work with filter_name for some reason, so swap names manually
         array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
@@ -230,7 +231,9 @@ def fill_hists(binnings: dict,
     # get the process name
     process = sample_name_to_process(sample_name)
     # in case of signal reduce cols to the ones we need
-    sample = get_sample(f"{year}_{sample_name}")
+    sample = get_sample(f"{year}_{sample_name}", silent=True)
+    if sample is None:
+        sample = Sample(sample_name, year=year)
     if sample.is_signal:
         dnn_output_columns = [c for c in dnn_output_columns if
                               ((f"_m{int(sample.mass)}_" in c)
@@ -258,27 +261,32 @@ def fill_hists(binnings: dict,
             cat = categories[cat_name.replace("os_iso", region)]
             cat_array = array[cat["selection"](array, year=year)]
             variable_name = variable_pattern.format(mass=mass, spin=spin)
-            
-            # shape nuisances also contains nominal so we can loop over all and this
-            # should get us all branches we need
-            for nuisance in shape_nuisances.values():
+            if is_data:
+                from IPython import embed; embed()
+                h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
+                h.fill(cat_array[variable_name], weight=cat_array["full_weight_nominal"])
+                hists[cat['channel']][jet_cat][region][f"{process}__{year}"] = h
+            else:
+                # shape nuisances also contains nominal so we can loop over all and this
+                # should get us all branches we need
+                for nuisance in shape_nuisances.values():
 
-                if not nuisance.is_nominal and not nuisance.applies_to_channel(cat["channel"]): 
-                    continue
-                
-                if not nuisance.applies_to_process(process):
-                    continue
+                    if not nuisance.is_nominal and not nuisance.applies_to_channel(cat["channel"]): 
+                        continue
+                    
+                    if not nuisance.applies_to_process(process):
+                        continue
 
-                for direction in nuisance.get_directions():
-                    hist_name = (variable_name if nuisance.is_nominal else f"{variable_name}_{nuisance.name}{direction}")
-                    varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
-                    varied_weight_field = nuisance.get_varied_full_weight(direction)
-                    full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
-                    combine_name = nuisance.get_combine_name(year=datacard_year)
+                    for direction in nuisance.get_directions():
+                        hist_name = (variable_name if nuisance.is_nominal else f"{variable_name}_{nuisance.name}{direction}")
+                        varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
+                        varied_weight_field = nuisance.get_varied_full_weight(direction)
+                        full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
+                        combine_name = nuisance.get_combine_name(year=datacard_year)
 
-                    h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
-                    h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
-                    hists[cat['channel']][jet_cat][region][f"{combine_name}__s{spin}__m{mass}"] = h
+                        h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
+                        h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
+                        hists[cat['channel']][jet_cat][region][f"{combine_name}__s{spin}__m{mass}"] = h
     return hists
 
 
