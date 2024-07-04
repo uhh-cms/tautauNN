@@ -212,12 +212,10 @@ ShapeNuisance.new(
 ShapeNuisance.new(
     name="id_tauid_2d_systcorrerasgt140",  # TODO: update name
     weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrerasgt140_up", "idFakeSF_tauid_2d_systcorrerasgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="id_tauid_2d_statgt140",  # TODO: update name
     weights={"idFakeSF": ("idFakeSF_tauid_2d_statgt140_up", "idFakeSF_tauid_2d_statgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="id_etauFR_barrel",
@@ -248,7 +246,6 @@ ShapeNuisance.new(
     name="id_mutauFR_etaGt1p2to1p7",
     combine_name="CMS_bbtt_mutauFR_eta1p2to1p7_{year}",
     weights={"idFakeSF": ("idFakeSF_mutauFR_eta1p2to1p7_up", "idFakeSF_mutauFR_eta1p2to1p7_down")},
-    skip=True,  # TODO: was not cached before! add back again when caching from scratch
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p7",
@@ -264,51 +261,43 @@ ShapeNuisance.new(
     name="trigSF_DM0",
     combine_name="CMS_bbtt_{year}_trigSFTauDM0",
     weights={"trigSF": ("trigSF_DM0_up", "trigSF_DM0_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM1",
     combine_name="CMS_bbtt_{year}_trigSFTauDM1",
     weights={"trigSF": ("trigSF_DM1_up", "trigSF_DM1_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM10",
     combine_name="CMS_bbtt_{year}_trigSFTauDM10",
     weights={"trigSF": ("trigSF_DM10_up", "trigSF_DM10_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM11",
     combine_name="CMS_bbtt_{year}_trigSFTauDM11",
     weights={"trigSF": ("trigSF_DM11_up", "trigSF_DM11_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_met",
     combine_name="CMS_bbtt_{year}_trigSFMET",
     weights={"trigSF": ("trigSF_met_up", "trigSF_met_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_stau",
     combine_name="CMS_bbtt_{year}_trigSFSingleTau",
     weights={"trigSF": ("trigSF_stau_up", "trigSF_stau_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_ele",
     combine_name="CMS_bbtt_{year}_trigSFEle",
     weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
     channels={"etau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_mu",
     combine_name="CMS_bbtt_{year}_trigSFEMu",
     weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
     channels={"mutau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="ees_DM0",
@@ -340,11 +329,15 @@ ShapeNuisance.new(
     combine_name="CMS_scale_t_DM11_{year}",
     discriminator_suffix=("tes_DM11_up", "tes_DM11_down"),
 )
-# TODO: potentially replace by 1% uncertainty on muon energy scale (to be done in dnn evaluation?)
 ShapeNuisance.new(
     name="mes",
     combine_name="CMS_scale_t_muFake_{year}",
     discriminator_suffix=("mes_up", "mes_down"),
+)
+ShapeNuisance.new(
+    name="PUReweight",
+    combine_name="CMS_pileup_{year}",
+    weights={"PUReweight": ("PUReweight_up", "PUReweight_down")},
 )
 
 jes_names = {
@@ -549,8 +542,9 @@ stat_model = {
     "qqHH_pythiaDipoleOn": {
         "qqHH_*": "0.781/1.219",
     },
-    # TODO: we do not have pu uncertainties in KLUB, so 1% is just a guess at this point
-    "CMS_pileup_{year}": {"!QCD": "1.01"},
+    # temporary channel dependent uncertainties
+    "CMS_eff_e": {"!QCD": {"*etau*": "1.01"}},
+    "CMS_eff_m": {"!QCD": {"*mutau*": "1.01"}},
     # year dependent (both the selection of nuisances and their effect depend on the year)
     "lumi_13TeV_2016": {"!QCD": {"2016*": "1.010"}},
     "lumi_13TeV_2017": {"!QCD": {"2017": "1.020"}},
@@ -922,8 +916,15 @@ def load_klub_file(
         if field not in persistent_columns:
             array = ak.without_field(array, field)
 
-    # also get the sum of generated weights
-    sum_gen_mc_weights = len(array) if is_data else float(f["h_eff"].values()[0])
+    # also get the sum of generated weights, for nominal and pu variations
+    sum_gen_mc_weights = {
+        key: len(array) if is_data else float(f["h_eff"].values()[hist_idx])
+        for key, hist_idx in [
+            ("nominal", 0),
+            ("PUReweight_up", 4),
+            ("PUReweight_down", 5),
+        ]
+    }
 
     return array, sum_gen_mc_weights
 
@@ -1108,14 +1109,22 @@ def load_sample_data(
 
         # combine values
         array = ak.concatenate([arr for arr, _ in ret], axis=0)
-        sum_gen_mc_weights = sum(f for _, f in ret)
+        sum_gen_mc_weights = defaultdict(float)
+        for _, weight_dict in ret:
+            for key, sum_weights in weight_dict.items():
+                sum_gen_mc_weights[key] += sum_weights
         del ret
         gc.collect()
 
         # update the full weight
         for field in array.fields:
             if field.startswith("full_weight_"):
-                array = ak.with_field(array, array[field] / sum_gen_mc_weights, field)
+                for key, sum_weights in sum_gen_mc_weights.items():
+                    if field.endswith(key):
+                        break
+                else:
+                    sum_weights = sum_gen_mc_weights["nominal"]
+                array = ak.with_field(array, array[field] / sum_weights, field)
 
         # add to cache?
         if cache_path:
