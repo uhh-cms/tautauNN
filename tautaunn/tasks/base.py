@@ -211,7 +211,8 @@ class HTCondorWorkflow(Task, law.htcondor.HTCondorWorkflow):
             config.custom_content.append(("MY.WantOS", "el9"))
         elif self.htcondor_flavor == "naf":
             # https://confluence.desy.de/display/IS/BIRD
-            config.custom_content.append(("requirements", "(OpSysAndVer == \"CentOS7\")"))  # noqa
+            # config.custom_content.append(("requirements", "(OpSysAndVer == \"CentOS7\")"))  # noqa
+            config.custom_content.append(("requirements", "(OpSysAndVer == \"RedHat9\")"))  # noqa
 
         # maximum runtime, compatible with multiple batch systems
         if self.max_runtime is not None and self.max_runtime > 0:
