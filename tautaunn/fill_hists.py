@@ -262,7 +262,6 @@ def fill_hists(binnings: dict,
             cat_array = array[cat["selection"](array, year=year)]
             variable_name = variable_pattern.format(mass=mass, spin=spin)
             if is_data:
-                from IPython import embed; embed()
                 h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
                 h.fill(cat_array[variable_name], weight=cat_array["full_weight_nominal"])
                 hists[cat['channel']][jet_cat][region][f"{process}__{year}"] = h
