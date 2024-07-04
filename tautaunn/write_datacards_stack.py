@@ -212,12 +212,10 @@ ShapeNuisance.new(
 ShapeNuisance.new(
     name="id_tauid_2d_systcorrerasgt140",  # TODO: update name
     weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrerasgt140_up", "idFakeSF_tauid_2d_systcorrerasgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="id_tauid_2d_statgt140",  # TODO: update name
     weights={"idFakeSF": ("idFakeSF_tauid_2d_statgt140_up", "idFakeSF_tauid_2d_statgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="id_etauFR_barrel",
@@ -248,7 +246,6 @@ ShapeNuisance.new(
     name="id_mutauFR_etaGt1p2to1p7",
     combine_name="CMS_bbtt_mutauFR_eta1p2to1p7_{year}",
     weights={"idFakeSF": ("idFakeSF_mutauFR_eta1p2to1p7_up", "idFakeSF_mutauFR_eta1p2to1p7_down")},
-    skip=True,  # TODO: was not cached before! add back again when caching from scratch
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p7",
@@ -264,51 +261,43 @@ ShapeNuisance.new(
     name="trigSF_DM0",
     combine_name="CMS_bbtt_{year}_trigSFTauDM0",
     weights={"trigSF": ("trigSF_DM0_up", "trigSF_DM0_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM1",
     combine_name="CMS_bbtt_{year}_trigSFTauDM1",
     weights={"trigSF": ("trigSF_DM1_up", "trigSF_DM1_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM10",
     combine_name="CMS_bbtt_{year}_trigSFTauDM10",
     weights={"trigSF": ("trigSF_DM10_up", "trigSF_DM10_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_DM11",
     combine_name="CMS_bbtt_{year}_trigSFTauDM11",
     weights={"trigSF": ("trigSF_DM11_up", "trigSF_DM11_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_met",
     combine_name="CMS_bbtt_{year}_trigSFMET",
     weights={"trigSF": ("trigSF_met_up", "trigSF_met_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_stau",
     combine_name="CMS_bbtt_{year}_trigSFSingleTau",
     weights={"trigSF": ("trigSF_stau_up", "trigSF_stau_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_ele",
     combine_name="CMS_bbtt_{year}_trigSFEle",
     weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
     channels={"etau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_mu",
     combine_name="CMS_bbtt_{year}_trigSFEMu",
     weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
     channels={"mutau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="ees_DM0",
@@ -340,7 +329,6 @@ ShapeNuisance.new(
     combine_name="CMS_scale_t_DM11_{year}",
     discriminator_suffix=("tes_DM11_up", "tes_DM11_down"),
 )
-# TODO: potentially replace by 1% uncertainty on muon energy scale (to be done in dnn evaluation?)
 ShapeNuisance.new(
     name="mes",
     combine_name="CMS_scale_t_muFake_{year}",
