@@ -189,34 +189,33 @@ ShapeNuisance.new(
     combine_name="CMS_btag_cfeff2_{year}",
     weights={"bTagweightReshape": ("bTagweightReshape_cferr2_up", "bTagweightReshape_cferr2_down")},
 )
-ShapeNuisance.new(
-    name="id_tauid_2d_stat0",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat0_up", "idFakeSF_tauid_2d_stat0_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_stat1",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat1_up", "idFakeSF_tauid_2d_stat1_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrdmeras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmeras_up", "idFakeSF_tauid_2d_systcorrdmeras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrdmuncorreras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmuncorreras_up", "idFakeSF_tauid_2d_systcorrdmuncorreras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systuncorrdmeras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systuncorrdmeras_up", "idFakeSF_tauid_2d_systuncorrdmeras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrerasgt140",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrerasgt140_up", "idFakeSF_tauid_2d_systcorrerasgt140_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_statgt140",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_statgt140_up", "idFakeSF_tauid_2d_statgt140_down")},
-)
+
+for (name, add_year) in [
+    ("stat0_DM0", True),
+    ("stat1_DM0", True),
+    ("systuncorrdmeras_DM0", True),
+    ("stat0_DM1", True),
+    ("stat1_DM1", True),
+    ("systuncorrdmeras_DM1", False),
+    ("stat0_DM10", False),
+    ("stat1_DM10", False),
+    ("systuncorrdmeras_DM10", False),
+    ("stat0_DM11", False),
+    ("stat1_DM11", False),
+    ("systuncorrdmeras_DM11", False),
+    ("systcorrdmeras", False),
+    ("systcorrdmuncorreras", True),
+    ("systcorrerasgt140", False),
+    ("stat0gt140", True),
+    ("stat1gt140", True),
+    ("extrapgt140", False),
+]:
+    ShapeNuisance.new(
+        name=f"id_tauid_2d_{name}",
+        combine_name=f"CMS_eff_t_{name}" + (r"_{year}" if add_year else ""),
+        weights={"idFakeSF": (f"idFakeSF_tauid_2d_{name}_up", f"idFakeSF_tauid_2d_{name}_down")},
+    )
+
 ShapeNuisance.new(
     name="id_etauFR_barrel",
     combine_name="CMS_bbtt_etauFR_barrel_{year}",
@@ -338,6 +337,11 @@ ShapeNuisance.new(
     name="PUReweight",
     combine_name="CMS_pileup_{year}",
     weights={"PUReweight": ("PUReweight_up", "PUReweight_down")},
+)
+ShapeNuisance.new(
+    name="l1_prefiring",
+    combine_name="CMS_l1_prefiring_{year}",
+    weights={"L1pref_weight": ("L1pref_weight_up", "L1pref_weight_down")},
 )
 
 jes_names = {
@@ -769,6 +773,15 @@ def category_factory(channel: str) -> dict[str, Callable]:
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
+    @selector(needs=["tauH_mass", "bH_mass"])
+    def sel_mass_window(array: ak.Array) -> ak.Array:
+        return (
+            (array.tauH_mass >= 20.0) &
+            (array.tauH_mass <= 130.0) &
+            (array.bH_mass >= 40.0) &
+            (array.bH_mass <= 270.0)
+        )
+
     @selector(
         needs=[sel_baseline],
         channel=channel,
@@ -785,7 +798,8 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            sel_btag_m(array, **kwargs)
+            sel_btag_m(array, **kwargs) &
+            sel_mass_window(array, **kwargs)
         )
 
     @selector(
@@ -797,7 +811,8 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            sel_btag_mm(array, **kwargs)
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window(array, **kwargs)
         )
 
     @selector(
@@ -808,7 +823,8 @@ def category_factory(channel: str) -> dict[str, Callable]:
         return (
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
-            sel_boosted(array, **kwargs)
+            sel_boosted(array, **kwargs) &
+            sel_mass_window(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
