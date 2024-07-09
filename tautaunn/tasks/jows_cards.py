@@ -6,6 +6,7 @@ import re
 import time
 import itertools
 from collections import defaultdict
+from fnmatch import fnmatch
 import json
 
 import luigi
@@ -14,6 +15,7 @@ import numpy as np
 import tensorflow as tf
 import awkward as ak
 
+
 from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
@@ -21,6 +23,7 @@ from tautaunn.tf_util import get_device
 import tautaunn.config as cfg
 
 from tautaunn.tasks.datacards import EvaluateSkims
+from tautaunn.write_datacards_stack import processes
 
 
 class EvaluationParameters(MultiFoldParameters):
@@ -303,10 +306,64 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
 class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
 
     def requires(self):
+        # reduce requirements to only the skims that are actually listed in processes
+        # otherwise the task complains that there's no sum_w present for the skim
+        # get a flat list of all sample_patterns
+        sample_patterns = list(itertools.chain.from_iterable([processes[p]["sample_patterns"] for p in processes]))
         return {
             skim_name: FillHists.req(self, skim_name=skim_name)
             for skim_name in self.skim_names
+            if any(fnmatch(self.split_skim_name(skim_name)[0], pattern) for pattern in sample_patterns)
         }
 
                            
+class MergeHists(MultiSkimTask, Task):
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
 
+    def requires(self):
+        return FillHistsWrapper.req(self)
+    
+    def output(self):
+        o_dict = {}
+        for skim_name in self.skim_names:
+            sample_name, skim_year = self.split_skim_name(skim_name)
+            for process in processes:
+                if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
+                    if process not in o_dict:
+                        o_dict[process] = self.local_target(f"{skim_year}/{process}_hists.root")
+                    else:
+                        continue
+        return o_dict
+
+    def run(self):
+
+        from subprocess import Popen
+        from glob import glob
+        from tqdm import tqdm
+
+        def merge_sample(destination,
+                         skim_files,):
+                        
+            if not os.path.exists(os.path.dirname(destination)):
+                os.makedirs(os.path.dirname(destination))
+
+            with open(os.devnull, "w") as devnull:
+                process = Popen(["hadd", "-f", "-j", "5", destination, *skim_files], stdout=devnull) 
+            out, err = process.communicate()
+            if process.returncode != 0:
+                raise Exception(err)
+
+        inp = self.input()
+        pbar = tqdm(self.output().items())
+        for process, output in pbar: 
+            pbar.set_description(f"merging {process}")
+            skim_files = []
+            for skim_name in self.skim_names:
+                sample_name, skim_year = self.split_skim_name(skim_name)
+                if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
+                    skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
+            merge_sample(output.path, list(itertools.chain.from_iterable(skim_files)))
+            
