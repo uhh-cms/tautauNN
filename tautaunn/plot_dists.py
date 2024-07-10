@@ -15,6 +15,8 @@ from hist import Hist, Stack
 
 import matplotlib.pyplot as plt
 import mplhep as hep
+
+from tautaunn.write_datacards_stack import br_hh_bbtt
 hep.style.use("CMS")
 
 
@@ -178,14 +180,14 @@ def plot_mc_data_sig(data_hist: Hist,
                      cat: str,
                      savename: str | Path,
                      signal_name: str,
-                     sb_limit: float = 0.05, 
+                     sb_limit: float = 0.1, 
                      limit_value = None,
                      ) -> None:
 
     if limit_value is None:
         limit_value = 1
 
-    signal_hist *= limit_value
+    signal_hist *= limit_value * br_hh_bbtt
     mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # blind data
     data_hist.values()[~mask] = np.nan
@@ -215,7 +217,12 @@ def plot_mc_data_sig(data_hist: Hist,
     bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
     plot_mc_stat(bkgd_stack, ax1, mode="errorbar")
     data_hist.plot(color='black', ax=ax1, label="data", histtype='errorbar')
-    signal_hist.plot(color='black', ax=ax1, label=f"{signal_name} scaled to\nexp. limit: {limit_value:.1f} pb",)
+    label = (f"{signal_name}\n"
+            #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
+            f"$\\times$ exp. limit: {limit_value:.1f} [pb]\n"
+            "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
+    signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
+    #signal_hist.plot(color='black', ax=ax1, label=f"{signal_name} scaled to\nexp. limit: {limit_value:.1f} pb",)
     
     if any(mask):
         idx = np.where(mask)[0][-1] + 1
@@ -232,7 +239,8 @@ def plot_mc_data_sig(data_hist: Hist,
     min_y_sig = signal_hist.values().min()
     min_y = min(min_y_tt_dy, min_y_sig)
     max_y = sum(bkgd_stack).values().max()
-    ax1.set_ylim((min_y, 10 * max_y))
+    ax1.set_ylim((0.1*min_y, 100 * max_y))
+    #ax1.set_ylim((min_y, 10 * max_y))
     ax1.set_xlabel("")
     ax1.set_ylabel("Events")
     
@@ -295,8 +303,12 @@ def plot_partially_unblinded(bkgd_stack: hist.Stack,
     ax1.text(0.05, .91, f"{chn_map[channel]}\n{cat}", fontsize=15,transform=ax1.transAxes)
     bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
     # scale signal to the limit (must be given in pb) 
-    signal_hist *= limit_value
-    signal_hist.plot(color='black', ax=ax1, label=f"{signal_name}\nscaled to exp. limit: {limit_value:.1f} [pb]",) #signal_name)
+    signal_hist *= limit_value * br_hh_bbtt
+    label = (f"{signal_name}\n"
+              #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
+              f"$\\time$ exp. limit: {limit_value:.1f} [pb]\n"
+              "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
+    signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
     summed_hist = reduce(add, [h for h in bkgd_stack])
     # determine bins, where signal is lower than the limit
     mask = signal_hist.values() < 0.5 * summed_hist.values()
@@ -320,7 +332,7 @@ def plot_partially_unblinded(bkgd_stack: hist.Stack,
     min_y_sig = signal_hist.values().min()
     min_y = min(min_y_tt_dy, min_y_sig)
     max_y = summed_hist.values().max() 
-    ax1.set_ylim((min_y, 10 * max_y))
+    ax1.set_ylim((0.1*min_y, 100 * max_y))
 
     ax1.set_xlabel("")
     ax1.set_ylabel("Events")
@@ -378,7 +390,7 @@ def make_plots(input_dir: str | Path,
                              cat=cat,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.png",
-                             sb_limit=0.05,
+                             sb_limit=0.1,
                              limit_value=lim)
         else: 
             lim = None
