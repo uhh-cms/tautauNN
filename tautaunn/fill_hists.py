@@ -264,7 +264,7 @@ def fill_hists(binnings: dict,
             if is_data:
                 h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
                 h.fill(cat_array[variable_name], weight=cat_array["full_weight_nominal"])
-                hists[cat['channel']][jet_cat][region][f"{process}__{year}"] = h
+                hists[cat['channel']][jet_cat][region][f"{process}__s{spin}__m{mass}"] = h
             else:
                 # shape nuisances also contains nominal so we can loop over all and this
                 # should get us all branches we need
