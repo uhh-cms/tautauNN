@@ -41,6 +41,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
 
+    default_store = "$TN_STORE_DIR_MARCEL"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -431,6 +433,8 @@ _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso"
 
 
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
+
+    default_store = "$TN_STORE_DIR_MARCEL"
 
     categories = law.CSVParameter(
         default=_default_categories,
