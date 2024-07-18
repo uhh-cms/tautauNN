@@ -216,10 +216,21 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     )
                 )
             )
-
-        # ees has 2 sources
         ees_dict = {
-            f"ees_{dm}_{ud}": {
+            f"{ss}_{ud}": {
+                "dau1_pt": f"dau1_pt_{ss}{ud}",
+                "dau1_e": f"dau1_e_{ss}{ud}",
+                "dau2_pt": f"dau2_pt_{ss}{ud}",
+                "dau2_e": f"dau2_e_{ss}{ud}",
+                "METx": f"METx_{ss}{ud}",
+                "METy": f"METy_{ss}{ud}",
+            }
+            for ud in ["Up", "Down"]
+            for ss in ["ees", "eer"]
+        }
+        # fes has 2 sources
+        fes_dict = {
+            f"fes_{dm}_{ud}": {
                 "dau1_pt": f"dau1_pt_ele{ud}_{dm}",
                 "dau1_e": f"dau1_e_ele{ud}_{dm}",
                 "dau2_pt": f"dau2_pt_ele{ud}_{dm}",
@@ -273,7 +284,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         # klub aliases for systematic variations
         shape_systs = {"nominal": {}}
         if not self.sample.is_data:
-            shape_systs.update({**ees_dict, **tes_dict, **mes_dict, **jes_dict})
+            shape_systs.update({**ees_dict, **fes_dict, **tes_dict, **mes_dict, **jes_dict})
         shape_names = list(shape_systs.keys())  # all by default, can be redruced to subset
 
         # determine columns to read

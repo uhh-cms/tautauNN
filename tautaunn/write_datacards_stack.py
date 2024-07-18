@@ -59,7 +59,7 @@ klub_weight_columns = [
     "PUReweight",
     "L1pref_weight",
     "trigSF",
-    "idFakeSF",  # originally named "IdFakeSF_deep_2d" in KLUB for the central value
+    "dauSFs",
     "PUjetID_SF",
     "bTagweightReshape",
 ]
@@ -213,43 +213,63 @@ for (name, add_year) in [
     ShapeNuisance.new(
         name=f"id_tauid_2d_{name}",
         combine_name=f"CMS_eff_t_{name}" + (r"_{year}" if add_year else ""),
-        weights={"idFakeSF": (f"idFakeSF_tauid_2d_{name}_up", f"idFakeSF_tauid_2d_{name}_down")},
+        weights={"dauSFs": (f"dauSFs_tauid_2d_{name}_up", f"dauSFs_tauid_2d_{name}_down")},
     )
-
+# TODO: are we certain all of the following uncertainties should be uncorrelated across years?
 ShapeNuisance.new(
     name="id_etauFR_barrel",
     combine_name="CMS_bbtt_etauFR_barrel_{year}",
-    weights={"idFakeSF": ("idFakeSF_etauFR_barrel_up", "idFakeSF_etauFR_barrel_down")},
+    weights={"dauSFs": ("dauSFs_etauFR_barrel_up", "dauSFs_etauFR_barrel_down")},
 )
 ShapeNuisance.new(
     name="id_etauFR_endcap",
     combine_name="CMS_bbtt_etauFR_endcap_{year}",
-    weights={"idFakeSF": ("idFakeSF_etauFR_endcap_up", "idFakeSF_etauFR_endcap_down")},
+    weights={"dauSFs": ("dauSFs_etauFR_endcap_up", "dauSFs_etauFR_endcap_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaLt0p4",
     combine_name="CMS_bbtt_mutauFR_etaLt0p4_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_etaLt0p4_up", "idFakeSF_mutauFR_etaLt0p4_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_etaLt0p4_up", "dauSFs_mutauFR_etaLt0p4_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_eta0p4to0p8",
     combine_name="CMS_bbtt_mutauFR_eta0p4to0p8_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p4to0p8_up", "idFakeSF_mutauFR_eta0p4to0p8_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_eta0p4to0p8_up", "dauSFs_mutauFR_eta0p4to0p8_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_eta0p8to1p2",
     combine_name="CMS_bbtt_mutauFR_eta0p8to1p2_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p8to1p2_up", "idFakeSF_mutauFR_eta0p8to1p2_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_eta0p8to1p2_up", "dauSFs_mutauFR_eta0p8to1p2_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p2to1p7",
     combine_name="CMS_bbtt_mutauFR_eta1p2to1p7_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta1p2to1p7_up", "idFakeSF_mutauFR_eta1p2to1p7_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_eta1p2to1p7_up", "dauSFs_mutauFR_eta1p2to1p7_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p7",
     combine_name="CMS_bbtt_mutauFR_etaGt1p7_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_etaGt1p7_up", "idFakeSF_mutauFR_etaGt1p7_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_etaGt1p7_up", "dauSFs_mutauFR_etaGt1p7_down")},
+)
+ShapeNuisance.new(
+    name="id_muid",
+    combine_name="CMS_eff_m_id_{year}",
+    weights={"dauSFs": ("dauSFs_muID_up", "dauSFs_muID_down")},
+)
+ShapeNuisance.new(
+    name="id_muiso",
+    combine_name="CMS_eff_m_iso_{year}",
+    weights={"dauSFs": ("dauSFs_muIso_up", "dauSFs_muIso_down")},
+)
+ShapeNuisance.new(
+    name="id_elereco",
+    combine_name="CMS_eff_e_reco_{year}",
+    weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
+)
+ShapeNuisance.new(
+    name="id_eleid",
+    combine_name="CMS_eff_e_id_{year}",
+    weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
 )
 ShapeNuisance.new(
     name="pu_jet_id",
@@ -299,14 +319,24 @@ ShapeNuisance.new(
     channels={"mutau"},
 )
 ShapeNuisance.new(
-    name="ees_DM0",
-    combine_name="CMS_scale_t_eFake_DM0_{year}",
-    discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
+    name="ees",
+    combine_name="CMS_scale_e_{year}",  # TODO: check
+    discriminator_suffix=("ees_up", "ees_down"),
 )
 ShapeNuisance.new(
-    name="ees_DM1",
+    name="eer",
+    combine_name="CMS_sigma_e_{year}",  # TODO: check
+    discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
+)
+ShapeNuisance.new(
+    name="fes_DM0",
+    combine_name="CMS_scale_t_eFake_DM0_{year}",
+    discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
+)
+ShapeNuisance.new(
+    name="fes_DM1",
     combine_name="CMS_scale_t_eFake_DM1_{year}",
-    discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
+    discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
 )
 ShapeNuisance.new(
     name="tes_DM0",
@@ -546,9 +576,6 @@ stat_model = {
     "qqHH_pythiaDipoleOn": {
         "qqHH_*": "0.781/1.219",
     },
-    # temporary channel dependent uncertainties
-    "CMS_eff_e": {"!QCD": {"*etau*": "1.01"}},
-    "CMS_eff_m": {"!QCD": {"*mutau*": "1.01"}},
     # year dependent (both the selection of nuisances and their effect depend on the year)
     "lumi_13TeV_2016": {"!QCD": {"2016*": "1.010"}},
     "lumi_13TeV_2017": {"!QCD": {"2017": "1.020"}},
@@ -880,7 +907,7 @@ def load_klub_file(
     is_data: bool,
 ) -> tuple[ak.Array, float]:
     # all weight column patterns
-    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns] + ["IdFakeSF_deep_2d"]
+    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns]
 
     # all columns that should be loaded and kept later on
     persistent_columns = klub_index_columns + klub_extra_columns + sel_baseline.flat_columns
@@ -902,10 +929,6 @@ def load_klub_file(
         # fake weight for data
         array = ak.with_field(array, 1.0, "full_weight_nominal")
     else:
-        # aliases do not work with filter_name for some reason, so swap names manually
-        array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
-        array = ak.without_field(array, "IdFakeSF_deep_2d")
-
         # compute the full weight for each shape variation (includes nominal)
         # and complain when non-finite weights were found
         for nuisance in shape_nuisances.values():
