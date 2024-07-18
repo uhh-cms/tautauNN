@@ -196,13 +196,13 @@ for (name, add_year) in [
     ("systuncorrdmeras_DM0", True),
     ("stat0_DM1", True),
     ("stat1_DM1", True),
-    ("systuncorrdmeras_DM1", False),
-    ("stat0_DM10", False),
-    ("stat1_DM10", False),
-    ("systuncorrdmeras_DM10", False),
-    ("stat0_DM11", False),
-    ("stat1_DM11", False),
-    ("systuncorrdmeras_DM11", False),
+    ("systuncorrdmeras_DM1", True),
+    ("stat0_DM10", True),
+    ("stat1_DM10", True),
+    ("systuncorrdmeras_DM10", True),
+    ("stat0_DM11", True),
+    ("stat1_DM11", True),
+    ("systuncorrdmeras_DM11", True),
     ("systcorrdmeras", False),
     ("systcorrdmuncorreras", True),
     ("systcorrerasgt140", False),
@@ -277,24 +277,24 @@ ShapeNuisance.new(
     weights={"PUjetID_SF": ("PUjetID_SF_up", "PUjetID_SF_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM0",
+    name="trigSF_tau_DM0",
     combine_name="CMS_bbtt_{year}_trigSFTauDM0",
-    weights={"trigSF": ("trigSF_DM0_up", "trigSF_DM0_down")},
+    weights={"trigSF": ("trigSF_tau_DM0_up", "trigSF_tau_DM0_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM1",
+    name="trigSF_tau_DM1",
     combine_name="CMS_bbtt_{year}_trigSFTauDM1",
-    weights={"trigSF": ("trigSF_DM1_up", "trigSF_DM1_down")},
+    weights={"trigSF": ("trigSF_tau_DM1_up", "trigSF_tau_DM1_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM10",
+    name="trigSF_tau_DM10",
     combine_name="CMS_bbtt_{year}_trigSFTauDM10",
-    weights={"trigSF": ("trigSF_DM10_up", "trigSF_DM10_down")},
+    weights={"trigSF": ("trigSF_tau_DM10_up", "trigSF_tau_DM10_down")},
 )
 ShapeNuisance.new(
     name="trigSF_DM11",
     combine_name="CMS_bbtt_{year}_trigSFTauDM11",
-    weights={"trigSF": ("trigSF_DM11_up", "trigSF_DM11_down")},
+    weights={"trigSF": ("trigSF_tau_DM11_up", "trigSF_tau_DM11_down")},
 )
 ShapeNuisance.new(
     name="trigSF_met",
@@ -801,7 +801,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
 
     @selector(needs=["tauH_mass", "bH_mass"])
-    def sel_mass_window(array: ak.Array) -> ak.Array:
+    def sel_mass_window(array: ak.Array, **kwargs) -> ak.Array:
         return (
             (array.tauH_mass >= 20.0) &
             (array.tauH_mass <= 130.0) &
@@ -817,7 +817,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         return sel_baseline(array, **kwargs)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m, sel_mass_window],
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
@@ -830,7 +830,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm, sel_mass_window],
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
@@ -843,7 +843,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_mass_window],
         channel=channel,
     )
     def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
@@ -1132,10 +1132,7 @@ def load_sample_data(
                 is_data,
             )
             for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
-            if fnmatch(eval_file_name, "output_*_systs.root") and
-            not (
-                (year == "2018" and sample_name == "DY_PtZ50To100" and eval_file_name == "output_118_systs.root")
-            )
+            if fnmatch(eval_file_name, "output_*_systs.root")
         ]
 
         # run in parallel
@@ -1955,6 +1952,32 @@ def _write_datacard(
                 "created for any nuisance",
             )
             del hists[(year, "QCD")]
+
+    # TODO: temporary fix
+    # flip_downs = [
+    #     "CMS_eff_t_stat0_DM0_2017",
+    #     "CMS_eff_t_stat1_DM0_2017",
+    #     "CMS_eff_t_systuncorrdmeras_DM0_2017",
+    #     "CMS_eff_t_stat0_DM1_2017",
+    #     "CMS_eff_t_stat1_DM1_2017",
+    #     "CMS_eff_t_systuncorrdmeras_DM1",
+    #     "CMS_eff_t_stat0_DM10",
+    #     "CMS_eff_t_stat1_DM10",
+    #     "CMS_eff_t_systuncorrdmeras_DM10",
+    #     "CMS_eff_t_stat0_DM11",
+    #     "CMS_eff_t_stat1_DM11",
+    #     "CMS_eff_t_systuncorrdmeras_DM11",
+    #     "CMS_eff_t_stat0gt140_2017",
+    #     "CMS_eff_t_stat1gt140_2017",
+    # ]
+    # for _hists in hists.values():
+    #     for name, direction in _hists.keys():
+    #         if name not in flip_downs or direction != "down":
+    #             continue
+    #         d = _hists[(name, "down")]
+    #         n = _hists[("nominal", "")]
+    #         d_value = d.view().value
+    #         d_value[:] = np.maximum(2 * n.view().value - d_value, 1.0e-5)
 
     # gather rates from nominal histograms
     rates = {

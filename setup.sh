@@ -135,7 +135,7 @@ action() {
             mkdir -p "${TN_CONDA_DIR}"
             cd "${TN_CONDA_DIR}"
             curl -Ls "${micromamba_url}" | tar -xvj -C . "bin/micromamba"
-            ./bin/micromamba shell hook -y --prefix="${TN_CONDA_DIR}" &> "micromamba.sh"
+            ./bin/micromamba shell hook -y --root-prefix "${TN_CONDA_DIR}" &> "micromamba.sh"
             mkdir -p "etc/profile.d"
             mv "micromamba.sh" "etc/profile.d"
             cat << EOF > ".mambarc"
