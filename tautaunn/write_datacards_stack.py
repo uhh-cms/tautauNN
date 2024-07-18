@@ -41,7 +41,7 @@ import uproot
 import hist
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps, klub_weight_columns
 
 
 #
@@ -54,15 +54,6 @@ channels = {
     "etau": 1,
     "tautau": 2,
 }
-klub_weight_columns = [
-    "MC_weight",
-    "PUReweight",
-    "L1pref_weight",
-    "trigSF",
-    "dauSFs",
-    "PUjetID_SF",
-    "bTagweightReshape",
-]
 klub_extra_columns = [
     # "DNNoutSM_kl_1",
 ]

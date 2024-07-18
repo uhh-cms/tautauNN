@@ -158,7 +158,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     predictions = model([cont_inputs[eval_mask], cat_inputs[eval_mask]], training=False)
 
                     # insert into output tree
-                    for i, class_name in enumerate(class_names.values()):
+                    for i, class_name in class_names.items():
                         # HARDCODED: skip dy, TODO: maybe also drop ttbar
                         if class_name == "dy":
                             continue

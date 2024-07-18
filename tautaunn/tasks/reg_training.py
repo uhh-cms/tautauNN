@@ -169,6 +169,8 @@ class RegTrainingParameters(Task):
 
 class RegTraining(RegTrainingParameters):
 
+    default_store = "$TN_REG_MODEL_DIR_TOBI"
+
     def output(self):
         return {
             "saved_model": (model_dir := self.local_target(self.get_model_name(), dir=True)),
@@ -239,3 +241,25 @@ class RegTraining(RegTrainingParameters):
         ret = train(**train_kwargs)
         if ret is None:
             raise Exception("training did not provide a model, probably due to manual stop (ctrl+c)")
+
+
+class RegMultiFoldParameters(RegTrainingParameters):
+
+    fold = None
+    folds = law.MultiRangeParameter(
+        default=((0,),),
+        single_value=True,
+        require_end=True,
+        description="folds to use for training; default: 0",
+    )
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+        self.flat_folds = sorted(set.union(*map(set, map(law.util.range_expand, self.folds))))
+
+    def get_model_name_kwargs(self) -> dict[str, Any]:
+        kwargs = super().get_model_name_kwargs()
+        kwargs.pop("fold_index")
+        kwargs["fold_indices"] = f"x{len(self.flat_folds)}"
+        return kwargs
