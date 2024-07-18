@@ -1,5 +1,6 @@
 import awkward as ak
 import numpy as np
+import itertools
 
 def uncertainty_driven(signal_values: ak.Array,
                        bkgd_values: ak.Array,
@@ -192,3 +193,336 @@ def tt_dy_driven(signal_values: ak.Array,
 
 
 
+def flatsguarded(hh_values: ak.Array,
+                 tt_values: ak.Array,
+                 dy_values: ak.Array,
+                 tt_weights: ak.Array,
+                 hh_weights: ak.Array,
+                 dy_weights: ak.Array,
+                 n_bins: int=10,
+                 x_min: float=0.,
+                 x_max: float=1.,):
+    # create a record array with eight entries:
+    # - value
+    # - process (0: hh, 1: tt, 2: dy)
+    # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
+    # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
+    all_values_list = [hh_values, tt_values, dy_values]
+    rec = np.core.records.fromarrays(
+        [
+            # value
+            (all_values := np.concatenate(all_values_list, axis=0)),
+            # process
+            np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
+            # counts and weights per process
+            (izeros := np.zeros(len(all_values), dtype=np.int32)),
+            (fzeros := np.zeros(len(all_values), dtype=np.float32)),
+            izeros,
+            fzeros,
+            izeros,
+            fzeros,
+        ],
+        names="value,process,hh_count_cs,hh_weight_cs,tt_count_cs,tt_weight_cs,dy_count_cs,dy_weight_cs",
+    )
+    # insert counts and weights into columns for correct processes
+    # (faster than creating arrays above which then get copied anyway when the recarray is created)
+    HH, TT, DY = range(3)
+    rec.hh_count_cs[rec.process == HH] = 1
+    rec.tt_count_cs[rec.process == TT] = 1
+    rec.dy_count_cs[rec.process == DY] = 1
+    rec.hh_weight_cs[rec.process == HH] = hh_weights
+    rec.tt_weight_cs[rec.process == TT] = tt_weights
+    rec.dy_weight_cs[rec.process == DY] = dy_weights
+    # sort by decreasing value to start binning from "the right" later on
+    rec.sort(order="value")
+    rec = np.flip(rec, axis=0)
+    # replace counts and weights with their cumulative sums
+    rec.hh_count_cs[:] = np.cumsum(rec.hh_count_cs)
+    rec.tt_count_cs[:] = np.cumsum(rec.tt_count_cs)
+    rec.dy_count_cs[:] = np.cumsum(rec.dy_count_cs)
+    rec.hh_weight_cs[:] = np.cumsum(rec.hh_weight_cs)
+    rec.tt_weight_cs[:] = np.cumsum(rec.tt_weight_cs)
+    rec.dy_weight_cs[:] = np.cumsum(rec.dy_weight_cs)
+    # eager cleanup
+    del all_values, izeros, fzeros
+    del hh_values, hh_weights
+    del tt_values, tt_weights
+    del dy_values, dy_weights
+    # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
+    # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
+    # but rather through simple subtraction of values at the respective indices instead
+
+    #
+    # step 2: binning
+    #
+
+    # determine the approximate hh yield per bin
+    hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
+    # keep track of bin edges and the hh yield accumulated so far
+    bin_edges = [x_max]
+    hh_yield_binned = 0.0
+    min_hh_yield = 1.0e-5
+    # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
+    offset = 0
+    # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
+    get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
+    # bookkeep reasons for stopping binning
+    stop_reason = ""
+    # start binning
+    while len(bin_edges) < n_bins:
+        # stopping condition 1: reached end of events
+        if offset >= len(rec):
+            stop_reason = "no more events left"
+            break
+        # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
+        remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
+        if remaining_hh_yield < min_hh_yield:
+            stop_reason = "remaining signal yield insufficient"
+            # remove the last bin edge and stop
+            if len(bin_edges) > 1:
+                bin_edges.pop()
+            break
+        # find the index of the event that would result in a hh yield increase of more than the expected
+        # per-bin yield; this index would mark the start of the next bin given all constraints are met
+        if remaining_hh_yield >= hh_yield_per_bin:
+            threshold = hh_yield_binned + hh_yield_per_bin
+            next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
+        else:
+            # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
+            next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
+        # advance the index until backgrounds constraints are met
+        while next_idx < len(rec):
+            # get the number of tt events and their yield
+            n_tt = get_integral(rec.tt_count_cs, next_idx)
+            y_tt = get_integral(rec.tt_weight_cs, next_idx)
+            # get the number of dy events and their yield
+            n_dy = get_integral(rec.dy_count_cs, next_idx)
+            y_dy = get_integral(rec.dy_weight_cs, next_idx)
+            # evaluate constraints
+            # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
+            #       on dy, and vice-versa
+            constraints_met = (
+                # tt and dy events
+                n_tt >= 1 and
+                n_dy >= 1 and
+                n_tt + n_dy >= 3 and
+                # yields must be positive to avoid negative sums of weights per process
+                y_tt > 0 and
+                y_dy > 0
+            )
+            if constraints_met:
+                # TODO: maybe also check if the background conditions are just barely met and advance next_idx
+                # to the middle between the current value and the next one that would change anything about the
+                # background predictions; this might be more stable as the current implementation can highly
+                # depend on the exact value of a single event (the one that tips the constraints over the edge
+                # to fulfillment)
+
+                # bin found, stop
+                break
+            # constraints not met, advance index to include the next tt or dy event and try again
+            next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
+            if len(next_bkg_indices) == 0:
+                # no more background events left, move to the last position and let the stopping condition 3
+                # below handle the rest
+                next_idx = len(rec)
+            else:
+                next_idx += next_bkg_indices[0] + 1
+        else:
+            # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
+            # constraints; however, this should practically never happen
+            stop_reason = "no more events left while trying to fulfill constraints"
+            if len(bin_edges) > 1:
+                bin_edges.pop()
+            break
+        # next_idx found, update values
+        edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
+        bin_edges.append(max(min(edge_value, x_max), x_min))
+        hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
+        offset = next_idx
+
+    # make sure the minimum is included
+    if bin_edges[-1] != x_min:
+        if len(bin_edges) > n_bins:
+            raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
+        bin_edges.append(x_min)
+
+    # reverse edges and optionally re-set n_bins
+    bin_edges = sorted(set(bin_edges))
+    return bin_edges, stop_reason
+
+
+def flatsguarded_systs(hh_values: ak.Array,
+                       hh_weights: ak.Array,
+                       dy_shifts: dict[str, ak.Array], # (including nominal)
+                       tt_shifts: dict[str, ak.Array],
+                       n_bins: int=10,
+                       x_min: float=0.,
+                       x_max: float=1.,):
+    
+    # create a record array with eight entries:
+    # - value
+    # - process (0: hh, 1: tt, 2: dy)
+    # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
+    # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
+
+    tt_values = [tt_shifts[key][0] for key in tt_shifts]
+    dy_values = [dy_shifts[key][0] for key in dy_shifts]
+
+    process_map = {
+        "hh_nominal": 0,
+        **{"tt_"+key: i for i,key in enumerate(tt_values)},
+        **{"dy_"+key: i+len(tt_values) for i,key in enumerate(dy_values)}
+    }
+
+    all_values_list = [hh_values, *tt_values, *dy_values]
+    rec_list = [
+                # value
+                (all_values := np.concatenate(all_values_list, axis=0)),
+                # process
+                np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
+               ]
+    izeros = np.zeros(len(all_values), dtype=np.int32)
+    fzeros = np.zeros(len(all_values), dtype=np.float32)
+    for i in range(len(all_values_list)):
+        rec_list.append(izeros)
+        rec_list.append(fzeros)
+    rec_names = "value,process,hh_count_cs,hh_weight_cs,"
+    rec_names += ",".join([f"tt_{key}_count_cs,tt_{key}_weight_cs"
+                           if key != "nominal" else "tt_count_cs,tt_weight_cs"
+                           for key in tt_shifts])
+    rec_names += ",".join([f"dy_{key}_count_cs,dy_{key}_weight_cs"
+                           if key != "nominal" else "dy_count_cs,dy_weight_cs"
+                           for key in dy_shifts])
+
+    rec = np.core.records.fromarrays(rec_list, names=rec_names)
+    # insert counts and weights into columns for correct processes
+    # (faster than creating arrays above which then get copied anyway when the recarray is created)
+    rec.hh_count_cs[rec.process == process_map["hh_nominal"]] = 1
+    rec.hh_weight_cs[rec.process == process_map["hh_nominal"]] = hh_weights
+    for key in rec_names.split(",")[4:]:
+        process_name = "_".join(key.split("_")[:2])
+        if "counts" in key:
+            rec[key][rec.process == process_map[process_name]] = 1
+        if "weight" in key:
+            if key.startswith("dy"):
+                rec[key][rec.process == process_map[process_name]] = dy_shifts[key.split("_")[1]]
+            elif key.startswith("tt"):
+                rec[key][rec.process == process_map[process_name]] = tt_shifts[key.split("_")[1]]
+            else:
+                raise ValueError(f"Unknown process {key}")
+    # sort by decreasing value to start binning from "the right" later on
+    rec.sort(order="value")
+    rec = np.flip(rec, axis=0)
+    # replace counts and weights with their cumulative sums
+    for key in rec_names.split(",")[2:]:
+        rec[key][:] = np.cumsum(rec[key])
+    # eager cleanup
+    del all_values_list, izeros, fzeros
+    del hh_values, hh_weights
+    del dy_shifts, tt_shifts
+    del rec_names, rec_list
+    # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
+    # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
+    # but rather through simple subtraction of values at the respective indices instead
+
+    #
+    # step 2: binning
+    #
+
+    # determine the approximate hh yield per bin
+    hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
+    # keep track of bin edges and the hh yield accumulated so far
+    bin_edges = [x_max]
+    hh_yield_binned = 0.0
+    min_hh_yield = 1.0e-5
+    # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
+    offset = 0
+    # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
+    get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
+    # bookkeep reasons for stopping binning
+    stop_reason = ""
+    # start binning
+    while len(bin_edges) < n_bins:
+        # stopping condition 1: reached end of events
+        if offset >= len(rec):
+            stop_reason = "no more events left"
+            break
+        # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
+        remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
+        if remaining_hh_yield < min_hh_yield:
+            stop_reason = "remaining signal yield insufficient"
+            # remove the last bin edge and stop
+            if len(bin_edges) > 1:
+                bin_edges.pop()
+            break
+        # find the index of the event that would result in a hh yield increase of more than the expected
+        # per-bin yield; this index would mark the start of the next bin given all constraints are met
+        if remaining_hh_yield >= hh_yield_per_bin:
+            threshold = hh_yield_binned + hh_yield_per_bin
+            next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
+        else:
+            # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
+            next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
+        # advance the index until backgrounds constraints are met
+        while next_idx < len(rec):
+            counts_per_shift = {
+                shift: [get_integral(rec[f"dy_{shift}_count_cs"], next_idx), # n_dy
+                        get_integral(rec[f"tt_{shift}_count_cs"], next_idx), # n_tt
+                        get_integral(rec[f"dy_{shift}_weight_cs"], next_idx), # y_dy
+                        get_integral(rec[f"tt_{shift}_weight_cs"], next_idx)] # y_tt
+                for shift in dy_shifts
+            }
+            # evaluate constraints
+            # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
+            #       on dy, and vice-versa
+            constraints_met = {shift: (counts_per_shift[shift][1] >= 1 and
+                                       counts_per_shift[shift][0] >= 1 and
+                                       counts_per_shift[shift][1] + counts_per_shift[shift][0] >= 3 and
+                                       counts_per_shift[shift][2] > 0 and
+                                       counts_per_shift[shift][3] > 0)
+                               for shift in dy_shifts}
+            if all(constraints_met.values()):
+                # TODO: maybe also check if the background conditions are just barely met and advance next_idx
+                # to the middle between the current value and the next one that would change anything about the
+                # background predictions; this might be more stable as the current implementation can highly
+                # depend on the exact value of a single event (the one that tips the constraints over the edge
+                # to fulfillment)
+
+                # bin found, stop
+                break
+            # constraints not met, check which shifts cause the problem
+            failing_shifts = [shift for shift, met in constraints_met.items() if not met]
+            
+            process_names = f"dy_{failing_shifts[0]}_count_cs",f"tt_{failing_shifts[0]}_count_cs"
+
+            next_bkg_indices = np.where(
+                ((rec.process[next_idx:] == process_names[0]) | (rec.process[next_idx:] == process_names[1]))
+            )[0]
+            if len(next_bkg_indices) == 0:
+                # no more background events left, move to the last position and let the stopping condition 3
+                # below handle the rest
+                next_idx = len(rec)
+            else:
+                next_idx += next_bkg_indices[0] + 1
+        else:
+            # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
+            # constraints; however, this should practically never happen
+            stop_reason = "no more events left while trying to fulfill constraints"
+            if len(bin_edges) > 1:
+                bin_edges.pop()
+            break
+        # next_idx found, update values
+        edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
+        bin_edges.append(max(min(edge_value, x_max), x_min))
+        hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
+        offset = next_idx
+
+    # make sure the minimum is included
+    if bin_edges[-1] != x_min:
+        if len(bin_edges) > n_bins:
+            raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
+        bin_edges.append(x_min)
+
+    # reverse edges and optionally re-set n_bins
+    bin_edges = sorted(set(bin_edges))
+    return bin_edges, stop_reason
