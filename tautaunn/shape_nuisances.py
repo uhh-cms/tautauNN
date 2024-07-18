@@ -5,7 +5,6 @@ from fnmatch import fnmatch
 
 shape_nuisances = {}
 
-
 @dataclass
 class ShapeNuisance:
     name: str
@@ -118,71 +117,87 @@ ShapeNuisance.new(
     combine_name="CMS_btag_cfeff2_{year}",
     weights={"bTagweightReshape": ("bTagweightReshape_cferr2_up", "bTagweightReshape_cferr2_down")},
 )
-ShapeNuisance.new(
-    name="id_tauid_2d_stat0",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat0_up", "idFakeSF_tauid_2d_stat0_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_stat1",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_stat1_up", "idFakeSF_tauid_2d_stat1_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrdmeras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmeras_up", "idFakeSF_tauid_2d_systcorrdmeras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrdmuncorreras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrdmuncorreras_up", "idFakeSF_tauid_2d_systcorrdmuncorreras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systuncorrdmeras",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systuncorrdmeras_up", "idFakeSF_tauid_2d_systuncorrdmeras_down")},
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_systcorrerasgt140",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_systcorrerasgt140_up", "idFakeSF_tauid_2d_systcorrerasgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
-)
-ShapeNuisance.new(
-    name="id_tauid_2d_statgt140",  # TODO: update name
-    weights={"idFakeSF": ("idFakeSF_tauid_2d_statgt140_up", "idFakeSF_tauid_2d_statgt140_down")},
-    skip=True,  # TODO: currently broken in KLUB
-)
+
+for (name, add_year) in [
+    ("stat0_DM0", True),
+    ("stat1_DM0", True),
+    ("systuncorrdmeras_DM0", True),
+    ("stat0_DM1", True),
+    ("stat1_DM1", True),
+    ("systuncorrdmeras_DM1", True),
+    ("stat0_DM10", True),
+    ("stat1_DM10", True),
+    ("systuncorrdmeras_DM10", True),
+    ("stat0_DM11", True),
+    ("stat1_DM11", True),
+    ("systuncorrdmeras_DM11", True),
+    ("systcorrdmeras", False),
+    ("systcorrdmuncorreras", True),
+    ("systcorrerasgt140", False),
+    ("stat0gt140", True),
+    ("stat1gt140", True),
+    ("extrapgt140", False),
+]:
+    ShapeNuisance.new(
+        name=f"id_tauid_2d_{name}",
+        combine_name=f"CMS_eff_t_{name}" + (r"_{year}" if add_year else ""),
+        weights={"dauSFs": (f"dauSFs_tauid_2d_{name}_up", f"dauSFs_tauid_2d_{name}_down")},
+    )
+# TODO: are we certain all of the following uncertainties should be uncorrelated across years?
 ShapeNuisance.new(
     name="id_etauFR_barrel",
     combine_name="CMS_bbtt_etauFR_barrel_{year}",
-    weights={"idFakeSF": ("idFakeSF_etauFR_barrel_up", "idFakeSF_etauFR_barrel_down")},
+    weights={"dauSFs": ("dauSFs_etauFR_barrel_up", "dauSFs_etauFR_barrel_down")},
 )
 ShapeNuisance.new(
     name="id_etauFR_endcap",
     combine_name="CMS_bbtt_etauFR_endcap_{year}",
-    weights={"idFakeSF": ("idFakeSF_etauFR_endcap_up", "idFakeSF_etauFR_endcap_down")},
+    weights={"dauSFs": ("dauSFs_etauFR_endcap_up", "dauSFs_etauFR_endcap_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaLt0p4",
     combine_name="CMS_bbtt_mutauFR_etaLt0p4_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_etaLt0p4_up", "idFakeSF_mutauFR_etaLt0p4_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_etaLt0p4_up", "dauSFs_mutauFR_etaLt0p4_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_eta0p4to0p8",
     combine_name="CMS_bbtt_mutauFR_eta0p4to0p8_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p4to0p8_up", "idFakeSF_mutauFR_eta0p4to0p8_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_eta0p4to0p8_up", "dauSFs_mutauFR_eta0p4to0p8_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_eta0p8to1p2",
     combine_name="CMS_bbtt_mutauFR_eta0p8to1p2_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta0p8to1p2_up", "idFakeSF_mutauFR_eta0p8to1p2_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_eta0p8to1p2_up", "dauSFs_mutauFR_eta0p8to1p2_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p2to1p7",
     combine_name="CMS_bbtt_mutauFR_eta1p2to1p7_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_eta1p2to1p7_up", "idFakeSF_mutauFR_eta1p2to1p7_down")},
-    skip=True,  # TODO: was not cached before! add back again when caching from scratch
+    weights={"dauSFs": ("dauSFs_mutauFR_eta1p2to1p7_up", "dauSFs_mutauFR_eta1p2to1p7_down")},
 )
 ShapeNuisance.new(
     name="id_mutauFR_etaGt1p7",
     combine_name="CMS_bbtt_mutauFR_etaGt1p7_{year}",
-    weights={"idFakeSF": ("idFakeSF_mutauFR_etaGt1p7_up", "idFakeSF_mutauFR_etaGt1p7_down")},
+    weights={"dauSFs": ("dauSFs_mutauFR_etaGt1p7_up", "dauSFs_mutauFR_etaGt1p7_down")},
+)
+ShapeNuisance.new(
+    name="id_muid",
+    combine_name="CMS_eff_m_id_{year}",
+    weights={"dauSFs": ("dauSFs_muID_up", "dauSFs_muID_down")},
+)
+ShapeNuisance.new(
+    name="id_muiso",
+    combine_name="CMS_eff_m_iso_{year}",
+    weights={"dauSFs": ("dauSFs_muIso_up", "dauSFs_muIso_down")},
+)
+ShapeNuisance.new(
+    name="id_elereco",
+    combine_name="CMS_eff_e_reco_{year}",
+    weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
+)
+ShapeNuisance.new(
+    name="id_eleid",
+    combine_name="CMS_eff_e_id_{year}",
+    weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
 )
 ShapeNuisance.new(
     name="pu_jet_id",
@@ -190,64 +205,66 @@ ShapeNuisance.new(
     weights={"PUjetID_SF": ("PUjetID_SF_up", "PUjetID_SF_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM0",
+    name="trigSF_tau_DM0",
     combine_name="CMS_bbtt_{year}_trigSFTauDM0",
-    weights={"trigSF": ("trigSF_DM0_up", "trigSF_DM0_down")},
-    skip=True,  # TODO: currently broken in KLUB
+    weights={"trigSF": ("trigSF_tau_DM0_up", "trigSF_tau_DM0_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM1",
+    name="trigSF_tau_DM1",
     combine_name="CMS_bbtt_{year}_trigSFTauDM1",
-    weights={"trigSF": ("trigSF_DM1_up", "trigSF_DM1_down")},
-    skip=True,  # TODO: currently broken in KLUB
+    weights={"trigSF": ("trigSF_tau_DM1_up", "trigSF_tau_DM1_down")},
 )
 ShapeNuisance.new(
-    name="trigSF_DM10",
+    name="trigSF_tau_DM10",
     combine_name="CMS_bbtt_{year}_trigSFTauDM10",
-    weights={"trigSF": ("trigSF_DM10_up", "trigSF_DM10_down")},
-    skip=True,  # TODO: currently broken in KLUB
+    weights={"trigSF": ("trigSF_tau_DM10_up", "trigSF_tau_DM10_down")},
 )
 ShapeNuisance.new(
     name="trigSF_DM11",
     combine_name="CMS_bbtt_{year}_trigSFTauDM11",
-    weights={"trigSF": ("trigSF_DM11_up", "trigSF_DM11_down")},
-    skip=True,  # TODO: currently broken in KLUB
+    weights={"trigSF": ("trigSF_tau_DM11_up", "trigSF_tau_DM11_down")},
 )
 ShapeNuisance.new(
     name="trigSF_met",
     combine_name="CMS_bbtt_{year}_trigSFMET",
     weights={"trigSF": ("trigSF_met_up", "trigSF_met_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_stau",
     combine_name="CMS_bbtt_{year}_trigSFSingleTau",
     weights={"trigSF": ("trigSF_stau_up", "trigSF_stau_down")},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_ele",
     combine_name="CMS_bbtt_{year}_trigSFEle",
     weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
     channels={"etau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
     name="trigSF_mu",
     combine_name="CMS_bbtt_{year}_trigSFEMu",
     weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
     channels={"mutau"},
-    skip=True,  # TODO: currently broken in KLUB
 )
 ShapeNuisance.new(
-    name="ees_DM0",
+    name="ees",
+    combine_name="CMS_scale_e_{year}",  # TODO: check
+    discriminator_suffix=("ees_up", "ees_down"),
+)
+ShapeNuisance.new(
+    name="eer",
+    combine_name="CMS_sigma_e_{year}",  # TODO: check
+    discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
+)
+ShapeNuisance.new(
+    name="fes_DM0",
     combine_name="CMS_scale_t_eFake_DM0_{year}",
-    discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
+    discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
 )
 ShapeNuisance.new(
-    name="ees_DM1",
+    name="fes_DM1",
     combine_name="CMS_scale_t_eFake_DM1_{year}",
-    discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
+    discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
 )
 ShapeNuisance.new(
     name="tes_DM0",
@@ -269,11 +286,20 @@ ShapeNuisance.new(
     combine_name="CMS_scale_t_DM11_{year}",
     discriminator_suffix=("tes_DM11_up", "tes_DM11_down"),
 )
-# TODO: potentially replace by 1% uncertainty on muon energy scale (to be done in dnn evaluation?)
 ShapeNuisance.new(
     name="mes",
     combine_name="CMS_scale_t_muFake_{year}",
     discriminator_suffix=("mes_up", "mes_down"),
+)
+ShapeNuisance.new(
+    name="PUReweight",
+    combine_name="CMS_pileup_{year}",
+    weights={"PUReweight": ("PUReweight_up", "PUReweight_down")},
+)
+ShapeNuisance.new(
+    name="l1_prefiring",
+    combine_name="CMS_l1_prefiring_{year}",
+    weights={"L1pref_weight": ("L1pref_weight_up", "L1pref_weight_down")},
 )
 
 jes_names = {
@@ -297,5 +323,3 @@ for js in range(1, 12):
         discriminator_suffix=(f"jes_{js}_up", f"jes_{js}_down"),
         weights={"bTagweightReshape": (f"bTagweightReshape_jetup{js}", f"bTagweightReshape_jetdown{js}")},
     )
-
-# TODO: JER
