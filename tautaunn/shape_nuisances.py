@@ -247,25 +247,30 @@ ShapeNuisance.new(
     channels={"mutau"},
 )
 ShapeNuisance.new(
-    name="ees",
-    combine_name="CMS_scale_e_{year}",  # TODO: check
-    discriminator_suffix=("ees_up", "ees_down"),
+    name="ees_DM0",
+    combine_name="CMS_scale_e_DM0_{year}",  # TODO: check
+    discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
 )
 ShapeNuisance.new(
-    name="eer",
-    combine_name="CMS_sigma_e_{year}",  # TODO: check
-    discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
+    name="ees_DM1",
+    combine_name="CMS_scale_e_DM1_{year}",  #
+    discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
 )
-ShapeNuisance.new(
-    name="fes_DM0",
-    combine_name="CMS_scale_t_eFake_DM0_{year}",
-    discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
-)
-ShapeNuisance.new(
-    name="fes_DM1",
-    combine_name="CMS_scale_t_eFake_DM1_{year}",
-    discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
-)
+#ShapeNuisance.new(
+    #name="eer",
+    #combine_name="CMS_sigma_e_{year}",  # TODO: check
+    #discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
+#)
+#ShapeNuisance.new(
+    #name="fes_DM0",
+    #combine_name="CMS_scale_t_eFake_DM0_{year}",
+    #discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
+#)
+#ShapeNuisance.new(
+    #name="fes_DM1",
+    #combine_name="CMS_scale_t_eFake_DM1_{year}",
+    #discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
+#)
 ShapeNuisance.new(
     name="tes_DM0",
     combine_name="CMS_scale_t_DM0_{year}",
