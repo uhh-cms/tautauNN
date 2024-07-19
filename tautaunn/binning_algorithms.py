@@ -370,8 +370,8 @@ def flatsguarded_systs(hh_values: ak.Array,
 
     process_map = {
         "hh_nominal": 0,
-        **{"tt_"+key: i for i,key in enumerate(tt_values)},
-        **{"dy_"+key: i+len(tt_values) for i,key in enumerate(dy_values)}
+        **{"tt_"+key: i for i,key in enumerate(tt_shifts.keys())},
+        **{"dy_"+key: i+len(tt_shifts.keys()) for i,key in enumerate(dy_shifts.keys())}
     }
 
     all_values_list = [hh_values, *tt_values, *dy_values]
@@ -526,3 +526,105 @@ def flatsguarded_systs(hh_values: ak.Array,
     # reverse edges and optionally re-set n_bins
     bin_edges = sorted(set(bin_edges))
     return bin_edges, stop_reason
+
+
+def flats_systs(hh_values: ak.Array,
+                hh_weights: ak.Array,
+                dy_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
+                tt_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
+                n_bins: int=10,
+                x_min: float=0.,
+                x_max: float=1.,):
+
+    # assert that dy_shifts and tt_shifts have the same keys
+    assert dy_shifts.keys() == tt_shifts.keys()
+    # binning should be done in the range [x_min, x_max]
+    assert x_min < x_max <= 1
+
+    assert len(hh_values) == len(hh_weights)
+    assert all(len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys())
+    assert all(len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys())
+    
+
+    # sort hh 
+    sort_indices = ak.argsort(hh_values, ascending=False)
+    hh_values = hh_values[sort_indices]
+    hh_weights = hh_weights[sort_indices]
+    # sort dy and tt 
+    for key in dy_shifts.keys():
+        dy_sort_indices = ak.argsort(dy_shifts[key][0], ascending=False)
+        dy_shifts[key] = dy_shifts[key][0][dy_sort_indices], np.cumsum(dy_shifts[key][1][dy_sort_indices])
+        tt_sort_indices = ak.argsort(tt_shifts[key][0], ascending=False)
+        tt_shifts[key] = tt_shifts[key][0][tt_sort_indices], np.cumsum(tt_shifts[key][1][tt_sort_indices])
+
+    # create a combined array of dy and tt values
+    dy_tt_shifts = {key: ak.sort(
+                         ak.concatenate([dy_shifts[key][0], tt_shifts[key][0]], axis=0),
+                         ascending=False)
+                    for key in dy_shifts.keys()}
+        
+
+    # the rightmost bin should contain at least min_N events
+    bin_edges = [x_max]
+    #min_N = int(np.ceil(1/(uncertainty)**2))
+    hh_weights_cumsum = np.cumsum(hh_weights)
+    del hh_weights
+    signal_per_bin = np.round(hh_weights_cumsum[-1] / n_bins, 5)
+    offset = 0
+    edge_count = 0
+    while True:
+        # this would be the next bin edge if we would only consider the signal
+        bin_idx_by_signal = offset + np.where(hh_weights_cumsum[offset:] > (edge_count+1)*signal_per_bin)[0][0]
+        bin_edge_by_signal = hh_values[bin_idx_by_signal]
+        # we want at least 1 dy and 1 tt event in the bin
+        dy_edges = [dy_shifts[key][0][offset] for key in dy_shifts.keys()] 
+        tt_edges = [tt_shifts[key][0][offset] for key in tt_shifts.keys()]
+        # we want the sum of dy and tt events to be at least 3 
+        dy_tt_edges = [dy_tt_shifts[key][offset+2] for key in dy_tt_shifts.keys()]
+        # find the next bin edge that fulfills all requirements
+        next_edge = np.min([bin_edge_by_signal, *dy_edges, *tt_edges, *dy_tt_edges])
+        if next_edge <= np.min(hh_values):
+            # no more hh events left
+            bin_edges.append(x_min)
+            break
+        # convert edge into offset
+        next_offset = np.where(hh_values <= next_edge)[0][0]
+        if any((next_offset >= vals for vals in (len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])))):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+
+        # now about the yields... we want to make sure that the dy and tt yields are positive
+        # but this requirement should only be checked for the nominal values (?)
+        # TODO: maybe even for all shifts? 
+        bin_yield_dy = dy_shifts["nominal"][1][next_offset] - dy_shifts["nominal"][1][offset]
+        bin_yield_tt = tt_shifts["nominal"][1][next_offset] - tt_shifts["nominal"][1][offset]
+        if bin_yield_dy <= 0 or bin_yield_tt <= 0: 
+            # now we need to go further 
+            dy_yield_bin = np.where(dy_shifts["nominal"][1][offset:] > 0)[0][0]
+            tt_yield_bin = np.where(tt_shifts["nominal"][1][offset:] > 0)[0][0]
+            next_offset = offset + np.max([dy_yield_bin, tt_yield_bin])
+            next_edge = np.min([dy_shifts["nominal"][0][next_offset], tt_shifts["nominal"][0][next_offset]])
+            
+        offset = next_offset 
+        edge_count += 1
+        # check remaining stats
+        if ( hh_weights_cumsum[-1] - hh_weights_cumsum[offset] ) < edge_count*signal_per_bin:
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        if any(
+            (offset >= vals for vals in
+            [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])]
+            )): 
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        if edge_count > n_bins-1:
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            break
+        bin_edges.append(next_edge)
+    epsilon = 5e-6
+    bin_edges = sorted(set(round(edge-epsilon, 5) for edge in bin_edges))
+    return bin_edges
