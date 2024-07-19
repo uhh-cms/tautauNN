@@ -53,7 +53,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flatsguarded",
-        choices=("flatsguarded", "flats"),
+        choices=("flatsguarded", "flats_systs"),
         description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
     )
     n_bins = luigi.IntParameter(
