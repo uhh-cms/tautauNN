@@ -35,8 +35,7 @@ from tautaunn.cat_selectors import category_factory
 from tautaunn.shape_nuisances import shape_nuisances
 from tautaunn.write_datacards_stack import processes
 from tautaunn.cat_selectors import selector, sel_baseline
-from tautaunn.binning_algorithms import flatsguarded, flatsguarded_systs
-
+from tautaunn.binning_algorithms import flatsguarded, flats_systs
 
 #skip_files = ["/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16/MuonH/output_45.root"]
 skip_files = []
@@ -449,7 +448,7 @@ def get_binnings(
             binning,
         ))
 
-    print(f"\nwriting datacard{'s' if len(datacard_args) > 1 else ''} ...")
+    print(f"\ncalculating binning{'s' if len(datacard_args) > 1 else ''} ...")
     if n_parallel_write > 1:
         # run in parallel
         with ThreadPool(n_parallel_write) as pool:
@@ -473,10 +472,10 @@ def get_binnings(
     for args, edges in zip(datacard_args, binning_results):
         spin, mass, category = args[2:5]
         key = f"{category}__s{spin}__m{mass}"
-        # do not overwrite when edges are None (in case the datacard was skipped)
-        if key in all_bin_edges and not edges:
-            continue
-        all_bin_edges[key] = edges
+        if key in all_bin_edges:
+            raise Exception(f"bin edges for {key} already exist")
+        if not edges is None:
+            all_bin_edges[key] = edges
     # write them
     if not Path(output_file).parent.exists():
         Path(output_file).parent.mkdir(parents=True)
@@ -501,7 +500,7 @@ def _get_binning(
     else:
         n_bins, x_min, x_max, binning_algo = binning
     assert x_max > x_min
-    assert binning_algo in ["flatsguarded", "flatsguarded_systs"]
+    assert binning_algo in ["flatsguarded", "flats_systs"]
 
 
     # remove signal processes from the sample map that do not correspond to spin or mass
@@ -568,6 +567,9 @@ def _get_binning(
         sample_data[sample_name].full_weight_nominal * signal_scale
         for sample_name in sample_map[signal_process_name]
     ], axis=0)
+    if len(hh_values) == 0:
+        print(f"no events found for spin {spin}, mass {mass}, category {category}. skipping ...")
+        return None
 
     if binning_algo == "flatsguarded":
         dy_values = ak.concatenate([
@@ -595,45 +597,34 @@ def _get_binning(
                                  n_bins=n_bins,
                                  x_min=x_min,
                                  x_max=x_max)
-    elif binning_algo == "flatsguarded_systs":
+    elif binning_algo == "flats_systs":
         # additionally get nominal & all shifts for tt and dy
         tt_shifts = OrderedDict() 
         dy_shifts = OrderedDict() 
         for nuisance in shape_nuisances.values():
+            #if not "jes" in nuisance.name or not nuisance.is_nominal:
+                #continue
             for direction in nuisance.get_directions():
                 tt_values = ak.concatenate([
-                    tt_values,
-                    ak.concatenate([
                         sample_data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)]
                         for sample_name in sample_map["TT"]
-                    ], axis=0),
-                ], axis=0)
+                    ], axis=0)
                 tt_weights = ak.concatenate([
-                    tt_weights,
-                    ak.concatenate([
-                        sample_data[sample_name][nuisance.full_weight_varied(nuisance, direction)]
+                        sample_data[sample_name][nuisance.get_varied_full_weight(direction)]
                         for sample_name in sample_map["TT"]
-                    ], axis=0),
-                ], axis=0)
+                    ], axis=0)
                 dy_values = ak.concatenate([
-                    dy_values,
-                    ak.concatenate([
                         sample_data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)]
                         for sample_name in sample_map["DY"]
-                    ], axis=0),
-                ], axis=0)
+                    ], axis=0)
                 dy_weights = ak.concatenate([
-                    dy_weights,
-                    ak.concatenate([
-                        sample_data[sample_name][nuisance.full_weight_varied(variable_name, direction)]
+                        sample_data[sample_name][nuisance.get_varied_full_weight(direction)]
                         for sample_name in sample_map["DY"]
-                    ], axis=0),
-                ], axis=0)
-
+                    ], axis=0)
                 key = f"{nuisance.name}__{direction}" if not nuisance.is_nominal else nuisance.name
                 tt_shifts[key] = (tt_values, tt_weights)
                 dy_shifts[key] = (dy_values, dy_weights)
-        bin_edges = flatsguarded_systs(hh_values=hh_values,
+        bin_edges = flats_systs(hh_values=hh_values,
                                        hh_weights=hh_weights,
                                        tt_shifts=tt_shifts,
                                        dy_shifts=dy_shifts,
