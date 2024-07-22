@@ -10,12 +10,14 @@ from collections import defaultdict
 from functools import reduce
 from operator import mul
 from fnmatch import fnmatch
+from tqdm import tqdm
 
 from tautaunn.shape_nuisances import shape_nuisances, ShapeNuisance
 from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years
 
 from tautaunn.cat_selectors import selector, sel_baseline, category_factory
 from tautaunn.config import luminosities, Sample, get_sample
+
 
 _spins = [0,2]
 _masses = [250,260,270,280,300,320,350,400,450,500,550,600,650,700,750,800,850,900,1000,1250,1500,1750,2000,2500,3000]
@@ -251,7 +253,8 @@ def fill_hists(binnings: dict,
 
     hists = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
-    for key, bin_edges in binnings.items():
+    print(f"filling histograms for {sample_name} in {year}")
+    for key, bin_edges in tqdm(binnings.items()):
         cat_name, s, m = key.split("__") # cat_name is of the form year_channel_jet-cat_region__s{spin}_m{mass}
         jet_cat = cat_name.split("_")[2] # jet category like reolved{1,2}b, boosted
         spin, mass = s[1:], m[1:]
@@ -291,8 +294,9 @@ def fill_hists(binnings: dict,
 
 def write_root_file(hists: dict,
                     filepath: str,):
+    print(f"writing histograms to {filepath}")
     with uproot.recreate(filepath) as f:
-        for channel, cat_dict in hists.items():
+        for channel, cat_dict in tqdm(hists.items()):
             for jet_cat, region_dict in cat_dict.items():
                 for region, hist_dict in region_dict.items():
                     for name, hist in hist_dict.items():
