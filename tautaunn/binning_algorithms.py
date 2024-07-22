@@ -462,7 +462,7 @@ def flatsguarded_systs(hh_values: ak.Array,
             next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
         else:
             # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
-            next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
+            next_idx = offset + np.where(rec.process[offset:] == process_map["hh_nominal"])[0][-1] + 1
         # advance the index until backgrounds constraints are met
         while next_idx < len(rec):
             counts_per_shift = {
@@ -574,7 +574,13 @@ def flats_systs(hh_values: ak.Array,
     edge_count = 0
     while True:
         # this would be the next bin edge if we would only consider the signal
-        bin_idx_by_signal = offset + np.where(hh_weights_cumsum[offset:] > (edge_count+1)*signal_per_bin)[0][0]
+        pushover_idx = np.where(hh_weights_cumsum[offset:] > (edge_count+1)*signal_per_bin)[0]
+        if len(pushover_idx) == 0:
+            # no more hh events left
+            stop_reason = "no more events left"
+            bin_edges.append(x_min)
+            break
+        bin_idx_by_signal = offset + pushover_idx[0]
         bin_edge_by_signal = hh_values[bin_idx_by_signal]
         # we want at least 1 dy and 1 tt event in the bin
         dy_edges = [dy_shifts[key][0][offset] for key in dy_shifts.keys()] 
@@ -586,12 +592,16 @@ def flats_systs(hh_values: ak.Array,
         if next_edge <= np.min(hh_values):
             # no more hh events left
             bin_edges.append(x_min)
+            stop_reason = "no more events left"
             break
         # convert edge into offset
         next_offset = np.where(hh_values <= next_edge)[0][0]
-        if any((next_offset >= vals for vals in (len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])))):
+        if any((next_offset >= vals for vals in (len(dy_shifts["nominal"][0]),
+                                                 len(tt_shifts["nominal"][0])))):
             # close bin edges with x_min
             bin_edges.append(x_min)
+            stop_reason = ("no more dy or tt events left before checking yield constraints. "
+                           "(this shouldn't happen often)")
             break
 
         # now about the yields... we want to make sure that the dy and tt yields are positive
@@ -604,13 +614,15 @@ def flats_systs(hh_values: ak.Array,
             dy_yield_bin = np.where(dy_shifts["nominal"][1][offset:] > 0)[0][0]
             tt_yield_bin = np.where(tt_shifts["nominal"][1][offset:] > 0)[0][0]
             next_offset = offset + np.max([dy_yield_bin, tt_yield_bin])
-            next_edge = np.min([dy_shifts["nominal"][0][next_offset], tt_shifts["nominal"][0][next_offset]])
+            next_edge = np.min([dy_shifts["nominal"][0][next_offset],
+                                tt_shifts["nominal"][0][next_offset]])
             
         offset = next_offset 
         edge_count += 1
         # check remaining stats
         if ( hh_weights_cumsum[-1] - hh_weights_cumsum[offset] ) < edge_count*signal_per_bin:
             # close bin edges with x_min
+            stop_reason = "remaining signal yield insufficient"
             bin_edges.append(x_min)
             break
         if any(
@@ -618,13 +630,14 @@ def flats_systs(hh_values: ak.Array,
             [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])]
             )): 
             # close bin edges with x_min
+            stop_reason = "no more events left after adding yield constraints." 
             bin_edges.append(x_min)
             break
         if edge_count > n_bins-1:
             # close bin edges with x_min
+            stop_reason = "reached maximum number of bins"
             bin_edges.append(x_min)
             break
         bin_edges.append(next_edge)
-    epsilon = 5e-6
-    bin_edges = sorted(set(round(edge-epsilon, 5) for edge in bin_edges))
-    return bin_edges
+    bin_edges = sorted(bin_edges)
+    return bin_edges, stop_reason
