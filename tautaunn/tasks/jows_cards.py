@@ -211,7 +211,7 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flatsguarded",
-        choices=("flatsguarded", "flats"),
+        choices=("flatsguarded", "flats_systs", "flats"),
         description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
     )
     n_bins = luigi.IntParameter(
@@ -282,7 +282,9 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         binnings_file = inp[1].path if isinstance(inp, tuple) else self.binning_file
         sum_weights_file = inp[0].path if isinstance(inp, tuple) else inp.path
         with open(binnings_file, "r") as file:
+            # json file now also includes a string that is the stopping reason
             binnings = json.load(file)
+        binnings = {key: val[0] for key, val in binnings.items()}
         with open(sum_weights_file, "r") as file:
             sum_weights = json.load(file)
         
@@ -292,11 +294,14 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         else:
             sum_w = sum_weights[self.sample_name]
         # hardcode eval dir 
+        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+        #            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+        #            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+        #            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
-
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
         
         hists = fill_hists(binnings=binnings,
                            skim_directory=self.skim_dir,
