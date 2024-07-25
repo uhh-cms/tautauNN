@@ -174,7 +174,7 @@ EOF
         pip install --no-cache-dir -U \
             "ipython" \
             "notebook" \
-            "tensorflow[and-cuda]" \
+            "tensorflow[and-cuda]==2.15.0" \
             "tensorboard_plugin_profile" \
             "numpy" \
             "scipy" \
