@@ -206,7 +206,8 @@ def calc_energy(pt, eta, phi, m):
 
     energy = np.sqrt(m**2 + px**2 + py**2 + pz**2)
     # added in case sv-fit mass didn't coverge
-    energy[m < 0] = -1 * np.ones_like(np.sum(m < 0))
+    energy_np = np.asarray(energy)
+    energy_np[m < 0] = -1 * np.ones_like(np.sum(m < 0))
     return energy
 
 
