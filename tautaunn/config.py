@@ -473,7 +473,7 @@ cont_feature_sets = {
         "dau1_mt",
         "dau2_pt",
         "ditau_mt", "ditau_deltaR", "ditau_deltaeta",
-        "tauH_SVFIT_E", "tauH_SVFIT_mt", "tauH_SVFIT_mass",
+        "tauH_SVFIT_e", "tauH_SVFIT_mass",
         "met_et",
         "top1_mass",
         "h_bb_mass",
@@ -612,6 +612,23 @@ klub_weight_columns = [
     # "dauSFs",  # TODO: new skims
     "PUjetID_SF",
     "bTagweightReshape",
+]
+
+reg_plot_columns = [
+    "dau1_px", "dau1_py", "dau1_pz", "dau1_e",
+    "dau2_px", "dau2_py", "dau2_pz", "dau2_e",
+    "bjet1_px", "bjet1_py", "bjet1_pz", "bjet1_e",
+    "bjet2_px", "bjet2_py", "bjet2_pz", "bjet2_e",
+    "met_px", "met_py",
+    "tauH_mass", "tauH_pt", "tauH_px", "tauH_py", "tauH_pz", "tauH_e",
+    "tauH_SVFIT_mass", "tauH_SVFIT_pt", "tauH_SVFIT_px", "tauH_SVFIT_py", "tauH_SVFIT_pz", "tauH_SVFIT_e",
+    "bH_px", "bH_py", "bH_pz", "bH_e",
+    "HH_mass", "HH_pt",
+    "svfit_HH_mass", "svfit_HH_pt",
+    "recoGenTauH_pt", "recoGenTauH_mass",
+    "genNu1_px", "genNu1_py", "genNu1_pz",
+    "genNu2_px", "genNu2_py", "genNu2_pz",
+    "recoGen_HH_pt", "recoGen_HH_mass",
 ]
 
 dynamic_columns = {
@@ -961,13 +978,57 @@ dynamic_columns = {
         ("tauH_pz", "bH_pz"),
         (lambda a, b: a + b),
     ),
-    "tauH_SVFIT_E": (
+    "tauH_SVFIT_e": (
         ("tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_SVFIT_mass"),
         (lambda a, b, c, d: calc_energy(a, b, c, d)),
     ),
-    "tauH_SVFIT_mt": (
-        ("tauH_SVFIT_pt", "tauH_SVFIT_eta", "tauH_SVFIT_phi", "tauH_SVFIT_mass"),
-        (lambda a, b, c, d: calc_energy(a, b, c, d)),
+    "tauH_SVFIT_dphi": (
+        ("tauH_SVFIT_phi", rot_phi),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
+    "tauH_SVFIT_px": (
+        ("tauH_SVFIT_pt", "tauH_SVFIT_dphi"),
+        (lambda a, b: a * np.cos(b)),
+    ),
+    "tauH_SVFIT_py": (
+        ("tauH_SVFIT_pt", "tauH_SVFIT_dphi"),
+        (lambda a, b: a * np.sin(b)),
+    ),
+    "tauH_SVFIT_pz": (
+        ("tauH_SVFIT_pt", "tauH_SVFIT_eta"),
+        (lambda a, b: a * np.sinh(b)),
+    ),
+    "svfit_HH_mass": (
+        ("tauH_SVFIT_e", "tauH_SVFIT_px", "tauH_SVFIT_py", "tauH_SVFIT_pz", "bH_e", "bH_px", "bH_py", "bH_pz"),
+        (lambda a, b, c, d, e, f, g, h: ((a + e)**2 - (b + f)**2 - (c + g)**2 - (d + h)**2)**0.5),
+    ),
+    "svfit_HH_pt": (
+        ("tauH_SVFIT_px", "bH_px", "tauH_SVFIT_py", "bH_py"),
+        (lambda a, b, c, d: ((a + b)**2 + (c + d)**2)**0.5),
+    ),
+    "recoGenTauH_dphi": (
+        ("recoGenTauH_phi", rot_phi),
+        (lambda a, b: phi_mpi_to_pi(a - b)),
+    ),
+    "recoGenTauH_px": (
+        ("recoGenTauH_pt", "recoGenTauH_dphi"),
+        (lambda a, b: a * np.cos(b)),
+    ),
+    "recoGenTauH_py": (
+        ("recoGenTauH_pt", "recoGenTauH_dphi"),
+        (lambda a, b: a * np.sin(b)),
+    ),
+    "recoGenTauH_pz": (
+        ("recoGenTauH_pt", "recoGenTauH_eta"),
+        (lambda a, b: a * np.sinh(b)),
+    ),
+    "recoGen_HH_mass": (
+        ("recoGenTauH_e", "recoGenTauH_px", "recoGenTauH_py", "recoGenTauH_pz", "bH_e", "bH_px", "bH_py", "bH_pz"),
+        (lambda a, b, c, d, e, f, g, h: ((a + e)**2 - (b + f)**2 - (c + g)**2 - (d + h)**2)**0.5),
+    ),
+    "recoGen_HH_pt": (
+        ("recoGenTauH_px", "bH_px", "recoGenTauH_py", "bH_py"),
+        (lambda a, b, c, d: ((a + b)**2 + (c + d)**2)**0.5),
     ),
     "hh_pt": (
         hh_args := ("dau1_pt", "dau1_eta", "dau1_phi", "dau1_e", "dau2_pt", "dau2_eta", "dau2_phi", "dau2_e",
@@ -986,7 +1047,7 @@ dynamic_columns = {
     ),
     "diH_mass_met": (
         hh_args,
-        (lambda *args: hh(*args, kind="dphi_hbb_met")),
+        (lambda *args: hh(*args, kind="diH_mass_met")),
     ),
     # "ditau_deltaR_x_sv_pt":(
     #     ("ditau_deltaR", "tauH_SVFIT_pt"),

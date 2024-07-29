@@ -9,6 +9,8 @@ import law
 import numpy as np
 import tensorflow as tf
 import awkward as ak
+import vector
+
 
 from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
 from tautaunn.tasks.reg_training import RegTraining, RegMultiFoldParameters
@@ -34,16 +36,6 @@ class RegEvaluationParameters(RegMultiFoldParameters):
 
 
 class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
-
-    # @property
-    # def priority(self):
-    #     # higher priority value = picked earlier by scheduler
-    #     # priotize (tt, ttH, ttZ > data > rest) across all years
-    #     if re.match(r"^(TT_SemiLep|TT_FullyLep|ttHToTauTau|TTZToLLNuNu)$", self.sample.name):
-    #         return 10
-    #     if re.match(r"^(EGamma|MET|Muon|Tau)(A|B|C|D|E|F|G|H)$", self.sample.name):
-    #         return 5
-    #     return 1
 
     def workflow_requires(self):
         reqs = super().workflow_requires()
@@ -79,7 +71,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
         def col_name(mass, spin, out_name):
             return f"regdnn_m{int(mass)}_s{int(spin)}_{out_name.lower()}"
 
-        def calc_inputs(arr, dyn_names, cfg, fold_index):
+        def calc_inputs(arr, dyn_names, cfg):
             arr = calc_new_columns(arr, {name: cfg.dynamic_columns[name] for name in dyn_names})
 
             # prepare model inputs
@@ -102,14 +94,9 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 cat_mask &= np.isin(cat_inputs[:, i], np.unique(cfg.embedding_expected_inputs[name]))
             self.publish_message(f"events passing cat_mask: {cat_mask.mean() * 100:.2f}%")
 
-            # merge with fold mask in case there are multiple models
-            eval_mask = cat_mask
-            if n_models > 1:
-                eval_mask &= np.asarray((arr.EventNumber % self.n_folds) == fold_index)
+            return arr, cont_inputs, cat_inputs
 
-            return cont_inputs, cat_inputs, eval_mask
-
-        def predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree):
+        def predict(model, cont_inputs, cat_inputs, eval_mask, class_names, out_tree):
             # selection and categorization
 
             spins = self.spins if self.sample.spin < 0 else [self.sample.spin]
@@ -144,61 +131,215 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                             out_tree[field] = -1 * np.ones(len(eval_mask), dtype=np.float32)
                         out_tree[field][eval_mask] = predictions["regression_output_hep"][:, i]
 
-        def sel_os(array: ak.Array) -> ak.Array:
-            return array.isOS == 1
+                    dau1 = vector.array(
+                        {
+                            "px": out_tree["dau1_px"],
+                            "py": out_tree["dau1_py"],
+                            "pz": out_tree["dau1_pz"],
+                            "e": out_tree["dau1_e"],
+                        },
+                    )
+                    dau2 = vector.array(
+                        {
+                            "px": out_tree["dau2_px"],
+                            "py": out_tree["dau2_py"],
+                            "pz": out_tree["dau2_pz"],
+                            "e": out_tree["dau2_e"],
+                        },
+                    )
+                    nu1 = vector.array(
+                        {
+                            "px": out_tree[col_name(mass, spin, "nu1_px")],
+                            "py": out_tree[col_name(mass, spin, "nu1_py")],
+                            "pz": out_tree[col_name(mass, spin, "nu1_pz")],
+                            "e": np.sqrt(
+                                out_tree[col_name(mass, spin, "nu1_px")]**2 +
+                                out_tree[col_name(mass, spin, "nu1_py")]**2 +
+                                out_tree[col_name(mass, spin, "nu1_pz")]**2,
+                            ),
+                        },
+                    )
+
+                    nu2 = vector.array(
+                        {
+                            "px": out_tree[col_name(mass, spin, "nu2_px")],
+                            "py": out_tree[col_name(mass, spin, "nu2_py")],
+                            "pz": out_tree[col_name(mass, spin, "nu2_pz")],
+                            "e": np.sqrt(
+                                out_tree[col_name(mass, spin, "nu2_px")]**2 +
+                                out_tree[col_name(mass, spin, "nu2_py")]**2 +
+                                out_tree[col_name(mass, spin, "nu2_pz")]**2,
+                            ),
+                        },
+                    )
+
+                    h_bb = vector.array(
+                        {
+                            "px": out_tree["bH_px"],
+                            "py": out_tree["bH_py"],
+                            "pz": out_tree["bH_pz"],
+                            "e": out_tree["bH_e"],
+                        },
+                    )
+
+                    h_tt = dau1 + dau2 + nu1 + nu2
+                    hh = h_bb + h_tt
+
+                    out_tree[f"reg_H_mass_m{int(mass)}_{int(spin)}"] = h_tt.m
+                    out_tree[f"reg_H_pt_m{int(mass)}_{int(spin)}"] = h_tt.pt
+                    out_tree[f"reg_HH_mass_m{int(mass)}_{int(spin)}"] = hh.m
+                    out_tree[f"reg_HH_pt_m{int(mass)}_{int(spin)}"] = hh.pt
+
+        def sel_mass_window(array: ak.Array) -> ak.Array:
+            return (
+                (array.tauH_mass >= 20.0) &
+                (array.tauH_mass <= 130.0) &
+                (array.bH_mass >= 40.0) &
+                (array.bH_mass <= 270.0)
+            )
+
+        def sel_trigger(array: ak.Array) -> ak.Array:
+            return (
+                (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1)
+            )
+
+        def sel_common(array: ak.Array) -> ak.Array:
+            return (
+                (array.isOS == 1) &
+                (array.nleps == 0) &
+                (array.dau2_deepTauVsJet >= 5) &
+                sel_mass_window(array) &
+                sel_trigger(array)
+            )
+
+        def sel_mutau(array: ak.Array) -> ak.Array:
+            return (
+                (array.pairType == 0) &
+                (array.dau1_iso < 0.15)
+            )
+
+        def sel_etau(array: ak.Array) -> ak.Array:
+            return (
+                (array.pairType == 1) &
+                (array.dau1_eleMVAiso == 1)
+            )
+
+        def sel_tautau(array: ak.Array) -> ak.Array:
+            return (
+                (array.pairType == 2) &
+                (array.dau1_deepTauVsJet >= 5)
+            )
+
+        def sel_btag_m(array: ak.Array) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[self.sample.year]["medium"]) &
+                (array.bjet2_bID_deepFlavor <= cfg.btag_wps[self.sample.year]["medium"])
+            ) | (
+                (array.bjet1_bID_deepFlavor <= cfg.btag_wps[self.sample.year]["medium"]) &
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[self.sample.year]["medium"])
+            )
+
+        def sel_btag_mm(array: ak.Array) -> ak.Array:
+            return (
+                (array.bjet1_bID_deepFlavor > cfg.btag_wps[self.sample.year]["medium"]) &
+                (array.bjet2_bID_deepFlavor > cfg.btag_wps[self.sample.year]["medium"])
+            )
+
+        def sel_pnet_l(array: ak.Array) -> ak.Array:
+            return (
+                (array.fatjet_particleNetMDJetTags_score > cfg.pnet_wps[self.sample.year])
+            )
+
+        def sel_mutau_res1b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_mutau(array) &
+                sel_btag_m(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_mutau_res2b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_mutau(array) &
+                sel_btag_mm(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_mutau_boosted(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_mutau(array) &
+                (array.isBoosted == 1) &
+                sel_pnet_l(array)
+            )
+
+        def sel_etau_res1b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_etau(array) &
+                sel_btag_m(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_etau_res2b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_etau(array) &
+                sel_btag_mm(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_etau_boosted(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_etau(array) &
+                (array.isBoosted == 1) &
+                sel_pnet_l(array)
+            )
+
+        def sel_tautau_res1b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_tautau(array) &
+                sel_btag_m(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_tautau_res2b(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_tautau(array) &
+                sel_btag_mm(array) &
+                (array.nbjetscand > 1) &
+                (array.isBoosted == 0)
+            )
+
+        def sel_tautau_boosted(array: ak.Array) -> ak.Array:
+            return (
+                sel_common(array) &
+                sel_tautau(array) &
+                (array.isBoosted == 1) &
+                sel_pnet_l(array)
+            )
 
         def select_category(array: ak.Array) -> ak.Array:
             cat_ids = np.zeros(len(array), dtype=np.int32)
-            cat_ids[sel_os(array)] = 1
-            cat_ids[~sel_os(array)] = 2
+            cat_ids[sel_mutau_res1b(array)] = 1
+            cat_ids[sel_mutau_res2b(array)] = 2
+            cat_ids[sel_mutau_boosted(array)] = 3
+            cat_ids[sel_etau_res1b(array)] = 4
+            cat_ids[sel_etau_res2b(array)] = 5
+            cat_ids[sel_etau_boosted(array)] = 6
+            cat_ids[sel_tautau_res1b(array)] = 7
+            cat_ids[sel_tautau_res2b(array)] = 8
+            cat_ids[sel_tautau_boosted(array)] = 9
             return cat_ids
-
-        # def sel_btag_m(array: ak.Array, year: str) -> ak.Array:
-        #     return (
-        #         (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) &
-        #         (array.bjet2_bID_deepFlavor <= cfg.btag_wps[year]["medium"])
-        #     ) | (
-        #         (array.bjet1_bID_deepFlavor <= cfg.btag_wps[year]["medium"]) &
-        #         (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
-        #     )
-
-        # def sel_btag_mm(array: ak.Array, year: str) -> ak.Array:
-        #     return (
-        #         (array.bjet1_bID_deepFlavor > cfg.btag_wps[year]["medium"]) &
-        #         (array.bjet2_bID_deepFlavor > cfg.btag_wps[year]["medium"])
-        #     )
-
-        # def sel_first_lep(array: ak.Array) -> ak.Array:
-        #     return (
-        #         ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
-        #         ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
-        #         ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
-        #     )
-
-        # def sel_pnet_l(array: ak.Array, year: str) -> ak.Array:
-        #     return (
-        #         (array.fatjet_particleNetMDJetTags_score > cfg.pnet_wps[year])
-        #     )
-
-        # def sel_cats(array: ak.Array, year: str) -> ak.Array:
-        #     return (
-        #         (array.nleps == 0) &
-        #         sel_first_lep(array) &
-        #         sel_trigger(array) &
-        #         (
-        #             (  # boosted (pnet cut left out to be looser)
-        #                 (array.isBoosted == 1)
-        #             ) |
-        #             (  # res1b (no ~isBoosted cut to be looser)
-        #                 (array.nbjetscand > 1) &
-        #                 sel_btag_m(array, year)
-        #             ) |
-        #             (  # res2b (no ~isBoosted cut to be looser)
-        #                 (array.nbjetscand > 1) &
-        #                 sel_btag_mm(array, year)
-        #             )
-        #         )
-        #     )
 
         # determine columns to read
         columns_to_read = set()
@@ -207,6 +348,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
         columns_to_read |= set(cfg.klub_index_columns)
         columns_to_read |= set(cfg.klub_category_columns)
         columns_to_read |= set(cfg.klub_weight_columns)
+        columns_to_read |= set(cfg.reg_plot_columns)
         # expand dynamic columns, keeping track of those that are needed
         all_dyn_names = set(cfg.dynamic_columns)
         dyn_names = set()
@@ -249,10 +391,11 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
         arr = arr[sel_mask]
         cat_ids = cat_ids[sel_mask]
 
+        arr, cont_inputs, cat_inputs = calc_inputs(arr, dyn_names, cfg)
         # prepare tree-like structure for outputs
         out_tree = {
             c: np.asarray(arr[c])
-            for c in list(set(cfg.klub_index_columns) | set(cfg.klub_weight_columns) | set(cfg.klub_category_columns))
+            for c in list(set(cfg.klub_index_columns) | set(cfg.klub_weight_columns) | set(cfg.reg_plot_columns))
         }
         out_tree["category_id"] = cat_ids
 
@@ -261,10 +404,13 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
             with self.publish_step(f"\nloading model for fold {fold_index} ..."), get_device("cpu"):
                 model = inps["saved_model"].load(formatter="tf_saved_model")
 
-                cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                eval_mask = np.ones(len(arr), dtype=np.int32)
+                if n_models > 1:
+                    eval_mask = np.asarray((arr.EventNumber % self.n_folds) == fold_index)
+
                 # evaluate the data
-                with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                    predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
+                with self.publish_step(f"evaluating model on {eval_mask.sum()} events ..."):
+                    predict(model, cont_inputs, cat_inputs, eval_mask, class_names, out_tree)
 
         # free memory
         del models
