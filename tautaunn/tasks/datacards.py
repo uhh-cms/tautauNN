@@ -419,7 +419,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
     
-class WriteDatacards(MultiSkimTask, EvaluationParameters):
+class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.LocalWorkflow):
 
     categories = law.CSVParameter(
         default=_default_categories,
@@ -432,7 +432,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("equal", "flats", "flatsguarded"),
+        choices=("equal", "flats", "flatsguarded", "flats_systs"),
         description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
     )
     n_bins = luigi.IntParameter(
@@ -468,6 +468,13 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
+    
+    def create_branch_map(self):
+        from tautaunn.write_datacards_stack import expand_categories
+        branch_list = expand_categories(self.categories)
+        print(f"branch_list: {branch_list}")
+        return branch_list
+
 
     @property
     def card_names(self):
@@ -481,16 +488,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
 
     def store_parts(self):
         parts = super().store_parts()
         parts.insert_before("version", "ensemble", self.get_model_name())
         return parts
+
 
     def output(self):
         # prepare the output directory
@@ -506,9 +509,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         if path_user != os.environ["USER"]: 
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
-            yn = input("continue? [y/n] ")
-            if yn.lower() != "y":
-                new_path = input(f"enter the correct path (should point to your $TN_STORE_DIR/{self.__class__.__name__}): ")
             d = self.local_target(new_path, dir=True)
 
         return law.SiblingFileCollection({
@@ -521,28 +521,49 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def run(self):
         # load the datacard creating function
-        from tautaunn.write_datacards_stack import write_datacards
+        from tautaunn.write_datacards_per_cat import write_datacards
 
         # prepare inputs
         inp = self.input()
 
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
+        # hardcode the eval directories for now
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directories = {}
-        for skim_name in inp:
+        for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(skim_name)
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+                
+            
+        
+        #eval_directories = {}
+        #for skim_name in inp:
+            #sample = cfg.get_sample(skim_name, silent=True)
+            #if sample is None:
+                #sample_name, skim_year = self.split_skim_name(skim_name)
+                #sample = cfg.Sample(sample_name, year=skim_year)
+            #skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
+            #if sample.year not in eval_directories:
+                #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
 
+        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
-            category=list(self.categories),
+            category=self.branch_data,
+            #category=expand_categories(self.categories)[0],
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
@@ -560,6 +581,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             cache_directory=os.path.join(os.environ["TN_DATA_DIR"], "datacard_cache"),
             skip_existing=not self.rewrite_existing,
         )
+        print("datacard_kwargs: ", datacard_kwargs)
 
         # create the cards
         write_datacards(**datacard_kwargs)
