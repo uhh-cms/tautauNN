@@ -288,7 +288,7 @@ def fill_hists(binnings: dict,
 
                         h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                         h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
-                        hists[cat['channel']][jet_cat][region][f"{combine_name}__s{spin}__m{mass}"] = h
+                        hists[cat['channel']][jet_cat][region][f"{combine_name}{direction}__s{spin}__m{mass}"] = h
     return hists
 
 
