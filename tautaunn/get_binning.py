@@ -45,7 +45,7 @@ klub_weight_columns = [
     "PUReweight",
     "L1pref_weight",
     "trigSF",
-    "idFakeSF",  # originally named "IdFakeSF_deep_2d" in KLUB for the central value
+    #"idFakeSF",  # originally named "IdFakeSF_deep_2d" in KLUB for the central value
     "PUjetID_SF",
     "bTagweightReshape",
 ]
@@ -87,7 +87,7 @@ def load_klub_file(
     file_name: str,
 ) -> tuple[ak.Array, float]:
     # all weight column patterns
-    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns] + ["IdFakeSF_deep_2d"]
+    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns]
 
     # all columns that should be loaded and kept later on
     persistent_columns = klub_index_columns + klub_extra_columns + sel_baseline.flat_columns
@@ -105,8 +105,8 @@ def load_klub_file(
     )
 
     # aliases do not work with filter_name for some reason, so swap names manually
-    array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
-    array = ak.without_field(array, "IdFakeSF_deep_2d")
+    #array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
+    #array = ak.without_field(array, "IdFakeSF_deep_2d")
 
     # compute the full weight for each shape variation (includes nominal)
     # and complain when non-finite weights were found
