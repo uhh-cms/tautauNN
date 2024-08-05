@@ -311,12 +311,12 @@ ShapeNuisance.new(
 )
 ShapeNuisance.new(
     name="ees",
-    combine_name="CMS_scale_e_{year}",  # TODO: check
+    combine_name="CMS_scale_e_{year}",
     discriminator_suffix=("ees_up", "ees_down"),
 )
 ShapeNuisance.new(
     name="eer",
-    combine_name="CMS_sigma_e_{year}",  # TODO: check
+    combine_name="CMS_res_e_{year}",
     discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
 )
 ShapeNuisance.new(

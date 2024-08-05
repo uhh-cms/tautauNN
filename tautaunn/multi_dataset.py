@@ -206,7 +206,7 @@ class MultiDataset(object):
             batches = []
         else:
             batches = [[] for i in range(len(arrays))]
-            
+
         for idx, arrays in enumerate(self):
             if n_arrays == 1:
                 batches.append(arrays[0])
