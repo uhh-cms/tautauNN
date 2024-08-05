@@ -419,7 +419,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
     
-class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.LocalWorkflow):
+class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     categories = law.CSVParameter(
         default=_default_categories,
@@ -469,13 +469,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.
         self._card_names = None
 
     
-    def create_branch_map(self):
-        from tautaunn.write_datacards_stack import expand_categories
-        branch_list = expand_categories(self.categories)
-        print(f"branch_list: {branch_list}")
-        return branch_list
-
-
     @property
     def card_names(self):
         if self._card_names is None:
@@ -521,7 +514,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.
 
     def run(self):
         # load the datacard creating function
-        from tautaunn.write_datacards_per_cat import write_datacards
+        from tautaunn.write_datacards_stack import write_datacards
 
         # prepare inputs
         inp = self.input()
@@ -529,10 +522,15 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
         # hardcode the eval directories for now
+        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+        # even newer evals
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod5_syst")
         if "max-" in os.environ["HOSTNAME"]:
             eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directories = {}
@@ -545,25 +543,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.
             if sample.year not in eval_directories:
                 eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
                 
-            
-        
-        #eval_directories = {}
-        #for skim_name in inp:
-            #sample = cfg.get_sample(skim_name, silent=True)
-            #if sample is None:
-                #sample_name, skim_year = self.split_skim_name(skim_name)
-                #sample = cfg.Sample(sample_name, year=skim_year)
-            #skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
-            #if sample.year not in eval_directories:
-                #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-
         #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
-            category=self.branch_data,
-            #category=expand_categories(self.categories)[0],
+            category=self.categories,
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
@@ -581,7 +566,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters, HTCondorWorkflow, law.
             cache_directory=os.path.join(os.environ["TN_DATA_DIR"], "datacard_cache"),
             skip_existing=not self.rewrite_existing,
         )
-        print("datacard_kwargs: ", datacard_kwargs)
 
         # create the cards
         write_datacards(**datacard_kwargs)
