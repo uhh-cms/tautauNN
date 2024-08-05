@@ -126,15 +126,18 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         
         # prepare skim and eval directories
         skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
+        # new evals
         #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
                     #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
-        # new evals
+                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+
+        # even newer evals
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod5_syst")
+
         if "max-" in os.environ["HOSTNAME"]:
             eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directory = os.path.join(eval_dir, self.year)
@@ -298,11 +301,15 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         #            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
         #            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
         #            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
-        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
         
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod5_syst")
         hists = fill_hists(binnings=binnings,
                            skim_directory=self.skim_dir,
                            eval_directory=os.path.join(eval_dir, self.skim_year),
@@ -327,19 +334,59 @@ class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
         }
 
                            
-class MergeHists(MultiSkimTask, Task):
+class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
     
-    def __init__(self, *args, **kwargs):
+    """
+    class to merge the histograms that were filled in FillHists
+
+    ------------
+    
+    2017_{TT, ST} take around 15 GB of memory
+
+    2017_DY takes around 30 GB of memory
+    
+    not sure how it will look if we stack all years together
+    """
+
+    skim_names = law.CSVParameter(
+        default=("201*_*",),
+        description="skim name pattern(s); default: 201*_*",
+        brace_expand=True,
+    )
+
+    hadd_parallel = luigi.IntParameter(
+        default=4,
+        description="number of parallel hadd processes to use; default: 4",
+    )
+
+    @classmethod
+    def resolve_param_values(cls, params: dict) -> dict:
+        params = super().resolve_param_values(params)
+
+        # resolve skim_names based on directories existing on disk
+        resolved_skim_names = []
+        for year, sample_names in cfg.get_all_skim_names().items():
+            for sample_name in sample_names:
+                if law.util.multi_match((skim_name := f"{year}_{sample_name}"), params["skim_names"]):
+                    resolved_skim_names.append(skim_name)
+        params["skim_names"] = tuple(resolved_skim_names)
+
+        return params
+
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        
+
 
     def requires(self):
         return FillHistsWrapper.req(self)
     
+
     def output(self):
         o_dict = {}
         for skim_name in self.skim_names:
             sample_name, skim_year = self.split_skim_name(skim_name)
+            if "DY" in sample_name:
+                o_dict[sample_name] = self.local_target(f"{skim_year}/{sample_name}_hists.root")
             for process in processes:
                 if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
                     if process not in o_dict:
@@ -348,6 +395,37 @@ class MergeHists(MultiSkimTask, Task):
                         continue
         return o_dict
 
+
+    def create_branch_map(self):
+        dy_skims = [skim_name for skim_name in self.skim_names if "DY" in skim_name]
+        sample_names = [self.split_skim_name(skim_name)[0] for skim_name in self.skim_names]
+        requested_processes = list(set([process for process in processes
+                               if any(fnmatch(sample_name, pattern)
+                               for pattern in processes[process]["sample_patterns"]
+                               for sample_name in sample_names)]))
+
+        signal_processes = [process for process in requested_processes if processes[process].get("signal", False)]
+        background_processes = [process for process in requested_processes 
+                                if (
+                                    not processes[process].get("data", False)
+                                    and not processes[process].get("signal", False)
+                                    and not process == "QCD"
+                                    and not process == "DY"
+                                )]
+        data_processes = [process for process in requested_processes if processes[process].get("data", False)]
+
+        branch_map = {}
+        if len(background_processes) > 0:
+            branch_map.update({i: process for i, process in enumerate(background_processes)})
+        if len(data_processes) > 0:
+            branch_map.update({i+len(background_processes): process for i, process in enumerate(data_processes)})
+        if len(signal_processes) > 0:
+            branch_map.update({len(background_processes)+len(data_processes): signal_processes})
+        if len(dy_skims) > 0:
+            branch_map.update({i+len(background_processes)+len(data_processes)+len(signal_processes): sample for i, sample in enumerate(dy_skims)})
+        return branch_map
+
+
     def run(self):
 
         from subprocess import Popen
@@ -355,25 +433,59 @@ class MergeHists(MultiSkimTask, Task):
         from tqdm import tqdm
 
         def merge_sample(destination,
-                         skim_files,):
+                         skim_files,
+                         num_processes=4):
                         
             if not os.path.exists(os.path.dirname(destination)):
                 os.makedirs(os.path.dirname(destination))
 
             with open(os.devnull, "w") as devnull:
-                process = Popen(["hadd", "-f", "-j", "5", destination, *skim_files], stdout=devnull) 
+                process = Popen(["hadd", "-f", "-j", str(num_processes), destination, *skim_files], stdout=devnull) 
             out, err = process.communicate()
             if process.returncode != 0:
                 raise Exception(err)
-
+        
         inp = self.input()
-        pbar = tqdm(self.output().items())
-        for process, output in pbar: 
-            pbar.set_description(f"merging {process}")
-            skim_files = []
-            for skim_name in self.skim_names:
-                sample_name, skim_year = self.split_skim_name(skim_name)
-                if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
-                    skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
-            merge_sample(output.path, list(itertools.chain.from_iterable(skim_files)))
+        output = self.output()
+        if isinstance(self.branch_data, list):
+            for process in tqdm(self.branch_data):
+                skim_files = []
+                for skim_name in self.skim_names:
+                    sample_name, skim_year = self.split_skim_name(skim_name)
+                    if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
+                        skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
+                merge_sample(output[process].path,
+                             list(itertools.chain.from_iterable(skim_files)),)
+        else:
+            tic = time.time()
+            print(f"merging {self.branch_data}")
+            if "DY" in self.branch_data:
+                skim_files = inp[self.branch_data].collection.dir.glob("output_*_hists.root")
+                merge_sample(output[self.branch_data].path,
+                             skim_files,
+                             self.hadd_parallel)
+                toc = time.time()
+                print(f"merging took {(time.time()-tic):.2f} seconds")
+            else:
+                skim_files = []
+                for skim_name in self.skim_names:
+                    sample_name, skim_year = self.split_skim_name(skim_name)
+                    if any(fnmatch(sample_name, pattern) for pattern in processes[self.branch_data]["sample_patterns"]):
+                        skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
+                merge_sample(output[self.branch_data].path,
+                            list(itertools.chain.from_iterable(skim_files)),
+                            self.hadd_parallel)
+                toc = time.time()
+                print(f"merging took {(toc-tic):.2f} seconds")
             
+        
+        #pbar = tqdm(self.output().items())
+        #for process, output in pbar: 
+            #pbar.set_description(f"merging {process}")
+            #skim_files = []
+            #for skim_name in self.skim_names:
+                #sample_name, skim_year = self.split_skim_name(skim_name)
+                #if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
+                    #skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
+            #merge_sample(output.path, list(itertools.chain.from_iterable(skim_files)))
+        
