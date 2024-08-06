@@ -317,7 +317,7 @@ ShapeNuisance.new(
 ShapeNuisance.new(
     name="eer",
     combine_name="CMS_res_e_{year}",
-    discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
+    discriminator_suffix=("eer_up", "eer_down"),
 )
 ShapeNuisance.new(
     name="fes_DM0",
@@ -366,17 +366,17 @@ ShapeNuisance.new(
 )
 
 jes_names = {
-    1: "CMS_j_Abs",
-    2: "CMS_j_Abs_{year}",
-    3: "CMS_j_BBEC1",
-    4: "CMS_j_BBEC1_{year}",
-    5: "CMS_j_EC2",
-    6: "CMS_j_EC2_{year}",
-    7: "CMS_j_FlavQCD",
-    8: "CMS_j_HF",
-    9: "CMS_j_HF_{year}",
-    10: "CMS_j_RelBal",
-    11: "CMS_j_RelSample_{year}",
+    1: "CMS_scale_j_Abs",
+    2: "CMS_scale_j_Abs_{year}",
+    3: "CMS_scale_j_BBEC1",
+    4: "CMS_scale_j_BBEC1_{year}",
+    5: "CMS_scale_j_EC2",
+    6: "CMS_scale_j_EC2_{year}",
+    7: "CMS_scale_j_FlavQCD",
+    8: "CMS_scale_j_HF",
+    9: "CMS_scale_j_HF_{year}",
+    10: "CMS_scale_j_RelBal",
+    11: "CMS_scale_j_RelSample_{year}",
 }
 
 for js in range(1, 12):
@@ -1936,13 +1936,14 @@ def _write_datacard(
                     any_qcd_valid[year] |= not qcd_invalid
 
     # drop qcd shapes in years where no valid estimation was found
-    for year, qcd_valid in any_qcd_valid.items():
-        if not qcd_valid:
-            print(
-                f"  completely dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
-                "created for any nuisance",
-            )
-            del hists[(year, "QCD")]
+    if qcd_estimation:
+        for year, qcd_valid in any_qcd_valid.items():
+            if not qcd_valid:
+                print(
+                    f"  completely dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
+                    "created for any nuisance",
+                )
+                del hists[(year, "QCD")]
 
     # TODO: temporary fix
     # flip_downs = [

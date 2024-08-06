@@ -30,7 +30,7 @@ class EvaluationParameters(MultiFoldParameters):
         brace_expand=True,
     )
     masses = law.CSVParameter(
-        cls=luigi.FloatParameter,
+        cls=luigi.IntParameter,
         default=tuple(cfg.masses),
         description=f"masses to evaluate; default: {','.join(map(str, cfg.masses))}",
         brace_expand=True,
@@ -219,7 +219,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                 )
             )
         ees_dict = {
-            f"{ss}_{ud}": {
+            f"{ss}_{ud.lower()}": {
                 "dau1_pt": f"dau1_pt_{ss}{ud}",
                 "dau1_e": f"dau1_e_{ss}{ud}",
                 "dau2_pt": f"dau2_pt_{ss}{ud}",
@@ -232,7 +232,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
         # fes has 2 sources
         fes_dict = {
-            f"fes_{dm}_{ud}": {
+            f"fes_{dm}_{ud.lower()}": {
                 "dau1_pt": f"dau1_pt_ele{ud}_{dm}",
                 "dau1_e": f"dau1_e_ele{ud}_{dm}",
                 "dau2_pt": f"dau2_pt_ele{ud}_{dm}",
@@ -245,7 +245,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
         # tes has 4 sources
         tes_dict = {
-            f"tes_{dm}_{ud}": {
+            f"tes_{dm}_{ud.lower()}": {
                 "dau1_pt": f"dau1_pt_tau{ud}_{dm}",
                 "dau1_e": f"dau1_e_tau{ud}_{dm}",
                 "dau2_pt": f"dau2_pt_tau{ud}_{dm}",
@@ -257,7 +257,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             for dm in ["DM0", "DM1", "DM10", "DM11"]
         }
         mes_dict = {
-            f"mes_{ud}": {
+            f"mes_{ud.lower()}": {
                 "dau1_pt": f"dau1_pt_mu{ud}",
                 "dau1_e": f"dau1_e_mu{ud}",
                 "dau2_pt": f"dau2_pt_mu{ud}",
@@ -269,7 +269,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         }
         # jes has 11 sources
         jes_dict = {
-            f"jes_{src}_{ud}": {
+            f"jes_{src}_{ud.lower()}": {
                 "bjet1_pt": f"bjet1_pt_jet{ud}{src}",
                 "bjet1_e": f"bjet1_e_jet{ud}{src}",
                 "bjet2_pt": f"bjet2_pt_jet{ud}{src}",
@@ -300,6 +300,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             columns_to_read |= set(self.lbn_cfg.input_features) - {None}
         columns_to_read |= set(cfg.klub_index_columns)
         columns_to_read |= set(cfg.klub_category_columns)
+        columns_to_read |= set(cfg.klub_weight_columns)
         # expand dynamic columns, keeping track of those that are needed
         all_dyn_names = set(cfg.dynamic_columns)
         dyn_names = set()
@@ -363,7 +364,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         out_trees = {
             key: {
                 c: np.asarray(arr[c])
-                for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns))
+                for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns) | set(cfg.klub_weight_columns))
             }
             for key in outputs.targets.keys()
         }
@@ -385,13 +386,13 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
                     # reduce array to only events that are in resolved1b, resolved2b or boosted category
                     category_mask = sel_cats(arr, self.sample.year)
                     self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-                    syst_arr = arr[category_mask]
 
                     # the initial output tree was created for all events, so reduce it once
                     if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
                         out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
 
                     for shape_name in shape_names:
+                        syst_arr = arr[category_mask]
                         # apply systematic variations via aliases
                         for dst, src in shape_systs[shape_name].items():
                             if src in arr.fields:
@@ -569,7 +570,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             qcd_estimation=self.qcd_estimation,
             n_parallel_read=self.parallel_read,
             n_parallel_write=self.parallel_write,
-            cache_directory=os.path.join(os.environ["TN_DATA_DIR"], "datacard_cache"),
+            cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
             skip_existing=not self.rewrite_existing,
         )
 

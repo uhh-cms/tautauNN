@@ -609,7 +609,7 @@ klub_weight_columns = [
     "PUReweight",
     "L1pref_weight",
     "trigSF",
-    # "dauSFs",  # TODO: new skims
+    "dauSFs",
     "PUjetID_SF",
     "bTagweightReshape",
 ]

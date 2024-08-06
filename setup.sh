@@ -77,6 +77,7 @@ action() {
         export TN_HTCONDOR_FLAVOR="cern"
         host_matched="true"
     fi
+    export TN_DATACARD_CACHE_DIR="${TN_DATACARD_CACHE_DIR:-${TN_DATA_DIR}/datacard_cache}"
 
     # complain when in a remote env and none of the above host patterns matched
     if ! ${host_matched}; then
