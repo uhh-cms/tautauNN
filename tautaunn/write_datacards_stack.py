@@ -246,21 +246,25 @@ ShapeNuisance.new(
     name="id_muid",
     combine_name="CMS_eff_m_id_{year}",
     weights={"dauSFs": ("dauSFs_muID_up", "dauSFs_muID_down")},
+    channels={"mutau"},
 )
 ShapeNuisance.new(
     name="id_muiso",
     combine_name="CMS_eff_m_iso_{year}",
     weights={"dauSFs": ("dauSFs_muIso_up", "dauSFs_muIso_down")},
+    channels={"mutau"},
 )
 ShapeNuisance.new(
     name="id_elereco",
     combine_name="CMS_eff_e_reco_{year}",
     weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="id_eleid",
     combine_name="CMS_eff_e_id_{year}",
     weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="pu_jet_id",
@@ -313,11 +317,13 @@ ShapeNuisance.new(
     name="ees",
     combine_name="CMS_scale_e_{year}",
     discriminator_suffix=("ees_up", "ees_down"),
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="eer",
     combine_name="CMS_res_e_{year}",
     discriminator_suffix=("eer_up", "eer_down"),
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="fes_DM0",
