@@ -1864,7 +1864,7 @@ def _write_datacard(
                     nom = h.view().value
                     mask = nom <= 0
                     nom[mask] = 1.0e-5
-                    h.view().variance[mask] = 1.0e-5
+                    h.view().variance[mask] = 0.0
 
             # actual qcd estimation
             if qcd_estimation:
@@ -1877,7 +1877,8 @@ def _write_datacard(
                         datacard_year = datacard_years[year]
                         # create a histogram that is filled with both data and negative background
                         full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
-                        h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
+                        h_data = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}_data").Weight()
+                        h_mc = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}_mc").Weight()
                         for sample_name, _data in data.items():
                             process_name = sample_processes[year][sample_name]
                             if not nuisance.applies_to_process(process_name):
@@ -1890,18 +1891,20 @@ def _write_datacard(
                             is_data = processes[process_name].get("data", False)
                             if is_data:
                                 # for data, always will the nominal values
-                                h.fill(**{
+                                h_data.fill(**{
                                     full_hist_name: _data[variable_name],
                                     "weight": 1,
                                 })
                             else:
-                                # for mc, use varied values and subtract them from data by using a negative fill weight
                                 scale = luminosities[year]
-                                h.fill(**{
+                                h_mc.fill(**{
                                     full_hist_name: _data[varied_variable_name],
-                                    "weight": -1 * _data[varied_weight_field] * scale,
+                                    "weight": _data[varied_weight_field] * scale,
                                 })
-                        qcd_hists[year][region_name] = h
+                        # subtract the mc from the data
+                        h_qcd = h_data - h_mc
+                        h_qcd.view().variance[...] = h_mc.view().variance
+                        qcd_hists[year][region_name] = h_qcd
 
                 # ABCD method per year
                 # TODO: consider using averaging between the two options where the shape is coming from
@@ -1936,7 +1939,9 @@ def _write_datacard(
                         # )
                     # zero-fill
                     hval = h_qcd.view().value
-                    hval[hval <= 0] = 1.0e-5
+                    zero_mask = hval <= 0
+                    hval[zero_mask] = 1.0e-5
+                    h_qcd.view().variance[zero_mask] = 0.0
                     # store it
                     hists[(year, "QCD")][(nuisance.get_combine_name(year=datacard_year), direction)] = h_qcd
                     any_qcd_valid[year] |= not qcd_invalid
