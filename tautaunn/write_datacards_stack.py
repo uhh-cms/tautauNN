@@ -496,7 +496,7 @@ processes = OrderedDict({
     "data_tau": {
         "sample_patterns": ["Tau*"],
         "data": True,
-        "channels": ["tautau"],
+        "channels": ["mutau", "etau", "tautau"],
     },
     "data_met": {
         "sample_patterns": ["MET*"],
