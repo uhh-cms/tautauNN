@@ -798,12 +798,17 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
 
     @selector(needs=["tauH_mass", "bH_mass"])
-    def sel_mass_window(array: ak.Array, **kwargs) -> ak.Array:
+    def sel_mass_window_res(array: ak.Array, **kwargs) -> ak.Array:
         return (
             (array.tauH_mass >= 20.0) &
-            (array.tauH_mass <= 130.0) &
-            (array.bH_mass >= 40.0) &
-            (array.bH_mass <= 270.0)
+            (array.bH_mass >= 40.0)
+        )
+
+    @selector(needs=["tauH_mass"])
+    def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            (array.tauH_mass >= 20.0) &
+            (array.tauH_mass <= 130)
         )
 
     @selector(
@@ -814,7 +819,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         return sel_baseline(array, **kwargs)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m, sel_mass_window],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m, sel_mass_window_res],
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
@@ -823,11 +828,11 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
             sel_btag_m(array, **kwargs) &
-            sel_mass_window(array, **kwargs)
+            sel_mass_window_res(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm, sel_mass_window],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm, sel_mass_window_res],
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
@@ -836,11 +841,11 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
             sel_btag_mm(array, **kwargs) &
-            sel_mass_window(array, **kwargs)
+            sel_mass_window_res(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_mass_window],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_mass_window_boosted],
         channel=channel,
     )
     def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
@@ -848,7 +853,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             sel_boosted(array, **kwargs) &
-            sel_mass_window(array, **kwargs)
+            sel_mass_window_boosted(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
