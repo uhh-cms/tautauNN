@@ -1144,7 +1144,7 @@ regression_sets = {
     # "v2_lbn_passall": reg_set_v2.copy(feed_lbn=True, use_reg_outputs=True, use_cls_outputs=True),
     "v3": (reg_set_v3 := RegressionSet(
         model_files={
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"RegTraining/daurot_v3/tautaureg_PSbaseline_LSmulti4_SSdefault_FSdefault_daurot-default_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1_val_metric_sum")  # noqa
+            fold: os.path.join(os.getenv("TN_STORE_DIR_TOBI"), f"RegTraining/daurot_v3/tautaureg_PSbaseline_LSmulti4_SSdefault_FSdefault_daurot-default_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadam_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1_val_metric_sum")  # noqa
             for fold in range(5)
         },
         cont_feature_set="default_daurot",
@@ -1184,7 +1184,7 @@ regression_sets = {
     "v4_1fold": (reg_set_v4pre := RegressionSet(
         model_files={
             # just one fold
-            0: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), "RegTraining/new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
+            0: os.path.join(os.getenv("TN_STORE_DIR_TOBI"), "RegTraining/new_skims_all_samples/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_fatjet-default_pnet_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI0_SD1")  # noqa
         },
         cont_feature_set="default_daurot_fatjet",
         cat_feature_set="default_pnet",
@@ -1201,7 +1201,7 @@ regression_sets = {
     )),
     "v6": (reg_set_v6 := RegressionSet(
         model_files={
-            fold: os.path.join(os.getenv("TN_REG_MODEL_DIR_TOBI"), f"RegTraining/dev_final_features3/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
+            fold: os.path.join(os.getenv("TN_STORE_DIR_TOBI"), f"RegTraining/dev_final_features3/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR3.0e-03_YEARy_SPINy_MASSy_FI{fold}_SD1")  # noqa
             for fold in range(5)
         },
         cont_feature_set="default_daurot_composite",
