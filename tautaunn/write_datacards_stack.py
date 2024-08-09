@@ -2040,6 +2040,7 @@ def _write_datacard(
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
         shutil.copy2(tmp.name, abs_shapes_path)
+        os.chmod(abs_shapes_path, 0o0644)
 
     #
     # write the text file
