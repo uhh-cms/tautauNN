@@ -742,12 +742,24 @@ def category_factory(channel: str) -> dict[str, Callable]:
     def sel_channel(array: ak.Array, **kwargs) -> ak.Array:
         return array.pairType == pair_type
 
-    @selector(needs=["isBoosted", "fatjet_particleNetMDJetTags_probXbb"])
-    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
+    @selector(needs=["isBoosted"])
+    def sel_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            (array.isBoosted == 1)
+        )
+
+    @selector(needs=["fatjet_particleNetMDJetTags_probXbb"])
+    def sel_pnet(array: ak.Array, **kwargs) -> ak.Array:
         year = kwargs["year"]
         return (
-            (array.isBoosted == 1) &
             (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
+        )
+
+    @selector(needs=[sel_ak8, sel_pnet])
+    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_ak8(array, **kwargs) &
+            sel_pnet(array, **kwargs)
         )
 
     def sel_combinations(main_sel, sub_sels):
@@ -856,12 +868,64 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_mass_window_boosted(array, **kwargs)
         )
 
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_1b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            ~sel_ak8(array, **kwargs) &
+            sel_btag_m(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_2b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            ~sel_ak8(array, **kwargs) &
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_2b_first(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[cat_boosted, cat_resolved_2b_first],
+        channel=channel,
+    )
+    def cat_boosted_not_res2b(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            cat_boosted(array, **kwargs) &
+            ~cat_resolved_2b_first(array, **kwargs)
+        )
+
     # create a dict of all selectors, but without subdivision into regions
     selectors = {
         "baseline": cat_baseline,
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
+        "resolved1b_no_ak8": cat_resolved_1b_no_ak8,  # to use with boosted & resolved2b_no_ak8 or resolved2b_first & boosted_not_res2b
+        "resolved2b_no_ak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
+        "resolved2b_first": cat_resolved_2b_first,  # to use with boosted_not_res2b & resolved1b_no_ak8
+        "boosted_not_res2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
     }
 
     # add all region combinations
