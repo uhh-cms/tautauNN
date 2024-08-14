@@ -495,7 +495,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     @property
     def card_names(self):
         if self._card_names is None:
-            from tautaunn.write_datacards import expand_categories
+            from tautaunn.write_datacards_stack import expand_categories
             categories = expand_categories(self.categories)
             self._card_names = [
                 self.card_pattern.format(category=category, spin=spin, mass=mass)
