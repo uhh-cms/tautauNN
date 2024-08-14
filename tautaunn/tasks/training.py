@@ -129,9 +129,9 @@ class TrainingParameters(Task):
         description="name of categorical feature set; default: default_extended_pair",
     )
     regression_set = luigi.ChoiceParameter(
-        default="v6_fi80_lbn_ft_lt20_lr1",
+        default="v7_flatmass_fi80_lbn_ft_lt20_lr1",
         choices=[law.NO_STR] + list(cfg.regression_sets.keys()),
-        description="name of a regression set to use; default: v6_fi80_lbn_ft_lt20_lr1",
+        description="name of a regression set to use; default: v7_flatmass_fi80_lbn_ft_lt20_lr1",
     )
     lbn_set = luigi.ChoiceParameter(
         default="default_daurot_fatjet_composite",
@@ -175,9 +175,9 @@ class TrainingParameters(Task):
             batch_size=self.batch_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
-            parameterize_year=True,
-            parameterize_spin=True,
-            parameterize_mass=True,
+            parameterize_year=False,
+            parameterize_spin=False,
+            parameterize_mass=False,
             regression_set="none" if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
             fold_index=self.fold,
             seed=self.seed,
@@ -219,6 +219,9 @@ class Training(TrainingParameters):
             class_names[label] = data["name"]
             loss_weight = 1.0 if label == 0 else self.background_weight
             for sample in cfg.sample_sets[self.sample_set]:
+                # custom filter
+                if sample.mass > 800 or sample.spin == 2:
+                    continue
                 if any(match(sample.skim_name, pattern) for pattern in data["sample_patterns"]):
                     samples.append(sample.with_label_and_loss_weight(label, loss_weight))
                     continue
@@ -259,9 +262,9 @@ class Training(TrainingParameters):
             cycle_lr=self.cycle_lr,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,
-            parameterize_year=True,
-            parameterize_spin=True,
-            parameterize_mass=True,
+            parameterize_year=False,
+            parameterize_spin=False,
+            parameterize_mass=False,
             regression_set=None if self.regression_set in (None, "", law.NO_STR) else self.regression_set,
             lbn_set=None if self.lbn_set in (None, "", law.NO_STR) else self.lbn_set,
             n_folds=self.n_folds,
@@ -316,8 +319,8 @@ class ExportEnsemble(MultiSeedParameters):
         from tautaunn.export_ensemble import export_ensemble
 
         # determine number of continuous and categorical inputs
-        cont_input_names = set(cfg.cont_feature_sets[self.cont_feature_set]) | {"mass"}
-        cat_input_names = set(cfg.cat_feature_sets[self.cat_feature_set]) | {"year", "spin"}
+        cont_input_names = set(cfg.cont_feature_sets[self.cont_feature_set])  # | {"mass"}
+        cat_input_names = set(cfg.cat_feature_sets[self.cat_feature_set])  # | {"year", "spin"}
         if self.regression_cfg is not None:
             cont_input_names |= set(cfg.cont_feature_sets[self.regression_cfg.cont_feature_set])
             cat_input_names |= set(cfg.cat_feature_sets[self.regression_cfg.cat_feature_set])

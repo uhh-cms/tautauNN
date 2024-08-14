@@ -1230,6 +1230,27 @@ regression_sets = {
     "v6_fi100_lbn_ft_lt20_lr1": reg_set_v6_lbn_ft_lt20_lr1.copy(
         fadein=(100, 20),
     ),
+    "v7_flatmass_fi80_lbn_ft_lt20_lr1": RegressionSet(
+        model_files={
+            fold: os.path.join(os.getenv("TN_STORE_DIR_MARCEL"), f"RegTraining/dev1_flatmass/tautaureg_PSnew_baseline_LSmulti4_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU5x128+4x128_CTfcn_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARn_SPINn_MASSn_FI{fold}_SD1")  # noqa
+            for fold in range(5)
+        },
+        cont_feature_set="default_daurot_composite",
+        cat_feature_set="default_extended_pair",
+        parameterize_year=False,
+        parameterize_spin=False,
+        parameterize_mass=False,
+        use_reg_outputs=False,
+        use_reg_last_layer=True,
+        use_cls_outputs=False,
+        use_cls_last_layer=True,
+        feed_lbn=True,
+        fine_tune={
+            "l2_norm": lambda dnn_l2_norm: dnn_l2_norm * 20,
+            "learning_rate": lambda dnn_initial_lr, current_lr: current_lr * 0.5**-1,
+        },
+        fadein=(80, 20),
+    ),
 }
 
 

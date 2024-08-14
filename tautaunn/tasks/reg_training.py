@@ -150,9 +150,9 @@ class RegTrainingParameters(Task):
             batch_size=self.batch_size,
             optimizer=self.optimizer,
             learning_rate=self.learning_rate,
-            parameterize_year=True,
-            parameterize_spin=True,
-            parameterize_mass=True,
+            parameterize_year=False,
+            parameterize_spin=False,
+            parameterize_mass=False,
             fold_index=self.fold,
             seed=self.seed,
         )
@@ -189,6 +189,9 @@ class RegTraining(RegTrainingParameters):
             class_names[label] = data["name"]
             loss_weight = 1.0 if label == 0 else self.background_weight
             for sample in cfg.sample_sets[self.sample_set]:
+                # custom filter
+                if sample.mass > 800 or sample.spin == 2:
+                    continue
                 if any(match(sample.skim_name, pattern) for pattern in data["sample_patterns"]):
                     samples.append(sample.with_label_and_loss_weight(label, loss_weight))
                     continue
@@ -228,9 +231,9 @@ class RegTraining(RegTrainingParameters):
             early_stopping_patience=self.early_stopping_patience,
             max_epochs=self.max_epochs,
             validate_every=self.validate_every,
-            parameterize_year=True,
-            parameterize_spin=True,
-            parameterize_mass=True,
+            parameterize_year=False,
+            parameterize_spin=False,
+            parameterize_mass=False,
             n_folds=self.n_folds,
             fold_index=self.fold,
             validation_fraction=0.25,
