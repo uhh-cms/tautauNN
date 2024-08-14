@@ -2120,14 +2120,18 @@ def _write_datacard(
                 # TODO: consider using averaging between the two options where the shape is coming from
                 for year, region_hists in qcd_hists.items():
                     datacard_year = datacard_years[year]
-                    # take shape from region "C"
-                    h_qcd = region_hists["os_noniso"]
-                    # get the intgral and its uncertainty from region "B"
-                    num_val = region_hists["ss_iso"].sum().value
-                    num_var = region_hists["ss_iso"].sum().variance
-                    # get the intgral and its uncertainty from region "D"
-                    denom_val = region_hists["ss_noniso"].sum().value
-                    denom_var = region_hists["ss_noniso"].sum().variance
+                    # shape placeholders
+                    B, C, D = "ss_iso", "os_noniso", "ss_noniso"
+                    # test
+                    # B, C, D = "os_noniso", "ss_iso", "ss_noniso"
+                    # take shape from region "B"
+                    h_qcd = region_hists[B]
+                    # get the intgral and its uncertainty from region "C" (numerator)
+                    num_val = region_hists[C].sum().value
+                    num_var = region_hists[C].sum().variance
+                    # get the intgral and its uncertainty from region "D" (denominator)
+                    denom_val = region_hists[D].sum().value
+                    denom_var = region_hists[D].sum().variance
                     # stop if any yield is negative (due to more MC than data)
                     qcd_invalid = h_qcd.sum().value <= 0 or num_val <= 0 or denom_val <= 0
                     if not qcd_invalid:
