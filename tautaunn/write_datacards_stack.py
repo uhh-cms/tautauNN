@@ -1961,17 +1961,18 @@ def _write_datacard(
                             if is_data:
                                 # for data, always will the nominal values
                                 h_data.fill(**{
-                                    full_hist_name: _data[variable_name],
+                                    f"{full_hist_name}_data": _data[variable_name],
                                     "weight": 1,
                                 })
                             else:
                                 scale = luminosities[year]
                                 h_mc.fill(**{
-                                    full_hist_name: _data[varied_variable_name],
+                                    f"{full_hist_name}_mc": _data[varied_variable_name],
                                     "weight": _data[varied_weight_field] * scale,
                                 })
                         # subtract the mc from the data
-                        h_qcd = h_data - h_mc
+                        h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
+                        h_qcd.view().value[...] = h_data.view().value - h_mc.view().value
                         h_qcd.view().variance[...] = h_mc.view().variance
                         qcd_hists[year][region_name] = h_qcd
 
