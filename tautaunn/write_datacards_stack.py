@@ -504,82 +504,222 @@ processes = OrderedDict({
         "channels": ["mutau", "etau", "tautau"],
     },
 })
-stat_model = {
-    "BR_hbb": {
-        "*_hbb": "0.9874/1.0124",
-        "*_hbbhtt": "0.9874/1.0124",
-    },
-    "BR_htt": {
-        "*_hbbhtt": "0.9837/1.0165",
-        "*_htt": "0.9837/1.0165",
-    },
-    "pdf_gg": {
-        "TT": "1.042",
-    },
-    "pdf_qqbar": {
-        "ST": "1.028",  # conservatively from t-channel, also added to tW-channel
-        "WZ": "1.044",
-    },
-    "pdf_Higgs_gg": {
-        "ggH_*": "1.019",
-    },
-    "pdf_Higgs_qqbar": {
-        "qqH_*": "1.021",
-        "WH_*": "1.017",
-        "ZH_*": "1.013",
-    },
-    "pdf_Higgs_ttH": {
-        "ttH_*": "1.030",
-    },
-    "pdf_Higgs_ggHH": {
-        "ggHH_*": "1.030",
-    },
-    "pdf_Higgs_qqHH": {
-        "qqHH_*": "1.021",
-    },
-    "QCDscale_ttbar": {
-        "TT": "0.965/1.024",
-        "ST": "0.979/1.031",  # conservatively from t-channel
-    },
-    "QCDscale_VV": {
-        "WZ": "1.036",
-    },
-    "QCDscale_ggH": {
-        "ggH_*": "1.039",
-    },
-    "QCDscale_qqH": {
-        "qqH_*": "0.997/1.004",
-    },
-    "QCDscale_VH": {
-        "WH_*": "0.993/1.005",
-        "ZH_*": "0.970/1.038",
-    },
-    "QCDscale_ttH": {
-        "ttH_*": "0.908/1.058",
-    },
-    "QCDscale_ggHH": {
-        "ggHH_*": "0.770/1.060",  # includes fully correlated mtop uncertainty
-    },
-    "QCDscale_qqHH": {
-        "qqHH_*": "0.9996/1.0003",
-    },
-    "alpha_s": {
-        "ggH_*": "1.026",
-        "qqH_*": "1.005",
-        "ZH_*": "1.009",
-        "WH_*": "1.009",
-        "ttH_*": "1.020",
-    },
-    "qqHH_pythiaDipoleOn": {
-        "qqHH_*": "0.781/1.219",
-    },
-    # year dependent (both the selection of nuisances and their effect depend on the year)
-    "lumi_13TeV_2016": {"!QCD": {"2016*": "1.010"}},
-    "lumi_13TeV_2017": {"!QCD": {"2017": "1.020"}},
-    "lumi_13TeV_2018": {"!QCD": {"2018": "1.015"}},
-    "lumi_13TeV_1718": {"!QCD": {"2017": "1.006", "2018": "1.002"}},
-    "lumi_13TeV_correlated": {"!QCD": {"2016*": "1.006", "2017": "1.009", "2018": "1.020"}},
-}
+
+rate_nuisances = {}
+
+
+@dataclass
+class RateEffect:
+
+    effect: str
+    process: str = "*"
+    year: str = "*"
+    channel: str = "*"
+    category: str = "*"
+
+    def applies_to_process(self, process_name: str) -> bool:
+        negate = self.process.startswith("!")
+        return fnmatch(process_name, self.process.lstrip("!")) != negate
+
+    def applies_to_year(self, year: str) -> bool:
+        negate = self.year.startswith("!")
+        return fnmatch(year, self.year.lstrip("!")) != negate
+
+    def applies_to_channel(self, channel: str) -> bool:
+        negate = self.channel.startswith("!")
+        return fnmatch(channel, self.channel.lstrip("!")) != negate
+
+    def applies_to_category(self, category: str) -> bool:
+        negate = self.category.startswith("!")
+        return fnmatch(category, self.category.lstrip("!")) != negate
+
+
+@dataclass
+class RateNuisance:
+
+    name: str
+    rate_effects: list[RateEffect]
+
+    @classmethod
+    def new(cls, *args, **kwargs):
+        inst = cls(*args, **kwargs)
+        rate_nuisances[inst.name] = inst
+        return inst
+
+
+RateNuisance.new(
+    name="BR_hbb",
+    rate_effects=[
+        RateEffect(process="*_hbb", effect="0.9874/1.0124"),
+        RateEffect(process="*_hbbhtt", effect="0.9874/1.0124"),
+    ],
+)
+RateNuisance.new(
+    name="BR_htt",
+    rate_effects=[
+        RateEffect(process="*_htt", effect="0.9837/1.0165"),
+        RateEffect(process="*_hbbhtt", effect="0.9837/1.0165"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_gg",
+    rate_effects=[RateEffect(process="TT", effect="1.042")],
+)
+RateNuisance.new(
+    name="pdf_qqbar",
+    rate_effects=[
+        RateEffect(process="ST", effect="1.028"),  # conservatively from t-channel, also added to tW-channel
+        RateEffect(process="WZ", effect="1.044"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_Higgs_gg",
+    rate_effects=[RateEffect(process="ggH_*", effect="1.019")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_qqbar",
+    rate_effects=[
+        RateEffect(process="qqH_*", effect="1.021"),
+        RateEffect(process="WH_*", effect="1.017"),
+        RateEffect(process="ZH_*", effect="1.013"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_Higgs_ttH",
+    rate_effects=[RateEffect(process="ttH_*", effect="1.030")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_ggHH",
+    rate_effects=[RateEffect(process="ggHH_*", effect="1.030")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_qqHH",
+    rate_effects=[RateEffect(process="qqHH_*", effect="1.021")],
+)
+RateNuisance.new(
+    name="QCDscale_ttbar",
+    rate_effects=[
+        RateEffect(process="TT", effect="0.965/1.024"),
+        RateEffect(process="ST", effect="0.979/1.031"),  # conservatively from t-channel
+    ],
+)
+RateNuisance.new(
+    name="QCDscale_VV",
+    rate_effects=[RateEffect(process="WZ", effect="1.036")],
+)
+RateNuisance.new(
+    name="QCDscale_ggH",
+    rate_effects=[RateEffect(process="ggH_*", effect="1.039")],
+)
+RateNuisance.new(
+    name="QCDscale_qqH",
+    rate_effects=[RateEffect(process="qqH_*", effect="0.997/1.004")],
+)
+RateNuisance.new(
+    name="QCDscale_VH",
+    rate_effects=[
+        RateEffect(process="WH_*", effect="0.993/1.005"),
+        RateEffect(process="ZH_*", effect="0.970/1.038"),
+    ],
+)
+RateNuisance.new(
+    name="QCDscale_ttH",
+    rate_effects=[RateEffect(process="ttH_*", effect="0.908/1.058")],
+)
+RateNuisance.new(
+    name="QCDscale_ggHH",
+    rate_effects=[RateEffect(process="ggHH_*", effect="0.770/1.060")],  # includes fully correlated mtop uncertainty
+
+)
+RateNuisance.new(
+    name="QCDscale_qqHH",
+    rate_effects=[RateEffect(process="qqHH_*", effect="0.9996/1.0003")],
+)
+RateNuisance.new(
+    name="alpha_s",
+    rate_effects=[
+        RateEffect(process="ggH_*", effect="1.026"),
+        RateEffect(process="qqH_*", effect="1.005"),
+        RateEffect(process="ZH_*", effect="1.009"),
+        RateEffect(process="WH_*", effect="1.009"),
+        RateEffect(process="ttH_*", effect="1.020"),
+    ],
+)
+RateNuisance.new(
+    name="qqHH_pythiaDipoleOn",
+    rate_effects=[RateEffect(process="qqHH_*", effect="0.781/1.219")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2016",
+    rate_effects=[RateEffect(process="!QCD", year="2016*", effect="1.010")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2017",
+    rate_effects=[RateEffect(process="!QCD", year="2017", effect="1.020")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2018",
+    rate_effects=[RateEffect(process="!QCD", year="2018", effect="1.015")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_1718",
+    rate_effects=[
+        RateEffect(process="!QCD", year="2017", effect="1.006"),
+        RateEffect(process="!QCD", year="2018", effect="1.002"),
+    ],
+)
+RateNuisance.new(
+    name="lumi_13TeV_correlated",
+    rate_effects=[
+        RateEffect(process="!QCD", year="2016*", effect="1.006"),
+        RateEffect(process="!QCD", year="2017", effect="1.009"),
+        RateEffect(process="!QCD", year="2018", effect="1.020"),
+    ],
+)
+
+
+def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_percent: float) -> None:
+    if effect_percent < 10:
+        effect_str = f"{1 + effect_percent * 0.01}"
+    else:
+        effect_str = f"{max(1 - effect_percent * 0.01, 0)}/{1 + effect_percent * 0.01}"
+
+    RateNuisance.new(
+        name=f"CMS_bbtt_qcd_{name}_{year}_{channel}_{category}",
+        rate_effects=[RateEffect(process="QCD", year=year, channel=channel, category=category + "*", effect=effect_str)],
+    )
+
+
+# taken from tables 36-39 in AN
+add_qcd_rate("stat", "2016APV", "etau", "resolved1b", 8.02)
+add_qcd_rate("stat", "2016APV", "mutau", "resolved1b", 3.96)
+add_qcd_rate("stat", "2016APV", "tautau", "resolved1b", 2.44)
+add_qcd_rate("stat", "2016APV", "mutau", "resolved2b", 33.33)
+add_qcd_rate("stat", "2016APV", "tautau", "resolved2b", 33.33)
+add_qcd_rate("stat", "2016APV", "tautau", "boosted", 12.2)
+
+add_qcd_rate("stat", "2016", "etau", "resolved1b", 10.89)
+add_qcd_rate("stat", "2016", "mutau", "resolved1b", 3.93)
+add_qcd_rate("stat", "2016", "tautau", "resolved1b", 3.08)
+add_qcd_rate("stat", "2016", "mutau", "resolved2b", 21.62)
+add_qcd_rate("stat", "2016", "tautau", "resolved2b", 15.92)
+
+add_qcd_rate("stat", "2017", "etau", "resolved1b", 9.16)
+add_qcd_rate("stat", "2017", "mutau", "resolved1b", 2.72)
+add_qcd_rate("stat", "2017", "tautau", "resolved1b", 2.28)
+add_qcd_rate("stat", "2017", "mutau", "resolved2b", 6.59)
+add_qcd_rate("stat", "2017", "tautau", "resolved2b", 11.5)
+add_qcd_rate("stat", "2017", "etau", "boosted", 12.41)
+add_qcd_rate("stat", "2017", "mutau", "boosted", 9.6)
+
+add_qcd_rate("stat", "2018", "etau", "resolved1b", 6.24)
+add_qcd_rate("stat", "2018", "mutau", "resolved1b", 2.17)
+add_qcd_rate("stat", "2018", "tautau", "resolved1b", 1.71)
+add_qcd_rate("stat", "2018", "etau", "resolved2b", 256.25)
+add_qcd_rate("add", "2018", "etau", "resolved2b", 400.0)
+add_qcd_rate("stat", "2018", "mutau", "resolved2b", 5.47)
+add_qcd_rate("stat", "2018", "tautau", "resolved2b", 7.73)
+add_qcd_rate("stat", "2018", "tautau", "boosted", 31.82)
 
 
 def merge_dicts(*dicts):
@@ -922,10 +1062,10 @@ def category_factory(channel: str) -> dict[str, Callable]:
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
-        "resolved1b_no_ak8": cat_resolved_1b_no_ak8,  # to use with boosted & resolved2b_no_ak8 or resolved2b_first & boosted_not_res2b
-        "resolved2b_no_ak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
+        "resolved1b_noak8": cat_resolved_1b_no_ak8,  # to use with boosted & resolved2b_no_ak8 or resolved2b_first & boosted_not_res2b
+        "resolved2b_noak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
         "resolved2b_first": cat_resolved_2b_first,  # to use with boosted_not_res2b & resolved1b_no_ak8
-        "boosted_not_res2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
+        "boosted_notres2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
     }
 
     # add all region combinations
@@ -1793,7 +1933,7 @@ def _write_datacard(
                         # tt and dy events
                         n_tt >= 1 and
                         n_dy >= 1 and
-                        n_tt + n_dy >= 3 and
+                        n_tt + n_dy >= 4 and
                         # yields must be positive to avoid negative sums of weights per process
                         y_tt > 0 and
                         y_dy > 0
@@ -2026,32 +2166,6 @@ def _write_datacard(
                 )
                 del hists[(year, "QCD")]
 
-    # TODO: temporary fix
-    # flip_downs = [
-    #     "CMS_eff_t_stat0_DM0_2017",
-    #     "CMS_eff_t_stat1_DM0_2017",
-    #     "CMS_eff_t_systuncorrdmeras_DM0_2017",
-    #     "CMS_eff_t_stat0_DM1_2017",
-    #     "CMS_eff_t_stat1_DM1_2017",
-    #     "CMS_eff_t_systuncorrdmeras_DM1",
-    #     "CMS_eff_t_stat0_DM10",
-    #     "CMS_eff_t_stat1_DM10",
-    #     "CMS_eff_t_systuncorrdmeras_DM10",
-    #     "CMS_eff_t_stat0_DM11",
-    #     "CMS_eff_t_stat1_DM11",
-    #     "CMS_eff_t_systuncorrdmeras_DM11",
-    #     "CMS_eff_t_stat0gt140_2017",
-    #     "CMS_eff_t_stat1gt140_2017",
-    # ]
-    # for _hists in hists.values():
-    #     for name, direction in _hists.keys():
-    #         if name not in flip_downs or direction != "down":
-    #             continue
-    #         d = _hists[(name, "down")]
-    #         n = _hists[("nominal", "")]
-    #         d_value = d.view().value
-    #         d_value[:] = np.maximum(2 * n.view().value - d_value, 1.0e-5)
-
     # gather rates from nominal histograms
     rates = {
         (year, process_name): _hists[("nominal", "")].sum().value
@@ -2179,41 +2293,32 @@ def _write_datacard(
 
     # tabular-style parameters
     blocks["tabular_parameters"] = []
+
     # rate nuisances from the statistical model
     added_rate_params = []
-    for param_name, effects in stat_model.items():
-        year_dependent = ShapeNuisance.create_full_name(param_name, year="X") != param_name
-        for nuisance_year in (nuisance_years if year_dependent else [None]):
-            full_param_name = ShapeNuisance.create_full_name(param_name, year=nuisance_year)
-            effect_line = []
-            for year, process_name, _ in exp_processes:
-                effect = "-"
-                if not year_dependent or datacard_years[year] == nuisance_year:
-                    for process_pattern, _effect in effects.items():
-                        # process pattern matched?
-                        negated = False
-                        if process_pattern.startswith("!"):
-                            negated = True
-                            process_pattern = process_pattern[1:]
-                        if fnmatch(process_name, process_pattern) == negated:
-                            # not matched
-                            continue
-                        # the nuisance name might be year-independent, but its effect might be (and then it's a dict)
-                        if isinstance(_effect, dict):
-                            # the effect is a dict year_pattern -> effect
-                            for year_pattern, __effect in _effect.items():
-                                if fnmatch(year, year_pattern):
-                                    _effect = __effect
-                                    break
-                            else:
-                                _effect = "-"
-                        # one the first match, store the effect and stop
-                        effect = _effect
-                        break
-                effect_line.append(effect)
-            if set(effect_line) != {"-"}:
-                blocks["tabular_parameters"].append((full_param_name, "lnN", *effect_line))
-                added_rate_params.append(full_param_name)
+    rate_category = category.split("_", 2)[2]
+    for rate_nuisance in rate_nuisances.values():
+        # determine the effects per expected process
+        effect_line = []
+        for year, process_name, _ in exp_processes:
+            effect = "-"
+            # check of the nuisance has any rate effect that applies here
+            # if so, add it and stop, otherwise skip the nuisance alltogether
+            for rate_effect in rate_nuisance.rate_effects:
+                # if the nuisances does not apply to either the channel or the category, skip it
+                if (
+                    rate_effect.applies_to_channel(cat_data["channel"]) and
+                    rate_effect.applies_to_category(rate_category) and
+                    rate_effect.applies_to_year(year) and
+                    rate_effect.applies_to_process(process_name)
+                ):
+                    assert effect == "-"
+                    effect = rate_effect.effect
+            effect_line.append(effect)
+        if set(effect_line) != {"-"}:
+            blocks["tabular_parameters"].append((rate_nuisance.name, "lnN", *effect_line))
+            added_rate_params.append(rate_nuisance.name)
+
     # shape nuisances
     added_shape_params = []
     for nuisance in shape_nuisances.values():
