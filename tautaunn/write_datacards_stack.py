@@ -682,7 +682,7 @@ def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_perce
     if effect_percent < 10:
         effect_str = f"{1 + effect_percent * 0.01}"
     else:
-        effect_str = f"{max(1 - effect_percent * 0.01, 0)}/{1 + effect_percent * 0.01}"
+        effect_str = f"{max(1 - effect_percent * 0.01, 0.01)}/{1 + effect_percent * 0.01}"
 
     RateNuisance.new(
         name=f"CMS_bbtt_qcd_{name}_{year}_{channel}_{category}",
@@ -1581,6 +1581,7 @@ def write_datacards(
     # write them
     with open(bin_edges_file, "w") as f:
         json.dump(all_bin_edges, f, indent=4)
+    os.chmod(bin_edges_file, 0o664)
 
     return datacard_results
 
@@ -2228,7 +2229,7 @@ def _write_datacard(
     with tempfile.NamedTemporaryFile(suffix=".root") as tmp:
         write(tmp.name)
         shutil.copy2(tmp.name, abs_shapes_path)
-        os.chmod(abs_shapes_path, 0o0644)
+        os.chmod(abs_shapes_path, 0o0664)
 
     #
     # write the text file
@@ -2354,11 +2355,12 @@ def _write_datacard(
         empty_lines.add("tabular_parameters")
 
     # line-style parameters
-    blocks["line_parameters"] = [
-        ("rate_nuisances", "group", "=", " ".join(added_rate_params)),
-    ]
-    if added_shape_params:
-        blocks["line_parameters"].append(("shape_nuisances", "group", "=", " ".join(added_shape_params)))
+    blocks["line_parameters"] = []
+    # blocks["line_parameters"] = [
+    #     ("rate_nuisances", "group", "=", " ".join(added_rate_params)),
+    # ]
+    # if added_shape_params:
+    #     blocks["line_parameters"].append(("shape_nuisances", "group", "=", " ".join(added_shape_params)))
     if blocks["line_parameters"]:
         empty_lines.add("line_parameters")
 
@@ -2396,6 +2398,7 @@ def _write_datacard(
                 f.write(100 * "-" + "\n")
             elif block_name in empty_lines:
                 f.write("\n")
+    os.chmod(abs_datacard_path, 0o664)
 
     # return output paths
     return abs_datacard_path, abs_shapes_path, bin_edges
