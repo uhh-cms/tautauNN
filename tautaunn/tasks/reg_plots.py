@@ -190,12 +190,16 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                     out_tree[f"reg_HH_mass_m{int(mass)}_{int(spin)}"] = hh.m
                     out_tree[f"reg_HH_pt_m{int(mass)}_{int(spin)}"] = hh.pt
 
-        def sel_mass_window(array: ak.Array) -> ak.Array:
+        def sel_mass_window_res(array: ak.Array) -> ak.Array:
             return (
                 (array.tauH_mass >= 20.0) &
-                (array.tauH_mass <= 130.0) &
-                (array.bH_mass >= 40.0) &
-                (array.bH_mass <= 270.0)
+                (array.bH_mass >= 40.0)
+            )
+
+        def sel_mass_window_boosted(array: ak.Array) -> ak.Array:
+            return (
+                (array.tauH_mass >= 20.0) &
+                (array.tauH_mass <= 130.0)
             )
 
         def sel_trigger(array: ak.Array) -> ak.Array:
@@ -208,7 +212,6 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 (array.isOS == 1) &
                 (array.nleps == 0) &
                 (array.dau2_deepTauVsJet >= 5) &
-                sel_mass_window(array) &
                 sel_trigger(array)
             )
 
@@ -255,6 +258,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_mutau(array) &
                 sel_btag_m(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -264,6 +268,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_mutau(array) &
                 sel_btag_mm(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -272,8 +277,9 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
             return (
                 sel_common(array) &
                 sel_mutau(array) &
-                (array.isBoosted == 1) &
-                sel_pnet_l(array)
+                sel_pnet_l(array) &
+                sel_mass_window_boosted(array) &
+                (array.isBoosted == 1)
             )
 
         def sel_etau_res1b(array: ak.Array) -> ak.Array:
@@ -281,6 +287,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_etau(array) &
                 sel_btag_m(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -290,6 +297,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_etau(array) &
                 sel_btag_mm(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -298,8 +306,9 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
             return (
                 sel_common(array) &
                 sel_etau(array) &
-                (array.isBoosted == 1) &
-                sel_pnet_l(array)
+                sel_pnet_l(array) &
+                sel_mass_window_boosted(array) &
+                (array.isBoosted == 1)
             )
 
         def sel_tautau_res1b(array: ak.Array) -> ak.Array:
@@ -307,6 +316,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_tautau(array) &
                 sel_btag_m(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -316,6 +326,7 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
                 sel_common(array) &
                 sel_tautau(array) &
                 sel_btag_mm(array) &
+                sel_mass_window_res(array) &
                 (array.nbjetscand > 1) &
                 (array.isBoosted == 0)
             )
@@ -324,21 +335,22 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
             return (
                 sel_common(array) &
                 sel_tautau(array) &
-                (array.isBoosted == 1) &
-                sel_pnet_l(array)
+                sel_pnet_l(array) &
+                sel_mass_window_boosted(array) &
+                (array.isBoosted == 1)
             )
 
         def select_category(array: ak.Array) -> ak.Array:
             cat_ids = np.zeros(len(array), dtype=np.int32)
-            cat_ids[sel_mutau_res1b(array)] = 1
-            cat_ids[sel_mutau_res2b(array)] = 2
-            cat_ids[sel_mutau_boosted(array)] = 3
-            cat_ids[sel_etau_res1b(array)] = 4
-            cat_ids[sel_etau_res2b(array)] = 5
-            cat_ids[sel_etau_boosted(array)] = 6
-            cat_ids[sel_tautau_res1b(array)] = 7
-            cat_ids[sel_tautau_res2b(array)] = 8
-            cat_ids[sel_tautau_boosted(array)] = 9
+            cat_ids[sel_mutau_res1b(array)] = cfg.category_indices["mutau_res1b"]
+            cat_ids[sel_mutau_res2b(array)] = cfg.category_indices["mutau_res2b"]
+            cat_ids[sel_mutau_boosted(array)] = cfg.category_indices["mutau_boosted"]
+            cat_ids[sel_etau_res1b(array)] = cfg.category_indices["etau_res1b"]
+            cat_ids[sel_etau_res2b(array)] = cfg.category_indices["etau_res2b"]
+            cat_ids[sel_etau_boosted(array)] = cfg.category_indices["etau_boosted"]
+            cat_ids[sel_tautau_res1b(array)] = cfg.category_indices["tautau_res1b"]
+            cat_ids[sel_tautau_res2b(array)] = cfg.category_indices["tautau_res2b"]
+            cat_ids[sel_tautau_boosted(array)] = cfg.category_indices["tautau_boosted"]
             return cat_ids
 
         # determine columns to read

@@ -97,6 +97,18 @@ masses = [
 
 spins = [0, 2]
 
+category_indices = {
+    "mutau_res1b": 1,
+    "mutau_res2b": 2,
+    "mutau_boosted": 3,
+    "etau_res1b": 4,
+    "etau_res2b": 5,
+    "etau_boosted": 6,
+    "tautau_res1b": 7,
+    "tautau_res2b": 8,
+    "tautau_boosted": 9,
+}
+
 
 @dataclass
 class Sample:
