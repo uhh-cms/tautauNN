@@ -13,7 +13,7 @@ import law
 import tautaunn.config as cfg
 
 
-law.contrib.load("tasks", "htcondor", "slurm", "git", "root", "tensorflow")
+law.contrib.load("tasks", "htcondor", "slurm", "git", "matplotlib", "root", "tensorflow")
 
 _default_htcondor_flavor = law.config.get_expanded("analysis", "htcondor_flavor", "naf")
 _default_slurm_flavor = law.config.get_expanded("analysis", "slurm_flavor", "maxwell")

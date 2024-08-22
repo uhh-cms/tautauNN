@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import time
+from operator import mul
+from functools import reduce, partial
 
 import luigi
 import law
@@ -11,12 +14,12 @@ import tensorflow as tf
 import awkward as ak
 import vector
 
-
 from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
 from tautaunn.tasks.reg_training import RegTraining, RegMultiFoldParameters
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
 import tautaunn.config as cfg
+from tautaunn.reg_plots import field_plot
 
 
 class RegEvaluationParameters(RegMultiFoldParameters):
@@ -100,7 +103,6 @@ class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
 
         def predict(model, cont_inputs, cat_inputs, eval_mask, class_names, out_tree):
             # selection and categorization
-
             spins = self.spins if self.sample.spin < 0 else [self.sample.spin]
             masses = self.masses if self.sample.mass < 0 else [self.sample.mass]
             for spin in spins:
@@ -444,3 +446,60 @@ class RegEvaluateSkimsWrapper(MultiSkimTask, RegMultiFoldParameters, law.Wrapper
             skim_name: RegEvaluateSkims.req(self, skim_name=skim_name)
             for skim_name in self.skim_names
         }
+
+
+class RegPlots(MultiSkimTask, RegMultiFoldParameters):
+
+    # known plot functions
+    plot_functions = {
+        "recoGenTauH_mass": partial(field_plot, field="recoGenTauH_mass"),
+        "recoGen_HH_mass": partial(field_plot, field="recoGen_HH_mass"),
+    }
+
+    def requires(self):
+        return {
+            skim_name: RegEvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
+
+    def output(self):
+        return law.SiblingFileCollection({
+            name: self.local_target(f"{name}.pdf")
+            for name in ["recoGenTauH_mass", "recoGen_HH_mass"]
+        })
+
+    def run(self):
+        cache_hash = self.live_task_id  # to be specialized
+        # TODO: caching per skim
+        cache_path = os.path.expandvars(f"$TN_DATA_DIR/regplots_cache/{cache_hash}.pkl")
+        if os.path.exists(cache_path):
+            data = law.LocalFileTarget(cache_path).load(formatter="pickle")
+            self.publish_message(f"loaded data for {len(data)} skims from cache")
+        else:
+            data = law.util.DotDict()
+            for skim_name, inp in self.input().items():
+                # read content per skim file
+                arrays = []
+                sum_weights = 0.0
+                n_files = 0
+                for target in inp.collection.targets.values():
+                    with target.load(formatter="uproot") as f:
+                        arrays.append(f["hbtres"].arrays())
+                        sum_weights += f["h_eff"].values()[0]
+                    n_files += 1
+                arrays = ak.concatenate(arrays, axis=0)
+                # compute per-event weight including normalization
+                event_weight = reduce(
+                    mul,
+                    [arrays[c] for c in cfg.klub_weight_columns if c in arrays.fields],
+                ) / sum_weights
+                data[skim_name] = ak.with_field(arrays, event_weight, "event_weight")
+                # show progress
+                self.publish_message(f"loaded {len(data[skim_name])} events for {skim_name} from {n_files} files")
+            # write to cache
+            law.LocalFileTarget(cache_path).dump(data, formatter="pickle")
+
+        # set up plot functions
+        for name, outp in self.output().targets.items():
+            fig = self.plot_functions[name](data)
+            outp.dump(fig, formatter="mpl")
