@@ -37,6 +37,8 @@ class RegEvaluationParameters(RegMultiFoldParameters):
 
 class RegEvaluateSkims(SkimWorkflow, RegEvaluationParameters):
 
+    default_store = "$TN_STORE_DIR_TOBI"
+
     def workflow_requires(self):
         reqs = super().workflow_requires()
         reqs["models"] = {i: RegTraining.req(self, fold=i) for i in self.flat_folds}

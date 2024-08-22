@@ -169,7 +169,7 @@ class RegTrainingParameters(Task):
 
 class RegTraining(RegTrainingParameters):
 
-    default_store = "$TN_REG_MODEL_DIR_TOBI"
+    default_store = "$TN_STORE_DIR_TOBI"
 
     def output(self):
         return {
