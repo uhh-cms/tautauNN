@@ -183,21 +183,25 @@ ShapeNuisance.new(
     name="id_muid",
     combine_name="CMS_eff_m_id_{year}",
     weights={"dauSFs": ("dauSFs_muID_up", "dauSFs_muID_down")},
+    channels={"mutau"},
 )
 ShapeNuisance.new(
     name="id_muiso",
     combine_name="CMS_eff_m_iso_{year}",
     weights={"dauSFs": ("dauSFs_muIso_up", "dauSFs_muIso_down")},
+    channels={"mutau"},
 )
 ShapeNuisance.new(
     name="id_elereco",
     combine_name="CMS_eff_e_reco_{year}",
     weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="id_eleid",
     combine_name="CMS_eff_e_id_{year}",
     weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
+    channels={"etau"},
 )
 ShapeNuisance.new(
     name="pu_jet_id",
@@ -247,30 +251,27 @@ ShapeNuisance.new(
     channels={"mutau"},
 )
 ShapeNuisance.new(
-    name="ees_DM0",
-    combine_name="CMS_scale_e_DM0_{year}",  # TODO: check
-    discriminator_suffix=("ees_DM0_up", "ees_DM0_down"),
+    name="ees",
+    combine_name="CMS_scale_e_{year}",
+    discriminator_suffix=("ees_up", "ees_down"),
+    channels={"etau"},
 )
 ShapeNuisance.new(
-    name="ees_DM1",
-    combine_name="CMS_scale_e_DM1_{year}",  #
-    discriminator_suffix=("ees_DM1_up", "ees_DM1_down"),
+    name="eer",
+    combine_name="CMS_res_e_{year}",
+    discriminator_suffix=("eer_up", "eer_down"),
+    channels={"etau"},
 )
-#ShapeNuisance.new(
-    #name="eer",
-    #combine_name="CMS_sigma_e_{year}",  # TODO: check
-    #discriminator_suffix=("eer_sigma_up", "eer_sigma_down"),
-#)
-#ShapeNuisance.new(
-    #name="fes_DM0",
-    #combine_name="CMS_scale_t_eFake_DM0_{year}",
-    #discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
-#)
-#ShapeNuisance.new(
-    #name="fes_DM1",
-    #combine_name="CMS_scale_t_eFake_DM1_{year}",
-    #discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
-#)
+ShapeNuisance.new(
+    name="fes_DM0",
+    combine_name="CMS_scale_t_eFake_DM0_{year}",
+    discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
+)
+ShapeNuisance.new(
+    name="fes_DM1",
+    combine_name="CMS_scale_t_eFake_DM1_{year}",
+    discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
+)
 ShapeNuisance.new(
     name="tes_DM0",
     combine_name="CMS_scale_t_DM0_{year}",
@@ -308,17 +309,17 @@ ShapeNuisance.new(
 )
 
 jes_names = {
-    1: "CMS_j_Abs",
-    2: "CMS_j_Abs_{year}",
-    3: "CMS_j_BBEC1",
-    4: "CMS_j_BBEC1_{year}",
-    5: "CMS_j_EC2",
-    6: "CMS_j_EC2_{year}",
-    7: "CMS_j_FlavQCD",
-    8: "CMS_j_HF",
-    9: "CMS_j_HF_{year}",
-    10: "CMS_j_RelBal",
-    11: "CMS_j_RelSample_{year}",
+    1: "CMS_scale_j_Abs",
+    2: "CMS_scale_j_Abs_{year}",
+    3: "CMS_scale_j_BBEC1",
+    4: "CMS_scale_j_BBEC1_{year}",
+    5: "CMS_scale_j_EC2",
+    6: "CMS_scale_j_EC2_{year}",
+    7: "CMS_scale_j_FlavQCD",
+    8: "CMS_scale_j_HF",
+    9: "CMS_scale_j_HF_{year}",
+    10: "CMS_scale_j_RelBal",
+    11: "CMS_scale_j_RelSample_{year}",
 }
 
 for js in range(1, 12):
