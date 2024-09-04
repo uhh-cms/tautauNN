@@ -42,6 +42,7 @@ import hist
 
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps, klub_weight_columns
+from tautaunn.shape_nuisances import ShapeNuisance, shape_nuisances
 
 
 #
@@ -1415,6 +1416,7 @@ def write_datacards(
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
+    binning_file: str = "",
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1445,6 +1447,15 @@ def write_datacards(
         assert category in categories
     for year in skim_directories:
         assert year in eval_directories
+
+    if binning_file != "":
+        print(f"reading binning from file {binning_file}")
+        with open(binning_file, "r") as f:
+            binnings = json.load(f)
+        cats_in_file = list(set([key.split("__")[0] for key in binnings.keys()]))
+        print(f"found binning for categories: {cats_in_file}")
+        assert set(_categories) == set(cats_in_file), "categories in binning file do not match the requested categories"
+        
 
     # get a list of all sample names per skim directory
     all_sample_names = {
@@ -1532,20 +1543,39 @@ def write_datacards(
 
     # write each spin, mass and category combination
     datacard_args = []
-    for spin, mass, category in itertools.product(_spins, _masses, _categories):
-        datacard_args.append((
-            sample_map,
-            sample_data,
-            spin,
-            mass,
-            category,
-            output_directory,
-            output_pattern.format(spin=spin, mass=mass, category=category),
-            variable_pattern.format(spin=spin, mass=mass),
-            binning,
-            qcd_estimation,
-            skip_existing,
-        ))
+    if binning_file == "":
+        for spin, mass, category in itertools.product(_spins, _masses, _categories):
+            datacard_args.append((
+                sample_map,
+                sample_data,
+                spin,
+                mass,
+                category,
+                output_directory,
+                output_pattern.format(spin=spin, mass=mass, category=category),
+                variable_pattern.format(spin=spin, mass=mass),
+                binning,
+                qcd_estimation,
+                skip_existing,
+            ))
+    else:
+        for key in binnings:
+            bin_edges = binnings[key][0] if len(binnings[key]) == 2 else binnings[key]
+            spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
+            category = key.split("__")[0]
+            datacard_args.append((
+                sample_map,
+                sample_data,
+                int(spin),
+                int(mass),
+                category,
+                output_directory,
+                output_pattern.format(spin=spin, mass=mass, category=category),
+                variable_pattern.format(spin=spin, mass=mass),
+                bin_edges,
+                qcd_estimation,
+                skip_existing,
+            ))
 
     print(f"\nwriting datacard{'s' if len(datacard_args) > 1 else ''} ...")
     if n_parallel_write > 1:
@@ -1562,26 +1592,26 @@ def write_datacards(
         ))
     print("done")
 
-    # write bin edges into a file
-    bin_edges_file = os.path.join(output_directory, "bin_edges.json")
-    # load them first when the file is existing
-    all_bin_edges = {}
-    if os.path.exists(bin_edges_file):
-        with open(bin_edges_file, "r") as f:
-            all_bin_edges = json.load(f)
-    # update with new bin edges
-    for args, res in zip(datacard_args, datacard_results):
-        spin, mass, category = args[2:5]
-        edges = res[2]
-        key = f"{category}__s{spin}__m{mass}"
-        # do not overwrite when edges are None (in case the datacard was skipped)
-        if key in all_bin_edges and not edges:
-            continue
-        all_bin_edges[key] = edges
-    # write them
-    with open(bin_edges_file, "w") as f:
-        json.dump(all_bin_edges, f, indent=4)
-    os.chmod(bin_edges_file, 0o664)
+    if binning_file == "":
+        # write bin edges into a file
+        bin_edges_file = os.path.join(output_directory, "bin_edges.json")
+        # load them first when the file is existing
+        all_bin_edges = {}
+        if os.path.exists(bin_edges_file):
+            with open(bin_edges_file, "r") as f:
+                all_bin_edges = json.load(f)
+        # update with new bin edges
+        for args, res in zip(datacard_args, datacard_results):
+            spin, mass, category = args[2:5]
+            edges = res[2]
+            key = f"{category}__s{spin}__m{mass}"
+            # do not overwrite when edges are None (in case the datacard was skipped)
+            if key in all_bin_edges and not edges:
+                continue
+            all_bin_edges[key] = edges
+        # write them
+        with open(bin_edges_file, "w") as f:
+            json.dump(all_bin_edges, f, indent=4)
 
     return datacard_results
 
@@ -1595,21 +1625,24 @@ def _write_datacard(
     output_directory: str,
     output_name: str,
     variable_name: str,
-    binning: tuple[int, float, float, str] | tuple[float, float, str],
+    binning: tuple[int, float, float, str] | tuple[float, float, str] | list[float],
     qcd_estimation: bool,
     skip_existing: bool,
 ) -> tuple[str | None, str | None, list[float] | None]:
     cat_data = categories[category]
 
-    # input checks
-    assert len(binning) in [3, 4]
-    if len(binning) == 3:
-        x_min, x_max, binning_algo = binning
-        n_bins = cat_data["n_bins"]
+    if isinstance(binning, list):
+        binning_algo = "custom"
     else:
-        n_bins, x_min, x_max, binning_algo = binning
-    assert x_max > x_min
-    assert binning_algo in {"equal", "flats", "flatsguarded"}
+        # input checks
+        assert len(binning) in [3, 4]
+        if len(binning) == 3:
+            x_min, x_max, binning_algo = binning
+            n_bins = cat_data["n_bins"]
+        else:
+            n_bins, x_min, x_max, binning_algo = binning
+        assert x_max > x_min
+        assert binning_algo in {"equal", "flats", "flatsguarded"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -1736,7 +1769,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    else:  # flats or flatsguarded
+    elif binning_algo in ('flats', 'flatsguarded'):  # flats or flatsguarded
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1910,6 +1943,9 @@ def _write_datacard(
                 remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
                 if remaining_hh_yield < min_hh_yield:
                     stop_reason = "remaining signal yield insufficient"
+                    if len(bin_edges) > 1:
+                        # remove the last bin edge and stop
+                        bin_edges.pop()
                     break
                 # find the index of the event that would result in a hh yield increase of more than the expected
                 # per-bin yield; this index would mark the start of the next bin given all constraints are met
@@ -1985,6 +2021,8 @@ def _write_datacard(
                 )
                 n_bins = n_bins_actual
 
+    elif binning_algo == "custom":
+        bin_edges = binning
     #
     # write shapes
     #

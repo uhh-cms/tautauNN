@@ -112,7 +112,7 @@ def transform_data_dir_cache(data_dir: str) -> str:
     """
     Function to transform the data directory to be used as a fragment to determine the cache path.
     """
-    # consider consider gpfs paths on maxwell as nfs paths (since the disks are identical but mount points differ)
+    # consider gpfs paths on maxwell as nfs paths (since the disks are identical but mount points differ)
     if data_dir.startswith("/gpfs/"):
         data_dir = f"/nfs/{data_dir[6:]}"
     return data_dir

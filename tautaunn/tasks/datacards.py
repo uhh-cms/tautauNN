@@ -14,7 +14,7 @@ import numpy as np
 import tensorflow as tf
 import awkward as ak
 
-from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
+from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
@@ -432,7 +432,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 
 _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 
-
+    
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     default_store = "$TN_STORE_DIR_MARCEL"
@@ -448,21 +448,13 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("equal", "flats", "flatsguarded"),
+        choices=("equal", "flats", "flatsguarded", "flats_systs"),
         description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
     )
     n_bins = luigi.IntParameter(
         default=10,
         description="number of bins to use; default: 10",
     )
-    # uncertainty = luigi.FloatParameter(
-    #     default=0.1,
-    #     description="uncertainty to use for the ud binning; default: 0.1",
-    # )
-    # signal_uncertainty = luigi.FloatParameter(
-    #     default=0.5,
-    #     description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
-    # )
     variable = luigi.Parameter(
         default="pdnn_m{mass}_s{spin}_hh",
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
@@ -492,6 +484,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
+    
     @property
     def card_names(self):
         if self._card_names is None:
@@ -504,16 +497,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
 
     def store_parts(self):
         parts = super().store_parts()
         parts.insert_before("version", "ensemble", self.get_model_name())
         return parts
+
 
     def output(self):
         # prepare the output directory
@@ -523,6 +512,13 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.abs_dirname
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]: 
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
 
         return law.SiblingFileCollection({
             name: {
@@ -541,21 +537,34 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
+        # hardcode the eval directories for now
+        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+        # even newer evals
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod5_syst")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directories = {}
-        for skim_name in inp:
+        for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(skim_name)
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-
+                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+                
+        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
-            category=list(self.categories),
+            category=self.categories,
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
@@ -576,3 +585,5 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # create the cards
         write_datacards(**datacard_kwargs)
+
+
