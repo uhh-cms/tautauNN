@@ -11,6 +11,7 @@ channels = {
     "tautau": 2,
 }
 
+
 def selector(
     needs: list | None = None,
     str_repr: str | None = None,
@@ -149,12 +150,24 @@ def category_factory(channel: str) -> dict[str, Callable]:
     def sel_channel(array: ak.Array, **kwargs) -> ak.Array:
         return array.pairType == pair_type
 
-    @selector(needs=["isBoosted", "fatjet_particleNetMDJetTags_probXbb"])
-    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
+    @selector(needs=["isBoosted"])
+    def sel_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            (array.isBoosted == 1)
+        )
+
+    @selector(needs=["fatjet_particleNetMDJetTags_probXbb"])
+    def sel_pnet(array: ak.Array, **kwargs) -> ak.Array:
         year = kwargs["year"]
         return (
-            (array.isBoosted == 1) &
             (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
+        )
+
+    @selector(needs=[sel_ak8, sel_pnet])
+    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_ak8(array, **kwargs) &
+            sel_pnet(array, **kwargs)
         )
 
     def sel_combinations(main_sel, sub_sels):
@@ -204,6 +217,20 @@ def category_factory(channel: str) -> dict[str, Callable]:
             (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
         )
 
+    @selector(needs=["tauH_mass", "bH_mass"])
+    def sel_mass_window_res(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            (array.tauH_mass >= 20.0) &
+            (array.bH_mass >= 40.0)
+        )
+
+    @selector(needs=["tauH_mass"])
+    def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            (array.tauH_mass >= 20.0) &
+            (array.tauH_mass <= 130)
+        )
+
     @selector(
         needs=[sel_baseline],
         channel=channel,
@@ -212,7 +239,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         return sel_baseline(array, **kwargs)
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m, sel_mass_window_res],
         channel=channel,
     )
     def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
@@ -220,11 +247,12 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            sel_btag_m(array, **kwargs)
+            sel_btag_m(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm, sel_mass_window_res],
         channel=channel,
     )
     def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
@@ -232,18 +260,68 @@ def category_factory(channel: str) -> dict[str, Callable]:
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             ~sel_boosted(array, **kwargs) &
-            sel_btag_mm(array, **kwargs)
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted],
+        needs=[sel_baseline, sel_channel, sel_boosted, sel_mass_window_boosted],
         channel=channel,
     )
     def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
-            sel_boosted(array, **kwargs)
+            sel_boosted(array, **kwargs) &
+            sel_mass_window_boosted(array, **kwargs)
+        )
+
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_1b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            ~sel_ak8(array, **kwargs) &
+            sel_btag_m(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_2b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            ~sel_ak8(array, **kwargs) &
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_mass_window_res],
+        channel=channel,
+    )
+    def cat_resolved_2b_first(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            sel_baseline(array, **kwargs) &
+            sel_channel(array, **kwargs) &
+            sel_btag_mm(array, **kwargs) &
+            sel_mass_window_res(array, **kwargs)
+        )
+
+    @selector(
+        needs=[cat_boosted, cat_resolved_2b_first],
+        channel=channel,
+    )
+    def cat_boosted_not_res2b(array: ak.Array, **kwargs) -> ak.Array:
+        return (
+            cat_boosted(array, **kwargs) &
+            ~cat_resolved_2b_first(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
@@ -252,6 +330,10 @@ def category_factory(channel: str) -> dict[str, Callable]:
         "resolved1b": cat_resolved_1b,
         "resolved2b": cat_resolved_2b,
         "boosted": cat_boosted,
+        "resolved1b_noak8": cat_resolved_1b_no_ak8,  # to use with boosted & resolved2b_no_ak8 or resolved2b_first & boosted_not_res2b
+        "resolved2b_noak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
+        "resolved2b_first": cat_resolved_2b_first,  # to use with boosted_not_res2b & resolved1b_no_ak8
+        "boosted_notres2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
     }
 
     # add all region combinations

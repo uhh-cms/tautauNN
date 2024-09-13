@@ -77,7 +77,7 @@ def load_reslim(file: str | Path,
                 mass: float | int):
     limits = np.load(file)
     masses = limits['data']['mhh']
-    exp_lim = limits['data']['limit']*1000
+    exp_lim = limits['data']['limit']#*1000
     return exp_lim[np.where(masses==int(mass))][0]
 
 
@@ -180,7 +180,6 @@ def plot_mc_data_sig(data_hist: Hist,
                      cat: str,
                      savename: str | Path,
                      signal_name: str,
-                     sb_limit: float = 0.1, 
                      limit_value = None,
                      ) -> None:
 
@@ -188,7 +187,17 @@ def plot_mc_data_sig(data_hist: Hist,
         limit_value = 1
 
     signal_hist *= limit_value * br_hh_bbtt
-    mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
+    # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
+    # unblind all bins up to 0.8 
+    if len(bin_edges) > 2:
+        mask = bin_edges[1:] < 0.8
+        if all(~mask):
+            # unblind just the first bin
+            mask = np.zeros_like(signal_hist.values(), dtype=bool)
+            mask[0] = True
+    else:
+        # don't unblind
+        mask = np.zeros_like(signal_hist.values(), dtype=bool)
     # blind data
     data_hist.values()[~mask] = np.nan
     data_hist.variances()[~mask] = np.nan
@@ -219,7 +228,7 @@ def plot_mc_data_sig(data_hist: Hist,
     data_hist.plot(color='black', ax=ax1, label="data", histtype='errorbar')
     label = (f"{signal_name}\n"
             #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
-            f"$\\times$ exp. limit: {limit_value:.1f} [pb]\n"
+            f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
             "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
     signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
     #signal_hist.plot(color='black', ax=ax1, label=f"{signal_name} scaled to\nexp. limit: {limit_value:.1f} pb",)
@@ -229,7 +238,7 @@ def plot_mc_data_sig(data_hist: Hist,
         x = signal_hist.axes[0].edges[idx]
         y = sum(bkgd_stack).values()[idx-1]*2 
         ax1.vlines(x, 0, y,
-                color='red', linestyle='--', label=f"S/B {sb_limit:.0%} edge")
+                color='red', linestyle='--', label=f"unblinding edge")
         
     lgd = ax1.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
                     frameon=True, facecolor='white', edgecolor='black')
@@ -374,8 +383,9 @@ def make_plots(input_dir: str | Path,
                   if not any(s in shape for s in ['mwc', 'mdnn', 'mhh'])]
     for file in tqdm(datashapes):
         filename = Path(file)
-        _, _, _, channel, cat, sign, isolation, _, spin, _, mass = filename.stem.split("_")
-        dirname = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
+        #_, _, _, channel, cat, sign, isolation, _, spin, _, mass = filename.stem.split("_")
+        _, _, _, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = filename.stem.split("_")
+        dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
         stack, sig, data, bin_edges = load_hists(filename, dirname, signal_name, year)
         if limits_file is not None:
@@ -389,8 +399,7 @@ def make_plots(input_dir: str | Path,
                              channel=channel,
                              cat=cat,
                              signal_name=signal_name,
-                             savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.png",
-                             sb_limit=0.1,
+                             savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
                              limit_value=lim)
         else: 
             lim = None

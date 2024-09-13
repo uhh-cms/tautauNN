@@ -12,7 +12,7 @@ from operator import mul
 from fnmatch import fnmatch
 from tqdm import tqdm
 
-from tautaunn.shape_nuisances import shape_nuisances, ShapeNuisance
+from tautaunn.nuisances import shape_nuisances, ShapeNuisance
 from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years
 
 from tautaunn.cat_selectors import selector, sel_baseline, category_factory

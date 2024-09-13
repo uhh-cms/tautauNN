@@ -329,3 +329,220 @@ for js in range(1, 12):
         discriminator_suffix=(f"jes_{js}_up", f"jes_{js}_down"),
         weights={"bTagweightReshape": (f"bTagweightReshape_jetup{js}", f"bTagweightReshape_jetdown{js}")},
     )
+
+
+rate_nuisances = {}
+
+
+@dataclass
+class RateEffect:
+
+    effect: str
+    process: str = "*"
+    year: str = "*"
+    channel: str = "*"
+    category: str = "*"
+
+    def applies_to_process(self, process_name: str) -> bool:
+        negate = self.process.startswith("!")
+        return fnmatch(process_name, self.process.lstrip("!")) != negate
+
+    def applies_to_year(self, year: str) -> bool:
+        negate = self.year.startswith("!")
+        return fnmatch(year, self.year.lstrip("!")) != negate
+
+    def applies_to_channel(self, channel: str) -> bool:
+        negate = self.channel.startswith("!")
+        return fnmatch(channel, self.channel.lstrip("!")) != negate
+
+    def applies_to_category(self, category: str) -> bool:
+        negate = self.category.startswith("!")
+        return fnmatch(category, self.category.lstrip("!")) != negate
+
+
+@dataclass
+class RateNuisance:
+
+    name: str
+    rate_effects: list[RateEffect]
+
+    @classmethod
+    def new(cls, *args, **kwargs):
+        inst = cls(*args, **kwargs)
+        rate_nuisances[inst.name] = inst
+        return inst
+
+
+RateNuisance.new(
+    name="BR_hbb",
+    rate_effects=[
+        RateEffect(process="*_hbb", effect="0.9874/1.0124"),
+        RateEffect(process="*_hbbhtt", effect="0.9874/1.0124"),
+    ],
+)
+RateNuisance.new(
+    name="BR_htt",
+    rate_effects=[
+        RateEffect(process="*_htt", effect="0.9837/1.0165"),
+        RateEffect(process="*_hbbhtt", effect="0.9837/1.0165"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_gg",
+    rate_effects=[RateEffect(process="TT", effect="1.042")],
+)
+RateNuisance.new(
+    name="pdf_qqbar",
+    rate_effects=[
+        RateEffect(process="ST", effect="1.028"),  # conservatively from t-channel, also added to tW-channel
+        RateEffect(process="WZ", effect="1.044"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_Higgs_gg",
+    rate_effects=[RateEffect(process="ggH_*", effect="1.019")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_qqbar",
+    rate_effects=[
+        RateEffect(process="qqH_*", effect="1.021"),
+        RateEffect(process="WH_*", effect="1.017"),
+        RateEffect(process="ZH_*", effect="1.013"),
+    ],
+)
+RateNuisance.new(
+    name="pdf_Higgs_ttH",
+    rate_effects=[RateEffect(process="ttH_*", effect="1.030")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_ggHH",
+    rate_effects=[RateEffect(process="ggHH_*", effect="1.030")],
+)
+RateNuisance.new(
+    name="pdf_Higgs_qqHH",
+    rate_effects=[RateEffect(process="qqHH_*", effect="1.021")],
+)
+RateNuisance.new(
+    name="QCDscale_ttbar",
+    rate_effects=[
+        RateEffect(process="TT", effect="0.965/1.024"),
+        RateEffect(process="ST", effect="0.979/1.031"),  # conservatively from t-channel
+    ],
+)
+RateNuisance.new(
+    name="QCDscale_VV",
+    rate_effects=[RateEffect(process="WZ", effect="1.036")],
+)
+RateNuisance.new(
+    name="QCDscale_ggH",
+    rate_effects=[RateEffect(process="ggH_*", effect="1.039")],
+)
+RateNuisance.new(
+    name="QCDscale_qqH",
+    rate_effects=[RateEffect(process="qqH_*", effect="0.997/1.004")],
+)
+RateNuisance.new(
+    name="QCDscale_VH",
+    rate_effects=[
+        RateEffect(process="WH_*", effect="0.993/1.005"),
+        RateEffect(process="ZH_*", effect="0.970/1.038"),
+    ],
+)
+RateNuisance.new(
+    name="QCDscale_ttH",
+    rate_effects=[RateEffect(process="ttH_*", effect="0.908/1.058")],
+)
+RateNuisance.new(
+    name="QCDscale_ggHH",
+    rate_effects=[RateEffect(process="ggHH_*", effect="0.770/1.060")],  # includes fully correlated mtop uncertainty
+
+)
+RateNuisance.new(
+    name="QCDscale_qqHH",
+    rate_effects=[RateEffect(process="qqHH_*", effect="0.9996/1.0003")],
+)
+RateNuisance.new(
+    name="alpha_s",
+    rate_effects=[
+        RateEffect(process="ggH_*", effect="1.026"),
+        RateEffect(process="qqH_*", effect="1.005"),
+        RateEffect(process="ZH_*", effect="1.009"),
+        RateEffect(process="WH_*", effect="1.009"),
+        RateEffect(process="ttH_*", effect="1.020"),
+    ],
+)
+RateNuisance.new(
+    name="qqHH_pythiaDipoleOn",
+    rate_effects=[RateEffect(process="qqHH_*", effect="0.781/1.219")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2016",
+    rate_effects=[RateEffect(process="!QCD", year="2016*", effect="1.010")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2017",
+    rate_effects=[RateEffect(process="!QCD", year="2017", effect="1.020")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_2018",
+    rate_effects=[RateEffect(process="!QCD", year="2018", effect="1.015")],
+)
+RateNuisance.new(
+    name="lumi_13TeV_1718",
+    rate_effects=[
+        RateEffect(process="!QCD", year="2017", effect="1.006"),
+        RateEffect(process="!QCD", year="2018", effect="1.002"),
+    ],
+)
+RateNuisance.new(
+    name="lumi_13TeV_correlated",
+    rate_effects=[
+        RateEffect(process="!QCD", year="2016*", effect="1.006"),
+        RateEffect(process="!QCD", year="2017", effect="1.009"),
+        RateEffect(process="!QCD", year="2018", effect="1.020"),
+    ],
+)
+
+
+def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_percent: float) -> None:
+    if effect_percent < 10:
+        effect_str = f"{1 + effect_percent * 0.01}"
+    else:
+        effect_str = f"{max(1 - effect_percent * 0.01, 0.01)}/{1 + effect_percent * 0.01}"
+
+    RateNuisance.new(
+        name=f"CMS_bbtt_qcd_{name}_{year}_{channel}_{category}",
+        rate_effects=[RateEffect(process="QCD", year=year, channel=channel, category=category + "*", effect=effect_str)],
+    )
+
+
+# taken from tables 36-39 in AN
+add_qcd_rate("stat", "2016APV", "etau", "resolved1b", 8.02)
+add_qcd_rate("stat", "2016APV", "mutau", "resolved1b", 3.96)
+add_qcd_rate("stat", "2016APV", "tautau", "resolved1b", 2.44)
+add_qcd_rate("stat", "2016APV", "mutau", "resolved2b", 33.33)
+add_qcd_rate("stat", "2016APV", "tautau", "resolved2b", 33.33)
+add_qcd_rate("stat", "2016APV", "tautau", "boosted", 12.2)
+
+add_qcd_rate("stat", "2016", "etau", "resolved1b", 10.89)
+add_qcd_rate("stat", "2016", "mutau", "resolved1b", 3.93)
+add_qcd_rate("stat", "2016", "tautau", "resolved1b", 3.08)
+add_qcd_rate("stat", "2016", "mutau", "resolved2b", 21.62)
+add_qcd_rate("stat", "2016", "tautau", "resolved2b", 15.92)
+
+add_qcd_rate("stat", "2017", "etau", "resolved1b", 9.16)
+add_qcd_rate("stat", "2017", "mutau", "resolved1b", 2.72)
+add_qcd_rate("stat", "2017", "tautau", "resolved1b", 2.28)
+add_qcd_rate("stat", "2017", "mutau", "resolved2b", 6.59)
+add_qcd_rate("stat", "2017", "tautau", "resolved2b", 11.5)
+add_qcd_rate("stat", "2017", "etau", "boosted", 12.41)
+add_qcd_rate("stat", "2017", "mutau", "boosted", 9.6)
+
+add_qcd_rate("stat", "2018", "etau", "resolved1b", 6.24)
+add_qcd_rate("stat", "2018", "mutau", "resolved1b", 2.17)
+add_qcd_rate("stat", "2018", "tautau", "resolved1b", 1.71)
+add_qcd_rate("stat", "2018", "etau", "resolved2b", 256.25)
+add_qcd_rate("add", "2018", "etau", "resolved2b", 400.0)
+add_qcd_rate("stat", "2018", "mutau", "resolved2b", 5.47)
+add_qcd_rate("stat", "2018", "tautau", "resolved2b", 7.73)
+add_qcd_rate("stat", "2018", "tautau", "boosted", 31.82)
