@@ -26,6 +26,7 @@ luminosities = {  # in /fb
     '2018': 59.830,
 }
 
+
 def make_parser():
     parser = argparse.ArgumentParser(description="Plot the shapes that are fed into combine.")
     parser.add_argument("-i", "--input_dir",
@@ -39,6 +40,7 @@ def make_parser():
                         type=str, help='/full/path/to/reslimits.npz file')
     return parser
 
+
 def histo_equalwidth(h):
     """ Return a histogram with equal bin widths."""
     xedges = h.axes[0].edges
@@ -50,6 +52,7 @@ def histo_equalwidth(h):
     newh.view().value = values
     newh.view().variance = variances
     return newh, xedges
+
 
 def load_hists(filename: str | Path,
                dirname: str,
@@ -170,7 +173,7 @@ def plot_mc_stat(mc: Stack,
                         bottom=bottom, histtype="stepfilled", color="gainsboro",
                         hatch='///', edgecolor="gray", linewidth=0., alpha=0.6)
 
-# put the above into a function
+
 def plot_mc_data_sig(data_hist: Hist,
                      signal_hist: Hist,
                      bkgd_stack: Stack,
@@ -267,96 +270,6 @@ def plot_mc_data_sig(data_hist: Hist,
     ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
     plot_mc_stat(bkgd_stack, ax2, mode="ratio")
     ax2.set_ylim(0.4, 1.6)
-    ax2.set_xlim(0, 1)
-    ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
-    if not Path(savename).parent.exists():
-        os.makedirs(Path(savename).parent)
-    plt.savefig(savename, bbox_inches='tight', pad_inches=0.05)
-    plt.close()
-    
-def plot_partially_unblinded(bkgd_stack: hist.Stack,
-                        signal_hist: hist,
-                        data_hist: hist,
-                        bin_edges: list,
-                        signal_name: str,
-                        year: str,
-                        channel: str,
-                        cat: str,
-                        savename: str | Path,
-                        limit_value: float) -> None:
-    
-    # map those hexcodes to the bkgds:
-    color_map = {
-        "DY": "#7a21dd",
-        "TT": "#9c9ca1",
-        "ST": "#e42536",
-        "W": "#964a8b",
-        "QCD": "#f89c20",
-        "Others":"#5790fc",
-    }
-
-    if len(data_hist.axes.edges[0]) <= 2:
-        print(f"Skipping {savename} as there is only 1 bin in this category")
-        return 
-
-    fig, (ax1, ax2) = plt.subplots(2, 1,
-                                figsize=(10, 14),
-                                sharex=True,
-                                gridspec_kw={'height_ratios': [3, 1]},)
-    fig.subplots_adjust(hspace=0.05)
-    hep.cms.text(" Preliminary", fontsize=20, ax=ax1)
-    lumi = {"2016APV": "19.5", "2016": "16.8", "2017": "41.5", "2018": "59.7"}[year]
-    mu, tau = '\u03BC','\u03C4'
-    chn_map = {"etau": r"$bbe$"+tau, "tautau":r"$bb$"+tau+tau, "mutau": r"$bb$"+mu+tau}
-    hep.cms.lumitext(r"{} $fb^{{-1}}$ (13 TeV)".format(lumi), fontsize=20, ax = ax1)
-    ax1.text(0.05, .91, f"{chn_map[channel]}\n{cat}", fontsize=15,transform=ax1.transAxes)
-    bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
-    # scale signal to the limit (must be given in pb) 
-    signal_hist *= limit_value * br_hh_bbtt
-    label = (f"{signal_name}\n"
-              #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
-              f"$\\time$ exp. limit: {limit_value:.1f} [pb]\n"
-              "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
-    signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
-    summed_hist = reduce(add, [h for h in bkgd_stack])
-    # determine bins, where signal is lower than the limit
-    mask = signal_hist.values() < 0.5 * summed_hist.values()
-    idx = np.where(mask)[0][-1]
-
-    blinded_data = hist.Hist.new.Reg(10, 0, 1, name="data").Weight() 
-    blinded_data.view().value = data_hist.values()
-    blinded_data.view().variance = data_hist.variances()
-    blinded_data.values()[~mask] = np.nan
-    blinded_data.variances()[~mask] = np.nan
-    blinded_data.plot(color='black', ax=ax1, label="data", histtype='errorbar')
-
-    ax1.vlines(signal_hist.axes[0].edges[idx+1], 0, summed_hist.values().max(),
-            color='red', linestyle='--', label="unblind limit")
-
-    lgd = ax1.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
-                    frameon=True, facecolor='white', edgecolor='black')
-    lgd.get_frame().set_boxstyle("Square", pad=0.0)
-    ax1.set_yscale("log")
-    min_y_tt_dy = min([bkgd_stack[h].values().min() for h in ["DY", "TT"]])
-    min_y_sig = signal_hist.values().min()
-    min_y = min(min_y_tt_dy, min_y_sig)
-    max_y = summed_hist.values().max() 
-    ax1.set_ylim((0.1*min_y, 100 * max_y))
-
-    ax1.set_xlabel("")
-    ax1.set_ylabel("Events")
-
-    ax2.set_xlabel("pDNN Score")
-    ax2.set_ylabel("Data/MC")
-    ratio_hist = hist.Hist.new.Reg(10, 0, 1, name="ratio").Weight()
-    ratio_hist.view().value = data_hist.values()/summed_hist.values()
-    ratio_hist.view().value[~mask] = np.nan
-    ratio_hist.view().variance = data_hist.variances()/summed_hist.values()*((1/data_hist.values()) + (1/summed_hist.values()))**0.5
-    ratio_hist.variances()[~mask] = np.nan
-
-    ax2.hlines(1, 0, 1, color='black', linestyle='--')
-    ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
-    ax2.set_ylim(0.5, 1.5)
     ax2.set_xlim(0, 1)
     ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
     if not Path(savename).parent.exists():
