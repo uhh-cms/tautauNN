@@ -430,7 +430,8 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+#_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 
     
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
@@ -450,6 +451,10 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         default="flats",
         choices=("equal", "flats", "flatsguarded", "flats_systs"),
         description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
+    )
+    binning_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a binning file; default: ''",
     )
     n_bins = luigi.IntParameter(
         default=10,
@@ -478,11 +483,16 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
+
+        if self.binning_file != law.NO_STR:
+            self.binning = "custom"
+            print(f"using custom binning from file '{self.binning_file}'")
 
     
     @property
@@ -507,13 +517,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def output(self):
         # prepare the output directory
         dirname = f"{self.binning}{self.n_bins}"
-        if self.binning in ["ud", "ud_flats", "tt_dy_driven"]:
-            dirname += f"_{self.uncertainty}_{self.signal_uncertainty}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
-        output_path = d.abs_dirname
+        output_path = d.path
         path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
         if path_user != os.environ["USER"]: 
             new_path = output_path.replace(path_user, os.environ["USER"])
@@ -573,6 +581,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
             binning=(self.n_bins, 0.0, 1.0, self.binning),
+            binning_file=self.binning_file if self.binning == "custom" else "",
             # TODO: port additional binning options to stacked datacard script
             # uncertainty=self.uncertainty,
             # signal_uncertainty=self.signal_uncertainty,

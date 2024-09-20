@@ -42,7 +42,9 @@ class EvaluationParameters(MultiFoldParameters):
     )
 
 
-_default_categories = ("{year}_*tau_resolved?b_os_iso", "{year}_*tau_boosted_os_iso")
+#_default_categories = ("{year}_*tau_resolved?b_os_iso", "{year}_*tau_boosted_os_iso")
+_default_categories = ("{year}_*tau_resolved1b_noak8_os_iso", "{year}_*tau_resolved2b_first_os_iso", "{year}_*tau_boosted_notres2b_os_iso")
+
 
 class GetBinning(MultiSkimTask, EvaluationParameters):
     
@@ -50,6 +52,11 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         default="2017",
         choices=("2016", "2016APV", "2017", "2018"),
         description="year to use; default: 2017",
+    )
+    categories = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
     )
     binning = luigi.ChoiceParameter(
         default="flatsguarded",
@@ -115,7 +122,22 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
             new_path = d.path.replace(path_user, os.environ["USER"])
             print(f"changing output path from {d.path} to {new_path}")
             d = self.local_target(new_path, dir=True)
-        return d.child("bin_edges.json", type="f")
+        
+        if self.spins == tuple(cfg.spins):
+            spins_suffix = "all"
+        elif len(self.spins) == 1:
+            spins_suffix = f"{int(self.spins[0])}"
+        else:
+            spins_suffix = "-".join(map(str, (self.spins[0], self.spins[-1])))
+        
+        if self.masses == tuple(cfg.masses):
+            masses_suffix = "all"
+        elif len(self.masses) == 1:
+            masses_suffix = f"{int(self.masses[0])}"
+        else:
+            masses_suffix = "-".join(map(str,(int(self.masses[0]), int(self.masses[-1]))))
+            
+        return d.child(f"bin_edges_y{self.year}_s{spins_suffix}_m{masses_suffix}.json", type="f")
 
 
     def run(self):
@@ -145,6 +167,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         binning_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
+            year=self.year,
             category=self.categories,
             skim_directory=skim_directory,
             eval_directory=eval_directory,
