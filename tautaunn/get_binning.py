@@ -225,6 +225,7 @@ def get_cache_path(
     cache_directory: str,
     skim_directory: str,
     eval_directory: str,
+    year: str,
     sample_name: str,
     dnn_output_columns: list[str],
 ) -> str | None:
@@ -251,12 +252,13 @@ def get_cache_path(
     ]
     h = hashlib.sha256(str(h).encode("utf-8")).hexdigest()[:10]
 
-    return os.path.join(cache_directory, f"data_{sample_name}_{h}.pkl")
+    return os.path.join(cache_directory, f"{year}_{sample_name}_{h}.pkl")
 
 
 def load_sample_data(
     skim_directory: str,
     eval_directory: str,
+    year: str,
     sample_name: str,
     dnn_output_columns: list[str] | None = None,
     n_parallel: int = 4,
@@ -265,7 +267,7 @@ def load_sample_data(
     print(f"loading sample {sample_name} ...")
 
     # load from cache?
-    cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, sample_name, dnn_output_columns or [])
+    cache_path = get_cache_path(cache_directory, skim_directory, eval_directory, year, sample_name, dnn_output_columns or [])
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
         print(cache_path)
@@ -339,6 +341,7 @@ def expand_categories(category: str | Sequence[str]) -> list[str]:
 def get_binnings(
     spin: int | Sequence[int],
     mass: int | Sequence[int],
+    year: str,
     category: str | Sequence[str],
     skim_directory: str,
     eval_directory: str,
@@ -353,8 +356,8 @@ def get_binnings(
 ) -> list[tuple[str, str]]:
     # cast arguments to lists
     make_list = lambda x: list(x) if isinstance(x, (list, tuple, set)) else [x]
-    _spins = make_list(spin)
-    _masses = make_list(mass)
+    _spins = list(map(int, make_list(spin))) 
+    _masses = list(map(int, make_list(mass)))
     _categories = expand_categories(category)
 
     # input checks
@@ -410,11 +413,9 @@ def get_binnings(
 
     # prepare dnn output columns
     dnn_output_columns = [
-        "DNNoutSM_kl_1",
-        "dnn_output",
+        variable_pattern.format(spin=spin, mass=mass)
+        for spin, mass in itertools.product(_spins, _masses)
     ]
-    for spin, mass in itertools.product(_spins, _masses):
-        dnn_output_columns.append(variable_pattern.format(spin=spin, mass=mass))
 
     # prepare loading data
     # reduce for debugging
@@ -424,6 +425,7 @@ def get_binnings(
         load_sample_data(
             skim_directory,
             eval_directory,
+            year,
             sample_name,
             dnn_output_columns,
             n_parallel=n_parallel_read,
@@ -444,7 +446,7 @@ def get_binnings(
             spin,
             mass,
             category,
-            variable_pattern.format(spin=spin, mass=mass),
+            variable_pattern.format(spin=int(spin), mass=int(mass)),
             binning,
         ))
 
@@ -479,8 +481,12 @@ def get_binnings(
     # write them
     if not Path(output_file).parent.exists():
         Path(output_file).parent.mkdir(parents=True)
-    with open(output_file, "w") as f:
-        json.dump(all_bin_edges, f, indent=4)
+    try:
+        with open(output_file, "w") as f:
+            json.dump(all_bin_edges, f, indent=4)
+    except:
+        with open(output_file.replace(".json", ".pkl",), "wb") as f:
+            pickle.dump(all_bin_edges, f)
 
 
 def _get_binning(
