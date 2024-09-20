@@ -625,7 +625,8 @@ def flats_systs(hh_values: ak.Array,
         offset = next_offset
         edge_count += 1
         # check remaining stats
-        if any(offset >= vals for vals in [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])]):
+        if any(offset >= vals for vals in
+               [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])]):
             # close bin edges with x_min
             stop_reason = "no more events left"
             bin_edges.append(x_min)
