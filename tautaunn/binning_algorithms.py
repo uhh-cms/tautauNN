@@ -202,6 +202,7 @@ def flatsguarded(hh_values: ak.Array,
                  n_bins: int=10,
                  x_min: float=0.,
                  x_max: float=1.,):
+
     # create a record array with eight entries:
     # - value
     # - process (0: hh, 1: tt, 2: dy)
@@ -305,7 +306,7 @@ def flatsguarded(hh_values: ak.Array,
                 # tt and dy events
                 n_tt >= 1 and
                 n_dy >= 1 and
-                n_tt + n_dy >= 3 and
+                n_tt + n_dy >= 4 and
                 # yields must be positive to avoid negative sums of weights per process
                 y_tt > 0 and
                 y_dy > 0
@@ -550,7 +551,7 @@ def flats_systs(hh_values: ak.Array,
     sort_indices = ak.argsort(hh_values, ascending=False)
     hh_values = hh_values[sort_indices]
     hh_weights = hh_weights[sort_indices]
-    # sort dy and tt 
+    # sort dy and tt & replace weights with cumulative sums
     for key in dy_shifts.keys():
         dy_sort_indices = ak.argsort(dy_shifts[key][0], ascending=False)
         dy_shifts[key] = dy_shifts[key][0][dy_sort_indices], np.cumsum(dy_shifts[key][1][dy_sort_indices])
@@ -564,9 +565,7 @@ def flats_systs(hh_values: ak.Array,
                     for key in dy_shifts.keys()}
         
 
-    # the rightmost bin should contain at least min_N events
     bin_edges = [x_max]
-    #min_N = int(np.ceil(1/(uncertainty)**2))
     hh_weights_cumsum = np.cumsum(hh_weights)
     del hh_weights
     signal_per_bin = np.round(hh_weights_cumsum[-1] / n_bins, 5)
@@ -582,11 +581,13 @@ def flats_systs(hh_values: ak.Array,
             break
         bin_idx_by_signal = offset + pushover_idx[0]
         bin_edge_by_signal = hh_values[bin_idx_by_signal]
+        # N_DY & N_TT requirements:
         # we want at least 1 dy and 1 tt event in the bin
         dy_edges = [dy_shifts[key][0][offset] for key in dy_shifts.keys()] 
         tt_edges = [tt_shifts[key][0][offset] for key in tt_shifts.keys()]
-        # we want the sum of dy and tt events to be at least 3 
-        dy_tt_edges = [dy_tt_shifts[key][offset+2] for key in dy_tt_shifts.keys()]
+        # SUM (N_DY,N_TT) requirement:
+        # we want the sum of dy and tt events to be at least 4 
+        dy_tt_edges = [dy_tt_shifts[key][offset+3] for key in dy_tt_shifts.keys()]
         # find the next bin edge that fulfills all requirements
         next_edge = np.min([bin_edge_by_signal, *dy_edges, *tt_edges, *dy_tt_edges])
         if next_edge <= np.min(hh_values):
@@ -611,15 +612,24 @@ def flats_systs(hh_values: ak.Array,
         bin_yield_tt = tt_shifts["nominal"][1][next_offset] - tt_shifts["nominal"][1][offset]
         if bin_yield_dy <= 0 or bin_yield_tt <= 0: 
             # now we need to go further 
-            dy_yield_bin = np.where(dy_shifts["nominal"][1][offset:] > 0)[0][0]
-            tt_yield_bin = np.where(tt_shifts["nominal"][1][offset:] > 0)[0][0]
+            dy_yield_bin = np.where(dy_shifts["nominal"][1][next_offset:] > 0)[0][0]
+            tt_yield_bin = np.where(tt_shifts["nominal"][1][next_offset:] > 0)[0][0]
             next_offset = offset + np.max([dy_yield_bin, tt_yield_bin])
             next_edge = np.min([dy_shifts["nominal"][0][next_offset],
                                 tt_shifts["nominal"][0][next_offset]])
             
-        offset = next_offset 
+        if next_offset < offset:
+            from IPython import embed; embed()
+        #assert next_offset > offset, "next_offset is smaller than offset (Implementation error)"
+        #offset = np.max((next_offset,1))
+        offset = next_offset
         edge_count += 1
         # check remaining stats
+        if any(offset >= vals for vals in [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0])]):
+            # close bin edges with x_min
+            stop_reason = "no more events left"
+            bin_edges.append(x_min)
+            break
         if ( hh_weights_cumsum[-1] - hh_weights_cumsum[offset] ) < edge_count*signal_per_bin:
             # close bin edges with x_min
             stop_reason = "remaining signal yield insufficient"
@@ -638,6 +648,7 @@ def flats_systs(hh_values: ak.Array,
             stop_reason = "reached maximum number of bins"
             bin_edges.append(x_min)
             break
-        bin_edges.append(next_edge)
-    bin_edges = sorted(bin_edges)
+        if not (round(next_edge, 6) == round(bin_edges[-1], 6)):
+            bin_edges.append(next_edge)
+    bin_edges = sorted([round(float(i), 6) for i in bin_edges])
     return bin_edges, stop_reason
