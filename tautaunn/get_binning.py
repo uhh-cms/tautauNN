@@ -45,7 +45,7 @@ klub_weight_columns = [
     "PUReweight",
     "L1pref_weight",
     "trigSF",
-    #"idFakeSF",  # originally named "IdFakeSF_deep_2d" in KLUB for the central value
+    "dauidSFs",
     "PUjetID_SF",
     "bTagweightReshape",
 ]
