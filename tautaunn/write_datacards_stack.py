@@ -911,24 +911,20 @@ def _write_datacard(
         signal_process_name = {year: names[0] for year, names in signal_process_names.items()}
 
         # helper to get values of weights of a process
-        def get_values_and_weights(process_name: str | dict[str, str], weight_scale: float | int = 1.0):
+        def get_values_and_weights(process_name: str | dict[str, str], nuisance: ShapeNuisance = shape_nuisances["nominal"], direction: str = "", weight_scale: float | int = 1.0):
             if isinstance(process_name, str):
                 process_name = {year: process_name for year in sample_data}
 
             def extract(getter):
                 return ak.concatenate(
-                    sum(
-                        (
+                    list(itertools.chain.from_iterable(
                             [getter(year, data, sample_name) for sample_name in sample_map[year][process_name[year]]]
                             for year, data in sample_data.items()
-                        ),
-                        [],
-                    ),
-                    axis=0,
+                        ))
                 )
 
-            values = extract(lambda year, data, sample_name: data[sample_name][variable_name])
-            weights = extract(lambda year, data, sample_name: data[sample_name].full_weight_nominal * luminosities[year] * weight_scale)  # noqa
+            values = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)])  # noqa
+            weights = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_full_weight(direction)] * luminosities[year] * weight_scale)  # noqa
 
             # complain when values are out of bounds or non-finite
             outlier_mask = (values < x_min) | (values > x_max) | ~np.isfinite(values)
@@ -947,7 +943,7 @@ def _write_datacard(
             values, weights = values[sort_indices], weights[sort_indices]
             return (values if inc else np.flip(values, axis=0)), (weights if inc else np.flip(weights, axis=0))
 
-        hh_values, hh_weights = get_values_and_weights(signal_process_name, weight_scale=br_hh_bbtt)
+        hh_values, hh_weights = get_values_and_weights(process_name=signal_process_name, weight_scale=br_hh_bbtt)
 
         # distinguish non-guarded and guarded flats binnings from here on
         if binning_algo == "flats":
@@ -990,51 +986,33 @@ def _write_datacard(
             # get tt and dy data
             tt_values, tt_weights = get_values_and_weights("TT")
             dy_values, dy_weights = get_values_and_weights("DY")
-            bin_edges = flatsguarded(hh_values=hh_values,
-                                        hh_weights=hh_weights,
-                                        tt_values=tt_values,
-                                        tt_weights=tt_weights,
-                                        dy_values=dy_values,
-                                        dy_weights=dy_weights,
-                                        n_bins=n_bins,
-                                        x_min=x_min,
-                                        x_max=x_max)
+            bin_edges, stop_reason = flatsguarded(hh_values=hh_values,
+                                                  hh_weights=hh_weights,
+                                                  tt_values=tt_values,
+                                                  tt_weights=tt_weights,
+                                                  dy_values=dy_values,
+                                                  dy_weights=dy_weights,
+                                                  n_bins=n_bins,
+                                                  x_min=x_min,
+                                                  x_max=x_max)
         elif binning_algo == "flats_systs":
             tt_shifts = OrderedDict() 
             dy_shifts = OrderedDict() 
             for nuisance in shape_nuisances.values():
-                #if not "jes" in nuisance.name or not nuisance.is_nominal:
-                    #continue
                 for direction in nuisance.get_directions():
-                    print(nuisance.name, direction)
-                    print(nuisance.get_varied_discriminator(variable_name, direction))
-                    tt_values = ak.concatenate([
-                            sample_data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)]
-                            for sample_name in sample_map["TT"]
-                        ], axis=0)
-                    tt_weights = ak.concatenate([
-                            sample_data[sample_name][nuisance.get_varied_full_weight(direction)]
-                            for sample_name in sample_map["TT"]
-                        ], axis=0)
-                    dy_values = ak.concatenate([
-                            sample_data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)]
-                            for sample_name in sample_map["DY"]
-                        ], axis=0)
-                    dy_weights = ak.concatenate([
-                            sample_data[sample_name][nuisance.get_varied_full_weight(direction)]
-                            for sample_name in sample_map["DY"]
-                        ], axis=0)
-                    key = f"{nuisance.name}__{direction}" if not nuisance.is_nominal else nuisance.name
+                    key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
+                    tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
+                    dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
                     tt_shifts[key] = (tt_values, tt_weights)
                     dy_shifts[key] = (dy_values, dy_weights)
 
-            bin_edges = flats_systs(hh_values=hh_values,
-                                       hh_weights=hh_weights,
-                                       tt_shifts=tt_shifts,
-                                       dy_shifts=dy_shifts,
-                                       n_bins=n_bins,
-                                       x_min=x_min,
-                                       x_max=x_max)
+            bin_edges, stop_reason = flats_systs(hh_values=hh_values,
+                                                 hh_weights=hh_weights,
+                                                 tt_shifts=tt_shifts,
+                                                 dy_shifts=dy_shifts,
+                                                 n_bins=n_bins,
+                                                 x_min=x_min,
+                                                 x_max=x_max)
         
 
     elif binning_algo == "custom":
