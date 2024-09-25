@@ -1,6 +1,7 @@
 import awkward as ak
 import numpy as np
 import itertools
+from typing import List, Tuple
 
 def uncertainty_driven(signal_values: ak.Array,
                        bkgd_values: ak.Array,
@@ -684,3 +685,132 @@ def flats_systs(hh_values: ak.Array,
             bin_edges.append(next_edge)
     bin_edges = sorted([round(float(i), 6) for i in bin_edges])
     return bin_edges, stop_reason
+
+                    
+def non_res_like(hh: Tuple[ak.Array, ak.Array],
+                 dy: dict[str, (ak.Array, ak.Array)], # dict containing the nominal and jes & tes shifts
+                 tt: dict[str, (ak.Array, ak.Array)], # dict containing the nominal and jes & tes shifts
+                 others: dict[str, (ak.Array, ak.Array)], # dict containing the nominal and jes & tes shifts
+                 n_bins: int=10,) -> list[float]:
+
+    assert len(hh[0]) == len(hh[1])
+    assert all(len(dy[key][0]) == len(dy[key][1]) for key in dy.keys())
+    assert all(len(tt[key][0]) == len(tt[key][1]) for key in tt.keys())
+    assert all(len(others[key][0]) == len(others[key][1]) for key in others.keys())
+    
+    def calc_rel_err(cs_w: ak.Array, # cumulative sum of weights
+                     cs_w_2: ak.Array, # cumulative sum of squared weights
+                     idx: int,) -> ak.Array:
+        return np.sqrt(cs_w_2[idx+1:] - cs_w_2[idx]) / (cs_w[idx+1:] - cs_w[idx])
+
+    def edge_to_idx(values: ak.Array, edge: float) -> int:
+        return np.where(values < edge)[0][0]
+
+    def get_sorted_values_and_weights(values: ak.Array, weights: ak.Array) -> Tuple[ak.Array, ak.Array]:
+        sort_indices = ak.argsort(values, ascending=False)
+        return values[sort_indices], weights[sort_indices]
+    
+    
+    hh_values, hh_weights = get_sorted_values_and_weights(*hh) 
+    hh_weights_cumsum = np.cumsum(hh_weights)
+    signal_per_bin = np.round(hh_weights_cumsum[-1] / n_bins, 5)
+
+    tt = {key: get_sorted_values_and_weights(*tt[key]) for key in tt.keys()}
+    dy = {key: get_sorted_values_and_weights(*dy[key]) for key in dy.keys()}
+
+    all_bkgds = {key: get_sorted_values_and_weights(ak.concatenate([tt[key][0], dy[key][0], others[key][0]], axis=0), #values
+                                                    ak.concatenate([tt[key][1], dy[key][1], others[key][1]], axis=0)) #weights
+                    for key in tt.keys()}
+    all_bkgds_cs = {key: np.cumsum(all_bkgds[key][1]) for key in all_bkgds.keys()}
+
+    all_bkgds_weights_cs = np.cumsum(all_bkgds['nominal'][1])
+    all_bkgds_squared_weights_cs = np.cumsum(all_bkgds['nominal'][1]**2)
+
+    # start at 1
+    bin_edges = [1.]
+    hh_offset = 0
+    dy_offset = 0
+    tt_offset = 0
+    all_bkgds_offset = 0
+    stop_reason = ""
+
+    while True:
+        # bin edge if we would only consider the flat-signal requirement (only nominal)
+        flat_s_edge = hh_values[np.where(hh_weights_cumsum[hh_offset:] > len(bin_edges)*signal_per_bin)[0][0]]
+        # N_DY & N_TT requirements:
+        # we want at least 1 dy and 1 tt event in the bin (for all shifts)
+        dy_edges = {key: dy[key][0][dy_offset] for key in dy.keys()}
+        tt_edges = {key: tt[key][0][tt_offset] for key in tt.keys()}
+        dy_shift, dy_edge = min(dy_edges.items(), key=lambda x: x[1])
+        tt_shift, tt_edge = min(tt_edges.items(), key=lambda x: x[1])
+        # we want the sum of the bkgd weights to be at least 0.03 (for all shifts)
+        all_bkgds_edges = {key:
+            all_bkgds[key][0][np.where(all_bkgds_cs[key][all_bkgds_offset:] > 0.03)[0][0]]
+            for key in all_bkgds.keys()}
+        all_bkgds_shift, all_bkgds_edge = min(all_bkgds_edges.items(), key=lambda x: x[1])
+        # we want the relative error on all bkgds to be below 1 (just nominal)
+        rel_err_edge = all_bkgds['nominal'][0][np.where(calc_rel_err(all_bkgds_weights_cs,
+                                             all_bkgds_squared_weights_cs,
+                                             all_bkgds_offset) < 1)[0][0] + 1] # +1 because rel_err is calculated starting from the second element 
+        # find the next bin edge that fulfills all requirements
+        next_edge_dict = {"flat_s": flat_s_edge,
+                          "dy": dy_edge,
+                          "tt": tt_edge,
+                          "all_bkgds": all_bkgds_edge,
+                          "rel_err": rel_err_edge}
+        next_edge_reason, next_edge = min(next_edge_dict.items(), key=lambda x: x[1])
+        bin_edges.append(next_edge)
+        if len(bin_edges) == n_bins:
+            # close bin edges with 0
+            bin_edges.append(0.)
+            stop_reason = "reached maximum number of bins"
+            break
+        # convert edges to offsets and update them
+        hh_offset = edge_to_idx(hh_values, next_edge)
+        if next_edge_reason in ["flat_s", "rel_err"]:
+            dy_offset = edge_to_idx(dy["nominal"][0], next_edge)
+            tt_offset = edge_to_idx(tt["nominal"][0], next_edge)
+            all_bkgds_offset = edge_to_idx(all_bkgds["nominal"][0], next_edge)
+        elif next_edge_reason == "dy":
+            dy_offset = edge_to_idx(dy[dy_shift][0], next_edge)
+            tt_offset = edge_to_idx(tt["nominal"][0], next_edge)
+            all_bkgds_offset = edge_to_idx(all_bkgds["nominal"][0], next_edge)
+        elif next_edge_reason == "tt":
+            dy_offset = edge_to_idx(dy["nominal"][0], next_edge)
+            tt_offset = edge_to_idx(tt[tt_shift][0], next_edge)
+            all_bkgds_offset = edge_to_idx(all_bkgds["nominal"][0], next_edge)
+        elif next_edge_reason == "all_bkgds":
+            all_bkgds_offset = edge_to_idx(all_bkgds[all_bkgds_shift][0], next_edge)
+            
+        if len(bin_edges) == 1:
+            # update signal per bin such that for all next bins the signal yield is the same
+            signal_per_bin = hh_weights_cumsum[hh_offset]
+        
+        if hh_offset > len(hh_values):
+            # close bin edges with 0
+            bin_edges.append(0.)
+            stop_reason = "no more hh events left"
+            break
+
+        if any(offset >= vals for offset, vals in zip([dy_offset, tt_offset, all_bkgds_offset],
+                                                            [len(dy["nominal"][0]),
+                                                             len(tt["nominal"][0]),
+                                                             len(all_bkgds["nominal"][0])])):
+            # close bin edges with 0
+            bin_edges.append(0.)
+            stop_reason = "no more bkgd events left"
+            break
+    bin_edges = sorted(list(set([round(float(i), 6) for i in bin_edges])))
+    return bin_edges, stop_reason
+        
+
+
+        
+
+
+
+
+        
+        
+        
+        

@@ -45,7 +45,7 @@ from tautaunn.config import masses, spins, klub_index_columns, luminosities, bta
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline 
 
-from tautaunn.binning_algorithms import flats_systs, flatsguarded
+from tautaunn.binning_algorithms import flats_systs, flatsguarded, non_res_like
 
 
 #
@@ -757,6 +757,7 @@ def _write_datacard(
 
     if isinstance(binning, list):
         binning_algo = "custom"
+        print(f"using custom binning for category {category}")
     else:
         # input checks
         assert len(binning) in [3, 4]
@@ -766,7 +767,7 @@ def _write_datacard(
         else:
             n_bins, x_min, x_max, binning_algo = binning
         assert x_max > x_min
-        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs"}
+        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "non_res_like"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -893,7 +894,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs'):  # flats or flatsguarded
+    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like'):  # flats or flatsguarded
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1013,10 +1014,33 @@ def _write_datacard(
                                                  n_bins=n_bins,
                                                  x_min=x_min,
                                                  x_max=x_max)
-        
-
-    elif binning_algo == "custom":
-        bin_edges = binning
+        elif binning_algo == "non_res_like":
+            tt_shifts = OrderedDict()
+            dy_shifts = OrderedDict()
+            others_shifts = OrderedDict()
+            others_processes = [p for p in sample_map[year] if p not in ["TT", "DY", "QCD"]]
+            others_processes = [p for p in others_processes if not processes[p].get("signal", False)]
+            others_processes = [p for p in others_processes if not processes[p].get("data", False)]
+            for nuisance in shape_nuisances.values():
+                # filter to only have jes and tes
+                if not ((nuisance.name.startswith("jes") or nuisance.name.startswith("tes")) or nuisance.is_nominal):
+                    continue
+                for direction in nuisance.get_directions():
+                    key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
+                    tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
+                    dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
+                    
+                    others = {p: get_values_and_weights(p, nuisance, direction) for p in others_processes}
+                    others_values, others_weights = ak.concatenate([v for v, w in others.values()]), ak.concatenate([w for v, w in others.values()])
+                    others_shifts[key] = (others_values, others_weights)
+                    tt_shifts[key] = (tt_values, tt_weights)
+                    dy_shifts[key] = (dy_values, dy_weights)
+            bin_edges, stop_reason = non_res_like(hh=(hh_values,hh_weights),
+                                                  dy=dy_shifts,
+                                                  tt=tt_shifts,
+                                                  others=others_shifts,)
+        elif binning_algo == "custom":
+            bin_edges = binning
     #
     # write shapes
     #
