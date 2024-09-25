@@ -693,6 +693,9 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
                  others: dict[str, (ak.Array, ak.Array)], # dict containing the nominal and jes & tes shifts
                  n_bins: int=10,) -> list[float]:
 
+
+    if len(hh[0]) == 0:
+        return [0., 1.], "no hh events"
     assert len(hh[0]) == len(hh[1])
     assert all(len(dy[key][0]) == len(dy[key][1]) for key in dy.keys())
     assert all(len(tt[key][0]) == len(tt[key][1]) for key in tt.keys())
@@ -766,7 +769,13 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
             stop_reason = "reached maximum number of bins"
             break
         # convert edges to offsets and update them
+        if next_edge <= np.min(hh_values):
+            # close bin edges with 0
+            bin_edges.append(0.)
+            stop_reason = "no more hh events left"
+            break
         hh_offset = edge_to_idx(hh_values, next_edge)
+
         if next_edge_reason in ["flat_s", "rel_err"]:
             dy_offset = edge_to_idx(dy["nominal"][0], next_edge)
             tt_offset = edge_to_idx(tt["nominal"][0], next_edge)

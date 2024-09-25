@@ -1035,10 +1035,14 @@ def _write_datacard(
                     others_shifts[key] = (others_values, others_weights)
                     tt_shifts[key] = (tt_values, tt_weights)
                     dy_shifts[key] = (dy_values, dy_weights)
-            bin_edges, stop_reason = non_res_like(hh=(hh_values,hh_weights),
-                                                  dy=dy_shifts,
-                                                  tt=tt_shifts,
-                                                  others=others_shifts,)
+            if len(hh_values) == 0:
+                print(f"no signal events found in ({category},{spin},{mass})")
+                bin_edges, stop_reason = [0., 1.], "no signal events found"
+            else:
+                bin_edges, stop_reason = non_res_like(hh=(hh_values,hh_weights),
+                                                    dy=dy_shifts,
+                                                    tt=tt_shifts,
+                                                    others=others_shifts,)
         elif binning_algo == "custom":
             bin_edges = binning
     #
@@ -1088,11 +1092,7 @@ def _write_datacard(
                 for year in _map.keys():
                     datacard_year = datacard_years[year]
                     full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
-                    try:
-                        h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
-                    except:
-                        print(f"creating histogram in ({category},{spin},{mass}) with edges {bin_edges} failed")
-                        raise
+                    h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                     hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)] = h
 
             # fill histograms
