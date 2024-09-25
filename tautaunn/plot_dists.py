@@ -187,9 +187,14 @@ def plot_mc_data_sig(data_hist: Hist,
                      ) -> None:
 
     if limit_value is None:
-        limit_value = 1
-
-    signal_hist *= limit_value * br_hh_bbtt
+        label = (f"{signal_name} $\\times$ 1")
+        signal_hist *= 1
+    else:
+        label = (f"{signal_name}\n"
+                #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
+                f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
+                "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
+        signal_hist *= limit_value * br_hh_bbtt
     # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # unblind all bins up to 0.8 
     if len(bin_edges) > 2:
@@ -229,10 +234,6 @@ def plot_mc_data_sig(data_hist: Hist,
     bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
     plot_mc_stat(bkgd_stack, ax1, mode="errorbar")
     data_hist.plot(color='black', ax=ax1, label="data", histtype='errorbar')
-    label = (f"{signal_name}\n"
-            #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
-            f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
-            "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
     signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
     #signal_hist.plot(color='black', ax=ax1, label=f"{signal_name} scaled to\nexp. limit: {limit_value:.1f} pb",)
     
@@ -315,15 +316,26 @@ def make_plots(input_dir: str | Path,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
                              limit_value=lim)
         else: 
-            lim = None
-            plot_hist_cms_style(bkgd_stack=stack,
-                                signal_hist=sig,
-                                bin_edges=bin_edges,
-                                year=year,
-                                channel=channel,
-                                signal_name=" ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:"),
-                                cat=cat,
-                                savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.png")
+            signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+            plot_mc_data_sig(data_hist=data,
+                             signal_hist=sig,
+                             bkgd_stack=stack,
+                             bin_edges=bin_edges,
+                             year=year,
+                             channel=channel,
+                             cat=cat,
+                             signal_name=signal_name,
+                             savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
+                             limit_value=None)
+            #lim = None
+            #plot_hist_cms_style(bkgd_stack=stack,
+                                #signal_hist=sig,
+                                #bin_edges=bin_edges,
+                                #year=year,
+                                #channel=channel,
+                                #signal_name=" ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:"),
+                                #cat=cat,
+                                #savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.png")
 
 
 def main(input_dir: str | Path,
