@@ -549,7 +549,20 @@ def flats_systs(hh_values: ak.Array,
     
 
     def edge_to_offset(values, edge):
-        return np.where(values <= edge)[0][0]
+        try:
+            return np.where(values <= edge)[0][0]
+        except Exception as e:
+            return None
+
+    def sort_and_cumsum(values, weights, square_weights=False):
+        sort_indices = ak.argsort(values, ascending=False)
+        values = values[sort_indices]
+        weights = weights[sort_indices]
+        if square_weights:
+            return values, np.cumsum(weights), np.cumsum(weights**2)
+        else:
+            return values, np.cumsum(weights)
+    
 
     # sort hh 
     sort_indices = ak.argsort(hh_values, ascending=False)
@@ -557,25 +570,14 @@ def flats_systs(hh_values: ak.Array,
     hh_weights = hh_weights[sort_indices]
     # sort dy and tt & replace weights with cumulative sums
     for key in dy_shifts.keys():
-        dy_sort_indices = ak.argsort(dy_shifts[key][0], ascending=False)
-        dy_shifts[key] = dy_shifts[key][0][dy_sort_indices], np.cumsum(dy_shifts[key][1][dy_sort_indices])
-        tt_sort_indices = ak.argsort(tt_shifts[key][0], ascending=False)
-        tt_shifts[key] = tt_shifts[key][0][tt_sort_indices], np.cumsum(tt_shifts[key][1][tt_sort_indices])
+        dy_shifts[key] = sort_and_cumsum(dy_shifts[key][0], dy_shifts[key][1]) 
+        tt_shifts[key] = sort_and_cumsum(tt_shifts[key][0], tt_shifts[key][1]) 
 
-    # create a combined array of dy and tt values
-    dy_tt_values = {key: ak.sort(
-                         ak.concatenate([dy_shifts[key][0], tt_shifts[key][0]], axis=0),
-                         ascending=False)
+    # create a combined array of dy and tt values and squared weights cumulatively summed
+    dy_tt_shifts = {key: sort_and_cumsum(ak.concatenate([dy_shifts[key][0], tt_shifts[key][0]], axis=0),
+                                         ak.concatenate([dy_shifts[key][1], tt_shifts[key][1]], axis=0),
+                                         square_weights=True)
                     for key in dy_shifts.keys()}
-    # create a combined array of dy and tt weights
-    dy_tt_weights = {key: np.cumsum(
-                            ak.concatenate([dy_shifts[key][1], tt_shifts[key][1]], axis=0))
-                        for key in dy_shifts.keys()}    
-    # create a combined array of dy and tt squared weights 
-    dy_tt_squared_weights = {key: np.cumsum(
-                            ak.concatenate([(dy_shifts[key][1])**2, (tt_shifts[key][1])**2], axis=0))
-                    for key in dy_shifts.keys()}    
-        
 
     bin_edges = [x_max]
     hh_weights_cumsum = np.cumsum(hh_weights)
@@ -602,26 +604,32 @@ def flats_systs(hh_values: ak.Array,
         tt_edges = [tt_shifts[key][0][tt_offset] for key in tt_shifts.keys()]
         # SUM (N_DY,N_TT) requirement:
         # we want the sum of dy and tt events to be at least 4 
-        dy_tt_edges = [dy_tt_values[key][dy_tt_offset+3] for key in dy_tt_values.keys()]
+        dy_tt_edges = [dy_tt_shifts[key][0][dy_tt_offset+3] for key in dy_tt_shifts.keys()]
         # find the next bin edge that fulfills all requirements
         next_edge = np.min([bin_edge_by_signal, *dy_edges, *tt_edges, *dy_tt_edges])
         if next_edge <= np.min(hh_values):
+            # still add edge to have bkgd-driven bin
+            bin_edges.append(next_edge)
             # no more hh events left
             bin_edges.append(x_min)
             stop_reason = "no more events left"
+            break
+    
+        if any(next_edge <= np.min(vals) for vals in [dy_shifts["nominal"][0], tt_shifts["nominal"][0], dy_tt_shifts["nominal"][0]]):
+            # close bin edges with x_min
+            bin_edges.append(x_min)
+            stop_reason = ("no more dy or tt events left."
+                           "I think this shouldn't happen often...")
             break
         # calculate the next offsets
         next_hh_offset = edge_to_offset(hh_values, next_edge)
         next_dy_offset = edge_to_offset(dy_shifts["nominal"][0], next_edge)
         next_tt_offset = edge_to_offset(tt_shifts["nominal"][0], next_edge)
-        next_dy_tt_offset = edge_to_offset(dy_tt_values["nominal"], next_edge)
+        next_dy_tt_offset = edge_to_offset(dy_tt_shifts["nominal"][0], next_edge)
 
-        if any(next_offset >= len(vals) for next_offset, vals in zip([next_dy_offset, next_tt_offset, next_dy_tt_offset],
-                                                          [dy_shifts["nominal"][0], tt_shifts["nominal"][0], dy_tt_values["nominal"]])): 
-            # close bin edges with x_min
+        if any((var is None for var in [next_hh_offset,next_dy_offset,next_tt_offset,next_dy_tt_offset])):
             bin_edges.append(x_min)
-            stop_reason = ("no more dy or tt events left."
-                           "I think this shouldn't happen often...")
+            stop_reason = "next_offset None"
             break
 
         ###### YIELD REQUIREMENTS ######
@@ -639,7 +647,7 @@ def flats_systs(hh_values: ak.Array,
         next_edge = np.min([next_edge, next_dy_edge, next_tt_edge])
         # convert edge to offset
         next_hh_offset = edge_to_offset(hh_values, next_edge)
-        next_dy_tt_offset = edge_to_offset(dy_tt_values["nominal"], next_edge)
+        next_dy_tt_offset = edge_to_offset(dy_tt_shifts["nominal"][0], next_edge)
         
         
         ###### ERROR REQUIREMENTS ######
@@ -650,15 +658,22 @@ def flats_systs(hh_values: ak.Array,
         #                   for key in dy_tt_squared_weights.keys()}
         #    dy_tt_err_bins = list(itertools.chain.from_iterable([np.where(dy_tt_errs[key] < 0.5)[0] for key in dy_tt_errs]))
 
-        dy_tt_errs = np.sqrt(dy_tt_squared_weights["nominal"][next_dy_tt_offset:] - dy_tt_squared_weights["nominal"][dy_tt_offset]) / (dy_tt_weights["nominal"][next_dy_tt_offset:] - dy_tt_weights["nominal"][dy_tt_offset]) #noqa
-        dy_tt_err_edge = dy_tt_values["nominal"][next_dy_tt_offset + np.where(dy_tt_errs < 0.5)[0][0]]
+        dy_tt_errs = np.sqrt(dy_tt_shifts["nominal"][2][next_dy_tt_offset:] - dy_tt_shifts["nominal"][2][dy_tt_offset]) / (dy_tt_shifts["nominal"][1][next_dy_tt_offset:] - dy_tt_shifts["nominal"][1][dy_tt_offset]) #noqa
+        dy_tt_err_edge = dy_tt_shifts["nominal"][0][next_dy_tt_offset + np.where(dy_tt_errs < 0.5)[0][0]]
         next_edge = np.min([next_edge, dy_tt_err_edge])
     
+        if len(bin_edges) == 1:
+            # calculate the signal yield for this bin
+            signal_per_bin = hh_weights_cumsum[next_hh_offset]
         # update offsets 
         next_hh_offset = edge_to_offset(hh_values, next_edge)
         next_dy_offset = edge_to_offset(dy_shifts["nominal"][0], next_edge)
         next_tt_offset = edge_to_offset(tt_shifts["nominal"][0], next_edge)
-        next_dy_tt_offset = edge_to_offset(dy_tt_values["nominal"], next_edge)
+        next_dy_tt_offset = edge_to_offset(dy_tt_shifts["nominal"][0], next_edge)
+        if any((var is None for var in [next_hh_offset,next_dy_offset,next_tt_offset,next_dy_tt_offset])):
+            bin_edges.append(x_min)
+            stop_reason = "next_offset None"
+            break
         assert all((next_offset > offset for next_offset, offset in zip((next_hh_offset, next_dy_offset, next_tt_offset, next_dy_tt_offset),
                                                                           (hh_offset, dy_offset, tt_offset, dy_tt_offset)))), "offsets not updated correctly"
         hh_offset, dy_offset, tt_offset, dy_tt_offset = next_hh_offset, next_dy_offset, next_tt_offset, next_dy_tt_offset
@@ -666,12 +681,14 @@ def flats_systs(hh_values: ak.Array,
         # check remaining stats
         if any(offset >= vals for offset, vals in
                 zip([next_hh_offset, next_dy_offset, next_tt_offset, next_dy_tt_offset],
-                     [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0]), len(dy_tt_values["nominal"])])):
+                     [len(hh_values), len(dy_shifts["nominal"][0]), len(tt_shifts["nominal"][0]), len(dy_tt_shifts["nominal"][0])])):
             # close bin edges with x_min
             stop_reason = "no more events left"
             bin_edges.append(x_min)
             break
         if (hh_weights_cumsum[-1] - hh_weights_cumsum[hh_offset] ) < edge_count*signal_per_bin:
+            # still add edge to have bkgd-driven bin
+            bin_edges.append(next_edge)
             # close bin edges with x_min
             stop_reason = "remaining signal yield insufficient"
             bin_edges.append(x_min)
@@ -739,7 +756,14 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
 
     while True:
         # bin edge if we would only consider the flat-signal requirement (only nominal)
-        flat_s_edge = hh_values[np.where(hh_weights_cumsum[hh_offset:] > len(bin_edges)*signal_per_bin)[0][0]]
+        try:
+            flat_s_edge = hh_values[np.where(hh_weights_cumsum[hh_offset:] > len(bin_edges)*signal_per_bin)[0][0]]
+        except IndexError:
+            # no more hh events left
+            bin_edges.append(np.min(hh_values))
+            bin_edges.append(0.)
+            stop_reason = "no more hh events left"
+            break
         # N_DY & N_TT requirements:
         # we want at least 1 dy and 1 tt event in the bin (for all shifts)
         dy_edges = {key: dy[key][0][dy_offset] for key in dy.keys()}
@@ -762,8 +786,14 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
                           "all_bkgds": all_bkgds_edge,
                           "rel_err": rel_err_edge}
         next_edge_reason, next_edge = min(next_edge_dict.items(), key=lambda x: x[1])
+        if len(bin_edges) == 1:
+            # calculate the signal yield for this bin
+            hh_offset = edge_to_idx(hh_values, next_edge)
+            signal_per_bin = hh_weights_cumsum[hh_offset]
         bin_edges.append(next_edge)
         if len(bin_edges) == n_bins:
+            # still add last bin edge to have bkgd-contaminated bin
+            bin_edges.append(next_edge)
             # close bin edges with 0
             bin_edges.append(0.)
             stop_reason = "reached maximum number of bins"
@@ -791,11 +821,10 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
         elif next_edge_reason == "all_bkgds":
             all_bkgds_offset = edge_to_idx(all_bkgds[all_bkgds_shift][0], next_edge)
             
-        if len(bin_edges) == 1:
-            # update signal per bin such that for all next bins the signal yield is the same
-            signal_per_bin = hh_weights_cumsum[hh_offset]
         
         if hh_offset > len(hh_values):
+            # still add last bin edge to have bkgd-contaminated bin
+            bin_edges.append(next_edge)
             # close bin edges with 0
             bin_edges.append(0.)
             stop_reason = "no more hh events left"
@@ -807,7 +836,7 @@ def non_res_like(hh: Tuple[ak.Array, ak.Array],
                                                              len(all_bkgds["nominal"][0])])):
             # close bin edges with 0
             bin_edges.append(0.)
-            stop_reason = "no more bkgd events left"
+            stop_reason = "no more bkgd events left. Probably never happens?"
             break
     bin_edges = sorted(list(set([round(float(i), 6) for i in bin_edges])))
     return bin_edges, stop_reason
