@@ -13,6 +13,8 @@ import law
 import numpy as np
 import tensorflow as tf
 import awkward as ak
+from pathlib import Path
+from tqdm import tqdm
 
 from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
@@ -594,5 +596,125 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # create the cards
         write_datacards(**datacard_kwargs)
+
+        
+class PlotDists(WriteDatacards,):
+
+    datacards = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
+    )
+
+    limits_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a limits.npz file; default: ''",
+    )
+
+    file_type = luigi.ChoiceParameter(
+        default="png",
+        choices=("png", "pdf"),
+        description="type of the plot files, choices: png, pdf; default: png",
+    ) 
+
+
+    def get_card_dir(self, card):
+        if len(card.split("_")) == 11:
+            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
+        if len(card.split("_")) == 12:
+            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+        return f"{year}/{channel}/{cat}/"
+
+    
+    def get_signal_name_and_dir(self, card):
+        if len(card.split("_")) == 11:
+            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
+            return f"cat_{year}_{channel}_{cat}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
+        if len(card.split("_")) == 12:
+            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+            return f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
+        
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        assert self.file_type in ("png", "pdf")
+        import re
+        # Regular expression pattern to match the years 2016, 2016APV, 2017, and 2018
+        year_pattern = r"2016(?:APV)?|2017|2018"
+        from glob import glob
+        # glob the datacards
+        self.matched_cards = []
+        print(self.datacards)
+        for pattern in self.datacards:
+            self.matched_cards.append(glob(pattern.replace("datacard_", "shapes_").replace(".txt", ".root")))
+        self.matched_cards = list(itertools.chain(*self.matched_cards))
+        print(self.matched_cards)
+        years = set([re.search(year_pattern, card).group() for card in self.matched_cards])
+        if len(years) > 1 and self.limits_file != law.NO_STR:
+            print(("\n WARNING: \n"
+                  f"datacards are across multiple years ({years}) a limits file was passed."
+                  f"This might not work as expected."))
+
+
+    def output(self):
+        # prepare the output directory
+        d = self.local_target("", dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.path
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]: 
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
+
+        return law.FileCollection({
+            card: d.child(f"{self.get_card_dir(stem:=Path(card).stem)}/{stem}.{self.file_type}", type="f")
+            for card in self.matched_cards
+        })
+
+
+    def run(self):
+
+        from tautaunn.plot_dists import plot_mc_data_sig, load_hists, load_reslim
+
+        fc = self.output()
+        for card, path in tqdm(fc.targets.items()):
+            card_name = Path(card).stem
+            if len(card_name.split("_")) == 11:
+                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card_name.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
+            elif len(card_name.split("_")) == 12:
+                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card_name.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
+            else:
+                raise ValueError("Card name does not match the expected format.")
+            signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
+            stack, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
+            if self.limits_file is not law.NO_STR:
+                lim = load_reslim(self.limits_file, mass)
+                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                plot_mc_data_sig(data_hist=data,
+                                signal_hist=sig,
+                                bkgd_stack=stack,
+                                bin_edges=bin_edges,
+                                year=year,
+                                channel=channel,
+                                cat=cat,
+                                signal_name=signal_name,
+                                savename=path.path,
+                                limit_value=lim)
+            else: 
+                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                plot_mc_data_sig(data_hist=data,
+                                signal_hist=sig,
+                                bkgd_stack=stack,
+                                bin_edges=bin_edges,
+                                year=year,
+                                channel=channel,
+                                cat=cat,
+                                signal_name=signal_name,
+                                savename=path.path,
+                                limit_value=None)
 
 
