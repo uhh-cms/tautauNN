@@ -1012,21 +1012,17 @@ def _write_datacard(
                 bin_edges, stop_reason = [0., 1.], "no signal events found"
             else:
                 # for debugging
-                if category == "2017_tautau_resolved1b_noak8_os_iso":
-                    if spin == 0 and mass == 750:
+                if category == "2017_etau_boosted_notres2b_os_iso":
+                    if spin == 0 and mass == 320:
                         with open(f"{category}_s{spin}_m{mass}_.pkl", "wb") as f:
                             pickle.dump((hh_values, hh_weights, tt_shifts, dy_shifts), f)
-                        bin_edges, stop_reason = flats_systs(hh_values=hh_values,
-                                                            hh_weights=hh_weights,
-                                                            tt_shifts=tt_shifts,
-                                                            dy_shifts=dy_shifts,
-                                                            n_bins=n_bins,
-                                                            x_min=x_min,
-                                                            x_max=x_max)
-                    else:
-                        bin_edges, stop_reason = [0., 1.], "not the category for debugging"
-                else:
-                    bin_edges, stop_reason = [0., 1.], "not the category for debugging"
+                bin_edges, stop_reason = flats_systs(hh_values=hh_values,
+                                                    hh_weights=hh_weights,
+                                                    tt_shifts=tt_shifts,
+                                                    dy_shifts=dy_shifts,
+                                                    n_bins=n_bins,
+                                                    x_min=x_min,
+                                                    x_max=x_max)
         elif binning_algo == "non_res_like":
             tt_shifts = OrderedDict()
             dy_shifts = OrderedDict()
@@ -1058,10 +1054,11 @@ def _write_datacard(
                         with open(f"{category}_s{spin}_m{mass}_.pkl", "wb") as f:
                             pickle.dump((hh_values, hh_weights, tt_shifts, dy_shifts, others_shifts), f)
                 
-                bin_edges, stop_reason = non_res_like(hh=(hh_values,hh_weights),
-                                                    dy=dy_shifts,
-                                                    tt=tt_shifts,
-                                                    others=others_shifts,)
+                bin_edges, stop_reason = non_res_like(hh_values=hh_values,
+                                                      hh_weights=hh_weights,
+                                                    dy_shifts=dy_shifts,
+                                                    tt_shifts=tt_shifts,
+                                                    others_shifts=others_shifts,)
         elif binning_algo == "custom":
             bin_edges = binning
     #
