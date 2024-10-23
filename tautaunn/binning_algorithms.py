@@ -274,24 +274,43 @@ def flats_systs(hh_values: ak.Array,
         # now add the bkgd yield requirement
         dy_yield_edges = [yield_requirement(*dy_shifts[key]) for key in dy_shifts]
         tt_yield_edges = [yield_requirement(*tt_shifts[key]) for key in tt_shifts]
-        if any([i ==1 for i in dy_yield_edges]) or any([i ==1 for i in tt_yield_edges]):
-            stop_reason = "cannot guarantee pos. dy/tt yield for all shifts"
+        mask_dy = [i == 1 for i in dy_yield_edges]
+        mask_tt = [i == 1 for i in tt_yield_edges]
+        problem_shifts = []
+        if any(mask_dy) or any(mask_tt):
+            # also print which shifts are causing the problem
+            problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
+            problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
+            stop_reason = f"cannot guarantee dy/tt yield for shifts {set(problem_shifts)}"
             bin_edges.append(np.min(hh_values))
             bin_edges.append(x_min)
             break
         # error requirements
-        dy_error_edges = [error_requirement(*dy_shifts[key]) for key in dy_shifts]
-        tt_error_edges = [error_requirement(*tt_shifts[key]) for key in tt_shifts]
-        if any([i == 1 for i in dy_error_edges]) or any([i == 1 for i in tt_error_edges]):
-            stop_reason = "cannot guarantee dy/tt error req. for all shifts"
+        dy_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
+                          if key == "nominal"
+                          else error_requirement(*dy_shifts[key], target_val=1)
+                          for key in dy_shifts]
+
+        tt_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
+                          if key == "nominal"
+                          else error_requirement(*dy_shifts[key], target_val=1)
+                          for key in dy_shifts]
+        mask_dy = [i == 1 for i in dy_error_edges]
+        mask_tt = [i == 1 for i in tt_error_edges]
+        if any(mask_dy) or any(mask_tt):
+            # also print which shifts are causing the problem
+            problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
+            problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
+            stop_reason = f"cannot guarantee dy/tt error req. for shifts {set(problem_shifts)}"
             bin_edges.append(np.min(hh_values))
             bin_edges.append(x_min)
             break
         next_edge = np.min([dy_edge, tt_edge,
-                         np.min([dy_yield_edges]),
-                         np.min([tt_yield_edges]),
-                         np.min([dy_error_edges]),
-                         np.min([tt_error_edges])])
+                        dy_tt_edge,
+                        np.min([dy_yield_edges]),
+                        np.min([tt_yield_edges]),
+                        np.min([dy_error_edges]),
+                        np.min([tt_error_edges])])
         # now calculate the signal  yield up to there
         if edge_count == 1:
             first_bin_yield = np.sum(hh_weights[np.logical_and((hh_values>=next_edge), (hh_values<1))])
@@ -305,7 +324,9 @@ def flats_systs(hh_values: ak.Array,
                     break
                 else:
                     next_edge = hh_values[mask][0]
-                    assert np.sum(hh_weights[hh_values>=next_edge]) > required_signal_yield
+                    binned_signal_yield = np.sum(hh_weights[hh_values>=next_edge])
+                    assert binned_signal_yield > required_signal_yield
+                    required_signal_yield = binned_signal_yield 
             else:
                 required_signal_yield = first_bin_yield
         else:
@@ -340,8 +361,9 @@ def flats_systs(hh_values: ak.Array,
             bin_edges.append(x_min)
             stop_reason = "reached maximum number of bins"
             break
-    bin_edges = sorted([round(float(i), 6) for i in bin_edges])
-    return bin_edges, stop_reason
+    format_bins = lambda x: round(x - 1e-6, 6)
+    bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
+    return bin_edges, stop_reason, problem_shifts
 
 
 def non_res_like(hh_values: ak.Array,

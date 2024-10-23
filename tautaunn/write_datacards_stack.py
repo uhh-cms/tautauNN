@@ -728,11 +728,13 @@ def write_datacards(
         for args, res in zip(datacard_args, datacard_results):
             spin, mass, category = args[2:5]
             edges = res[2]
+            stop_reason = res[-2]
+            counts = res[-1]
             key = f"{category}__s{spin}__m{mass}"
             # do not overwrite when edges are None (in case the datacard was skipped)
             if key in all_bin_edges and not edges:
                 continue
-            all_bin_edges[key] = edges
+            all_bin_edges[key] = edges, stop_reason, counts
         # write them
         with open(bin_edges_file, "w") as f:
             json.dump(all_bin_edges, f, indent=4)
@@ -891,10 +893,12 @@ def _write_datacard(
                         f"selection are non-finite in variable {field}",
                     )
 
+    # store unweighted event counts
+    counts = {}
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like'):  # flats or flatsguarded
+    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like', ):  # flats or flatsguarded
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1007,22 +1011,36 @@ def _write_datacard(
                     tt_shifts[key] = (tt_values, tt_weights)
                     dy_shifts[key] = (dy_values, dy_weights)
 
+            others_processes = [p for p in sample_map[year] if p not in ["TT", "DY", "QCD"]]
+            others_processes = [p for p in others_processes if not processes[p].get("signal", False)]
+            others_processes = [p for p in others_processes if not processes[p].get("data", False)]
+            others_values = ak.concatenate([get_values_and_weights(p)[0] for p in others_processes])
+
+            counts["HH"] = len(hh_values)
+            counts["TT"] = len(tt_shifts["nominal"][0])
+            counts["DY"] = len(dy_shifts["nominal"][0])
+            counts["Others"] = len(others_values) 
+
             if len(hh_values) == 0:
                 print(f"no signal events found in ({category},{spin},{mass})")
                 bin_edges, stop_reason = [0., 1.], "no signal events found"
             else:
                 # for debugging
-                if category == "2017_etau_boosted_notres2b_os_iso":
-                    if spin == 0 and mass == 320:
+                if category == "2017_mutau_resolved1b_noak8_os_iso":
+                    if spin == 0 and mass in (800,):
                         with open(f"{category}_s{spin}_m{mass}_.pkl", "wb") as f:
                             pickle.dump((hh_values, hh_weights, tt_shifts, dy_shifts), f)
-                bin_edges, stop_reason = flats_systs(hh_values=hh_values,
-                                                    hh_weights=hh_weights,
-                                                    tt_shifts=tt_shifts,
-                                                    dy_shifts=dy_shifts,
-                                                    n_bins=n_bins,
-                                                    x_min=x_min,
-                                                    x_max=x_max)
+                if category == "2017_tautau_resolved1b_noak8_os_iso":
+                    if spin == 0 and mass in (1750,):
+                        with open(f"{category}_s{spin}_m{mass}_.pkl", "wb") as f:
+                            pickle.dump((hh_values, hh_weights, tt_shifts, dy_shifts), f)
+                bin_edges, stop_reason, problem_shifts = flats_systs(hh_values=hh_values,
+                                                                    hh_weights=hh_weights,
+                                                                    tt_shifts=tt_shifts,
+                                                                    dy_shifts=dy_shifts,
+                                                                    n_bins=n_bins,
+                                                                    x_min=x_min,
+                                                                    x_max=x_max)
         elif binning_algo == "non_res_like":
             tt_shifts = OrderedDict()
             dy_shifts = OrderedDict()
@@ -1473,7 +1491,7 @@ def _write_datacard(
     os.chmod(abs_datacard_path, 0o664)
 
     # return output paths
-    return abs_datacard_path, abs_shapes_path, bin_edges
+    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason, counts
 
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
