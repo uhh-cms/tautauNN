@@ -11,6 +11,7 @@ import os
 import uproot
 import hist
 from hist import Hist, Stack
+from hist.intervals import ratio_uncertainty 
 
 
 import matplotlib.pyplot as plt
@@ -60,8 +61,10 @@ def load_hists(filename: str | Path,
                year: str) -> tuple[Stack, Hist]:
     with uproot.open(filename) as f:
         objects = f[dirname].classnames()
-        nominal_objects = [o.strip(";1") for o in objects if not any(s in o for s in ["Up", "Down"])]
-        hists = {o: f[dirname][o].to_hist() for o in nominal_objects if o != signal_name and o != 'data_obs'}
+        nominal_hists = [o.strip(";1") for o in objects if not any(s in o for s in ["Up", "Down"])]
+        hists = {o: f[dirname][o].to_hist() for o in nominal_hists if o != signal_name and o != 'data_obs'}
+
+        shape_nuisances = list(set([o.split("__")[-1].strip("Up;1") for o in objects if "Up" in o]))
         bin_edges = hists[list(hists.keys())[0]].axes[0].edges
         equal_width_hists = {name.replace(f"_{year}", ""): histo_equalwidth(hists[name])[0] for name in hists}
 
@@ -71,7 +74,12 @@ def load_hists(filename: str | Path,
         bkgd_dict  = {name: h for name, h in equal_width_hists.items() if any(name == s for s in main_bkgds)}
         others = reduce(add, (h for name, h in equal_width_hists.items() if name not in bkgd_dict))
         bkgd_dict["Others"] = others
-        sorted_bkgd_dict = dict(sorted(bkgd_dict.items(), key=lambda x: x[1].sum().value, reverse=False))
+        #sorted_bkgd_dict = dict(sorted(bkgd_dict.items(), key=lambda x: x[1].sum().value, reverse=False))
+        # instead impose a fixed order of "Others", "QCD", "W", "ST", "DY", "TT"
+        sorted_bkgd_dict = OrderedDict()
+        for name in ["Others", "QCD", "W", "ST", "DY", "TT"]:
+            if name in bkgd_dict:
+                sorted_bkgd_dict[name] = bkgd_dict[name]
         bkgd_stack = hist.Stack.from_dict(sorted_bkgd_dict)
     return bkgd_stack, sig, data, bin_edges
 
@@ -232,10 +240,10 @@ def plot_mc_data_sig(data_hist: Hist,
     ax1.text(0.05, .91, f"{chn_map[channel]}\n{cat}", fontsize=15,transform=ax1.transAxes)
     
     bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
-    plot_mc_stat(bkgd_stack, ax1, mode="errorbar")
-    data_hist.plot(color='black', ax=ax1, label="data", histtype='errorbar')
+    errps =  {'hatch':'////', 'facecolor':'none', 'lw': 0, 'edgecolor': 'k', 'alpha': 0.5}
+    hep.histplot(sum(bkgd_stack), histtype="band", ax=ax1, **errps)
+    hep.histplot(data_hist, ax=ax1, label="data", histtype='errorbar', color='k', capsize=2, yerr=True)
     signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
-    #signal_hist.plot(color='black', ax=ax1, label=f"{signal_name} scaled to\nexp. limit: {limit_value:.1f} pb",)
     
     if any(mask):
         idx = np.where(mask)[0][-1] + 1
@@ -252,8 +260,9 @@ def plot_mc_data_sig(data_hist: Hist,
     min_y_sig = signal_hist.values().min()
     min_y = min(min_y_tt_dy, min_y_sig)
     max_y = sum(bkgd_stack).values().max()
-    ax1.set_ylim((0.1*min_y, 100 * max_y))
+    #ax1.set_ylim((0.1*min_y, 100 * max_y))
     #ax1.set_ylim((min_y, 10 * max_y))
+    ax1.set_ylim((1e-4, 100 * max_y))
     ax1.set_xlabel("")
     ax1.set_ylabel("Events")
     
@@ -268,8 +277,14 @@ def plot_mc_data_sig(data_hist: Hist,
 
     ax2.hlines(1, 0, 1, color='black', linestyle='--')
     ax2.hlines([0.5, 1.5], 0, 1, color='grey', linestyle='--')
-    ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
-    plot_mc_stat(bkgd_stack, ax2, mode="ratio")
+    hep.histplot(data_hist.values()/sum(bkgd_stack).values(),
+                 data_hist.axes[0].edges,
+                 yerr=np.sqrt(data_hist.values())/sum(bkgd_stack).values(),
+                 ax=ax2, histtype='errorbar', color='black')
+    #ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
+    #plot_mc_stat(bkgd_stack, ax2, mode="ratio")
+    yerr = ratio_uncertainty(data_hist.values(),sum(bkgd_stack).values(), "poisson-ratio")
+    ax2.stairs(1+yerr[1], edges=data_hist.axes[0].edges, baseline=1-yerr[0], **errps)
     ax2.set_ylim(0.4, 1.6)
     ax2.set_xlim(0, 1)
     ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
