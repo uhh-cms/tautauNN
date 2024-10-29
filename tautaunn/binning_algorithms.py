@@ -4,7 +4,7 @@ import itertools
 from typing import List, Tuple
 
 
-def yield_requirement(bkgd_values,bkgd_weights, target_val=0):
+def yield_requirement(bkgd_values,bkgd_weights, target_val=1e-4):
     bkgd_weights_cs = np.cumsum(bkgd_weights) 
     mask = bkgd_weights_cs>target_val
     if not any(mask):
@@ -16,10 +16,12 @@ def yield_requirement(bkgd_values,bkgd_weights, target_val=0):
 
 def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
     bkgd_w_cs = np.cumsum(bkgd_weights)
+    bkgd_w_cs_2 = np.cumsum(bkgd_weights**2)
     neg_mask = bkgd_w_cs>0
     bkgd_values = bkgd_values[neg_mask]
-    bkgd_w_cs =bkgd_w_cs[neg_mask]
-    rel_error = np.sqrt((bkgd_w_cs**2)/bkgd_w_cs)
+    bkgd_w_cs = bkgd_w_cs[neg_mask]
+    bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
+    rel_error = np.sqrt(bkgd_w_cs_2/bkgd_w_cs)
     mask = rel_error<target_val
     if not any(mask):
         #print(f"error requirement cannot be reached. returning the min")
@@ -234,10 +236,15 @@ def flats_systs(hh_values: ak.Array,
                 hh_weights: ak.Array,
                 dy_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
                 tt_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
+                st_shifts: dict[str, (ak.Array, ak.Array)] | None = None,
                 n_bins: int=10,
                 x_min: float=0.,
                 x_max: float=1.,):
 
+    continuous_st = False
+    if not st_shifts is None:
+        continuous_st = True
+        st_already_binned = False
     # assert that dy_shifts and tt_shifts have the same keys
     assert dy_shifts.keys() == tt_shifts.keys()
     # binning should be done in the range [x_min, x_max]
@@ -246,6 +253,9 @@ def flats_systs(hh_values: ak.Array,
     assert len(hh_values) == len(hh_weights)
     assert all(len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys())
     assert all(len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys())
+    if continuous_st:
+        assert all(len(st_shifts[key][0]) == len(st_shifts[key][1]) for key in st_shifts.keys())
+        assert st_shifts.keys() == dy_shifts.keys()
     bin_edges = [x_max]
     edge_count = 1
 
@@ -258,12 +268,39 @@ def flats_systs(hh_values: ak.Array,
     for key in dy_shifts.keys():
         dy_shifts[key] = sort_vals_and_weights(dy_shifts[key][0], dy_shifts[key][1]) 
         tt_shifts[key] = sort_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1]) 
+        if continuous_st:
+            st_shifts[key] = sort_vals_and_weights(st_shifts[key][0], st_shifts[key][1])
 
     # create a combined array of dy and tt values and squared weights cumulatively summed
     dy_tt_shifts = {key: sort_vals_and_weights(ak.concatenate([dy_shifts[key][0], tt_shifts[key][0]], axis=0),
                                             ak.concatenate([dy_shifts[key][1], tt_shifts[key][1]], axis=0),)
                     for key in dy_shifts.keys()}
 
+
+    def fill_counts(counts, next_edge, last_edge, continuous_st,
+                    hh_values, hh_weights, dy_shifts, tt_shifts, st_shifts):
+        def get_mask(values, upper_bound, lower_bound):
+            return np.logical_and(values>=lower_bound, values<upper_bound)
+
+        hh_mask = get_mask(hh_values, last_edge, next_edge)
+        dy_mask = get_mask(dy_shifts["nominal"][0], last_edge, next_edge)
+        tt_mask = get_mask(tt_shifts["nominal"][0], last_edge, next_edge) 
+        counts["HH"][0].append(len(hh_values[hh_mask]))
+        counts["HH"][1].append(np.sum(hh_weights[hh_mask]).astype("float64"))
+        counts["DY"][0].append(len(dy_shifts["nominal"][0][dy_mask]))
+        counts["DY"][1].append(np.sum(dy_shifts["nominal"][1][dy_mask]).astype("float64"))
+        counts["TT"][0].append(len(tt_shifts["nominal"][0][tt_mask]))
+        counts["TT"][1].append(np.sum(tt_shifts["nominal"][1][tt_mask]).astype("float64"))
+        if continuous_st:
+            st_mask = get_mask(st_shifts["nominal"][0], last_edge, next_edge) 
+            counts["ST"][0].append(len(st_shifts["nominal"][0][st_mask]))
+            counts["ST"][1].append(np.sum(st_shifts["nominal"][1][st_mask]).astype("float64"))
+
+    counts = {"HH": ([], []),
+              "DY": ([], []),
+              "TT": ([], []),}
+    if continuous_st:
+        counts["ST"] = ([], [])
     while True:
         # let's just get the first bin
         # 1st requirements: 1 dy & tt bar event 
@@ -282,18 +319,22 @@ def flats_systs(hh_values: ak.Array,
             problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
             problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
             stop_reason = f"cannot guarantee dy/tt yield for shifts {set(problem_shifts)}"
-            bin_edges.append(np.min(hh_values))
+            fill_counts(counts, 0.1, bin_edges[-1], continuous_st, hh_values, hh_weights, 
+                        dy_shifts, tt_shifts, st_shifts)
+            bin_edges.append(0.1) # doing this just to make it easy to spot what was the reason
+            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
+                        dy_shifts, tt_shifts, st_shifts)
             bin_edges.append(x_min)
             break
         # error requirements
         dy_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
                           if key == "nominal"
-                          else error_requirement(*dy_shifts[key], target_val=1)
+                          else error_requirement(*dy_shifts[key], target_val=0.5)
                           for key in dy_shifts]
 
         tt_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
                           if key == "nominal"
-                          else error_requirement(*dy_shifts[key], target_val=1)
+                          else error_requirement(*dy_shifts[key], target_val=0.5)
                           for key in dy_shifts]
         mask_dy = [i == 1 for i in dy_error_edges]
         mask_tt = [i == 1 for i in tt_error_edges]
@@ -302,15 +343,34 @@ def flats_systs(hh_values: ak.Array,
             problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
             problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
             stop_reason = f"cannot guarantee dy/tt error req. for shifts {set(problem_shifts)}"
-            bin_edges.append(np.min(hh_values))
+            fill_counts(counts, 0.15, bin_edges[-1], continuous_st, hh_values, hh_weights, 
+                        dy_shifts, tt_shifts, st_shifts)
+            bin_edges.append(0.15) # same as above
+            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
+                        dy_shifts, tt_shifts, st_shifts)
             bin_edges.append(x_min)
             break
-        next_edge = np.min([dy_edge, tt_edge,
-                        dy_tt_edge,
+        next_edge = np.min([dy_edge, tt_edge, dy_tt_edge,
                         np.min([dy_yield_edges]),
                         np.min([tt_yield_edges]),
                         np.min([dy_error_edges]),
                         np.min([tt_error_edges])])
+        if continuous_st:
+            if st_already_binned:
+                # st has already been binned for some shift: just add the yield requirement for st
+                st_edges = [yield_requirement(*st_shifts[key]) for key in st_shifts]
+                next_edge = np.min([next_edge, np.min(st_edges)])
+            else:
+                masks_st = [st_shifts[key][0]>next_edge for key in st_shifts]
+                # we only change the next_edge if st is binned for some shift 
+                if any([any(mask) for mask in masks_st]):
+                    # okay so for some shift we have already binned the st
+                    st_already_binned = True
+                    binned_masks = [mask for mask in masks_st if any(mask)]
+                    # let's find the largest idx out of all shifts
+                    max_idx = max([np.where(mask)[0][0] for mask in binned_masks])
+                    # this way we make sure that for this bin, st is included for all shifts
+                    next_edge = min([next_edge, *[st_shifts[key][0][max_idx] for key in st_shifts]])
         # now calculate the signal  yield up to there
         if edge_count == 1:
             first_bin_yield = np.sum(hh_weights[np.logical_and((hh_values>=next_edge), (hh_values<1))])
@@ -319,7 +379,12 @@ def flats_systs(hh_values: ak.Array,
                 mask = yieldsum>=required_signal_yield
                 if not any(mask):
                     stop_reason = "reached end of signal yield"
+                    fill_counts(counts, np.min(hh_values), bin_edges[-1], continuous_st, 
+                                hh_values, hh_weights, dy_shifts, tt_shifts, 
+                                st_shifts)
                     bin_edges.append(np.min(hh_values))
+                    fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, 
+                                hh_weights, dy_shifts, tt_shifts, st_shifts)
                     bin_edges.append(x_min)
                     break
                 else:
@@ -336,7 +401,12 @@ def flats_systs(hh_values: ak.Array,
                 mask = yieldsum>=required_signal_yield
                 if not any(mask):
                     stop_reason = "reached end of signal yield"
-                    bin_edges.append(np.min(hh_values))
+                    next_edge = np.min([*hh_values, next_edge])
+                    fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, 
+                                hh_weights, dy_shifts, tt_shifts, st_shifts)
+                    bin_edges.append(next_edge)
+                    fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, 
+                                hh_weights, dy_shifts, tt_shifts, st_shifts)
                     bin_edges.append(x_min)
                     break
                 else:
@@ -345,15 +415,24 @@ def flats_systs(hh_values: ak.Array,
 
         if not any(hh_values<next_edge):
             stop_reason = "no signal events left"
-            bin_edges.append(np.min(hh_values))
+            next_edge = np.min([*hh_values, next_edge])
+            fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, 
+                        hh_weights, dy_shifts, tt_shifts, st_shifts)
+            bin_edges.append(next_edge)
+            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
+                        dy_shifts, tt_shifts, st_shifts)
             bin_edges.append(x_min)
             break
+        fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, hh_weights,
+                    dy_shifts, tt_shifts, st_shifts)
         hh_values, hh_weights = update_vals_and_weights(hh_values, hh_weights, next_edge)
         # maybe this way it's slow but otherwise we'd have to keep track of offsets for all shifts..
         for key in dy_shifts:
             dy_shifts[key] = update_vals_and_weights(*dy_shifts[key],next_edge)
             tt_shifts[key] = update_vals_and_weights(*tt_shifts[key],next_edge)
             dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0],dy_tt_shifts[key][1],next_edge)
+            if continuous_st:
+                st_shifts[key] = update_vals_and_weights(*st_shifts[key],next_edge)
 
         bin_edges.append(next_edge)
         edge_count += 1
@@ -363,7 +442,7 @@ def flats_systs(hh_values: ak.Array,
             break
     format_bins = lambda x: round(x - 1e-6, 6)
     bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
-    return bin_edges, stop_reason, problem_shifts
+    return bin_edges, stop_reason, problem_shifts, counts
 
 
 def non_res_like(hh_values: ak.Array,
