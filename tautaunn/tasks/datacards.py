@@ -451,7 +451,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("equal", "flats", "flatsguarded", "flats_systs", "non_res_like"),
+        choices=("equal", "flats", "flatsguarded", "flats_systs", "flats_systs_st", "non_res_like"),
         description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
     )
     binning_file = luigi.Parameter(
@@ -645,12 +645,13 @@ class PlotDists(WriteDatacards,):
         from glob import glob
         # glob the datacards
         self.matched_cards = []
-        print(self.datacards)
         for pattern in self.datacards:
             self.matched_cards.append(glob(pattern.replace("datacard_", "shapes_").replace(".txt", ".root")))
         self.matched_cards = list(itertools.chain(*self.matched_cards))
-        print(self.matched_cards)
-        years = set([re.search(year_pattern, card).group() for card in self.matched_cards])
+        try:
+            years = set([re.search(year_pattern, card).group() for card in self.matched_cards])
+        except AttributeError as e:
+            raise ValueError(f"Couldn't match any cards with provided pattern {self.datacards}")
         if len(years) > 1 and self.limits_file != law.NO_STR:
             print(("\n WARNING: \n"
                   f"datacards are across multiple years ({years}) a limits file was passed."
