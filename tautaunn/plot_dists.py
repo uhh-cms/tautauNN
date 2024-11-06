@@ -64,7 +64,17 @@ def load_hists(filename: str | Path,
         nominal_hists = [o.strip(";1") for o in objects if not any(s in o for s in ["Up", "Down"])]
         hists = {o: f[dirname][o].to_hist() for o in nominal_hists if o != signal_name and o != 'data_obs'}
 
-        shape_nuisances = list(set([o.split("__")[-1].strip("Up;1") for o in objects if "Up" in o]))
+        non_nominal_bkgd_hists = [o for o in objects
+                                  if "Up" in o and not any(s in o for s in [signal_name, 'data_obs'])]
+        bkgd_errors = []
+        for shape in non_nominal_bkgd_hists:
+            bkgd = shape.split("__")[0]
+            nominal_values = hists[bkgd].values()
+            up_values = f[dirname][shape].to_hist().values()
+            bkgd_errors.append(np.abs(up_values - nominal_values))
+        
+        bkgd_errors = np.array(bkgd_errors).reshape(len(bkgd_errors), -1)
+        bkgd_stack_variance = np.sum(bkgd_errors**2, axis=0)
         bin_edges = hists[list(hists.keys())[0]].axes[0].edges
         equal_width_hists = {name.replace(f"_{year}", ""): histo_equalwidth(hists[name])[0] for name in hists}
 
@@ -80,8 +90,12 @@ def load_hists(filename: str | Path,
         for name in ["Others", "QCD", "W", "ST", "DY", "TT"]:
             if name in bkgd_dict:
                 sorted_bkgd_dict[name] = bkgd_dict[name]
-        bkgd_stack = hist.Stack.from_dict(sorted_bkgd_dict)
-    return bkgd_stack, sig, data, bin_edges
+        bkgd_stack = Stack.from_dict(sorted_bkgd_dict)
+        bkgd_stack_error_hist = hist.new.Reg(len(bin_edges)-1, bin_edges[0], bin_edges[-1], name="bkgd_stack_error").Weight()
+        bkgd_stack_error_hist.view().value = sum(bkgd_stack).values()
+        # add the statistical error in quadrature
+        bkgd_stack_error_hist.view().variance = bkgd_stack_variance + np.array(sum(bkgd_stack).variances())
+        return bkgd_stack, bkgd_stack_error_hist, sig, data, bin_edges
 
 
 def load_reslim(file: str | Path,
@@ -185,6 +199,7 @@ def plot_mc_stat(mc: Stack,
 def plot_mc_data_sig(data_hist: Hist,
                      signal_hist: Hist,
                      bkgd_stack: Stack,
+                     stack_error_hist: Hist,
                      bin_edges: list,
                      year: str,
                      channel: str,
@@ -241,8 +256,9 @@ def plot_mc_data_sig(data_hist: Hist,
     
     bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
     errps =  {'hatch':'////', 'facecolor':'none', 'lw': 0, 'edgecolor': 'k', 'alpha': 0.5}
-    hep.histplot(sum(bkgd_stack), histtype="band", ax=ax1, **errps)
-    hep.histplot(data_hist, ax=ax1, label="data", histtype='errorbar', color='k', capsize=2, yerr=True)
+    #hep.histplot(sum(bkgd_stack), histtype="band", ax=ax1, **errps)
+    data_hist.plot(ax=ax1, color='black', label="Data", histtype='errorbar')
+    hep.histplot(stack_error_hist, ax=ax1, histtype="band", **errps, label="Unc. (stat. & syst.)")
     signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
     
     if any(mask):
@@ -262,7 +278,7 @@ def plot_mc_data_sig(data_hist: Hist,
     max_y = sum(bkgd_stack).values().max()
     #ax1.set_ylim((0.1*min_y, 100 * max_y))
     #ax1.set_ylim((min_y, 10 * max_y))
-    ax1.set_ylim((1e-4, 100 * max_y))
+    ax1.set_ylim((1e-2, 100 * max_y))
     ax1.set_xlabel("")
     ax1.set_ylabel("Events")
     
@@ -283,8 +299,9 @@ def plot_mc_data_sig(data_hist: Hist,
                  ax=ax2, histtype='errorbar', color='black')
     #ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
     #plot_mc_stat(bkgd_stack, ax2, mode="ratio")
-    yerr = ratio_uncertainty(data_hist.values(),sum(bkgd_stack).values(), "poisson-ratio")
-    ax2.stairs(1+yerr[1], edges=data_hist.axes[0].edges, baseline=1-yerr[0], **errps)
+    #yerr = ratio_uncertainty(data_hist.values(),sum(bkgd_stack).values(), "poisson-ratio")
+    yerr = np.divide(np.sqrt(stack_error_hist.variances()), stack_error_hist.values())
+    ax2.stairs(1+yerr, edges=data_hist.axes[0].edges, baseline=1-yerr, **errps)
     ax2.set_ylim(0.4, 1.6)
     ax2.set_xlim(0, 1)
     ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
@@ -316,13 +333,14 @@ def make_plots(input_dir: str | Path,
         _, _, _, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = filename.stem.split("_")
         dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
-        stack, sig, data, bin_edges = load_hists(filename, dirname, signal_name, year)
+        stack, stack_error_hist, sig, data, bin_edges = load_hists(filename, dirname, signal_name, year)
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
             plot_mc_data_sig(data_hist=data,
                              signal_hist=sig,
                              bkgd_stack=stack,
+                             stack_error_hist=stack_error_hist,
                              bin_edges=bin_edges,
                              year=year,
                              channel=channel,
@@ -335,6 +353,7 @@ def make_plots(input_dir: str | Path,
             plot_mc_data_sig(data_hist=data,
                              signal_hist=sig,
                              bkgd_stack=stack,
+                             stack_error_hist=stack_error_hist,
                              bin_edges=bin_edges,
                              year=year,
                              channel=channel,
