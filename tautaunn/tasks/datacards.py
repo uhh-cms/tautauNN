@@ -691,13 +691,14 @@ class PlotDists(WriteDatacards,):
             else:
                 raise ValueError("Card name does not match the expected format.")
             signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
-            stack, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
+            stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
             if self.limits_file is not law.NO_STR:
                 lim = load_reslim(self.limits_file, mass)
                 signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
+                                stack_error_hist=stack_err,
                                 bin_edges=bin_edges,
                                 year=year,
                                 channel=channel,
@@ -710,6 +711,7 @@ class PlotDists(WriteDatacards,):
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
+                                stack_error_hist=stack_err,
                                 bin_edges=bin_edges,
                                 year=year,
                                 channel=channel,
