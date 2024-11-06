@@ -45,7 +45,7 @@ from tautaunn.config import masses, spins, klub_index_columns, luminosities, bta
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline 
 
-from tautaunn.binning_algorithms import flats_systs, flatsguarded, non_res_like
+from tautaunn.binning_algorithms import flats_systs, flatsguarded
 
 
 #
@@ -1001,95 +1001,29 @@ def _write_datacard(
                                                   x_min=x_min,
                                                   x_max=x_max)
         elif binning_algo == "flats_systs":
+            hh_shifts = OrderedDict()
             tt_shifts = OrderedDict()
             dy_shifts = OrderedDict()
-            st_shifts = OrderedDict()
             for nuisance in shape_nuisances.values():
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
+                    hh_values, hh_weights = get_values_and_weights(signal_process_name, nuisance, direction, br_hh_bbtt)
                     tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
                     dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
-                    st_values, st_weights = get_values_and_weights("ST", nuisance, direction)
-                    others = {p: get_values_and_weights(p, nuisance, direction) for p in others_processes}
-                    others_values, others_weights = ak.concatenate([v for v, w in others.values()]), ak.concatenate([w for v, w in others.values()])
-                    others_shifts[key] = (others_values, others_weights)
                     tt_shifts[key] = (tt_values, tt_weights)
                     dy_shifts[key] = (dy_values, dy_weights)
-                    st_shifts[key] = (st_values, st_weights)
-
+                    hh_shifts[key] = (hh_values, hh_weights)
             if len(hh_values) == 0:
                 print(f"no signal events found in ({category},{spin},{mass})")
                 bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
             else:
-                bin_edges, stop_reason, problem_shifts, bin_counts = flats_systs(hh_values=hh_values,
-                                                                                    hh_weights=hh_weights,
-                                                                                    tt_shifts=tt_shifts,
-                                                                                    dy_shifts=dy_shifts,
-                                                                                    n_bins=n_bins,
-                                                                                    x_min=x_min,
-                                                                                    x_max=x_max)
-        elif binning_algo == "flats_systs_st":
-            tt_shifts = OrderedDict()
-            dy_shifts = OrderedDict()
-            st_shifts = OrderedDict()
-            for nuisance in shape_nuisances.values():
-                for direction in nuisance.get_directions():
-                    key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
-                    tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
-                    dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
-                    st_values, st_weights = get_values_and_weights("ST", nuisance, direction)
-                    tt_shifts[key] = (tt_values, tt_weights)
-                    dy_shifts[key] = (dy_values, dy_weights)
-                    st_shifts[key] = (st_values, st_weights)
-
-            if len(hh_values) == 0:
-                print(f"no signal events found in ({category},{spin},{mass})")
-                bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
-            else:
-                bin_edges, stop_reason, problem_shifts, bin_counts = flats_systs(hh_values=hh_values,
-                                                                        hh_weights=hh_weights,
-                                                                        dy_shifts=dy_shifts,
-                                                                        tt_shifts=tt_shifts,
-                                                                        st_shifts=st_shifts,
-                                                                        n_bins=n_bins,
-                                                                        x_min=x_min,
-                                                                        x_max=x_max)
-        elif binning_algo == "non_res_like":
-            tt_shifts = OrderedDict()
-            dy_shifts = OrderedDict()
-            others_shifts = OrderedDict()
-            others_processes = [p for p in sample_map[year] if p not in ["TT", "DY", "QCD"]]
-            others_processes = [p for p in others_processes if not processes[p].get("signal", False)]
-            others_processes = [p for p in others_processes if not processes[p].get("data", False)]
-            for nuisance in shape_nuisances.values():
-                # filter to only have jes and tes
-                if not ((nuisance.name.startswith("jes") or nuisance.name.startswith("tes")) or nuisance.is_nominal):
-                    continue
-                for direction in nuisance.get_directions():
-                    key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
-                    tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
-                    dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
-                    
-                    others = {p: get_values_and_weights(p, nuisance, direction) for p in others_processes}
-                    others_values, others_weights = ak.concatenate([v for v, w in others.values()]), ak.concatenate([w for v, w in others.values()])
-                    others_shifts[key] = (others_values, others_weights)
-                    tt_shifts[key] = (tt_values, tt_weights)
-                    dy_shifts[key] = (dy_values, dy_weights)
-            if len(hh_values) == 0:
-                print(f"no signal events found in ({category},{spin},{mass})")
-                bin_edges, stop_reason = [0., 1.], "no signal events found"
-            else:
-                # for debugging
-                if category == "2017_tautau_resolved1b_noak8_os_iso":
-                    if spin == 0 and mass == 1750:
-                        with open(f"{category}_s{spin}_m{mass}_.pkl", "wb") as f:
-                            pickle.dump((hh_values, hh_weights, tt_shifts, dy_shifts, others_shifts), f)
-                
-                bin_edges, stop_reason = non_res_like(hh_values=hh_values,
-                                                      hh_weights=hh_weights,
-                                                    dy_shifts=dy_shifts,
-                                                    tt_shifts=tt_shifts,
-                                                    others_shifts=others_shifts,)
+                bin_edges, stop_reason, bin_counts = flats_systs(hh_shifts=hh_shifts,
+                                                                 tt_shifts=tt_shifts,
+                                                                 dy_shifts=dy_shifts,
+                                                                 error_target=0.25, # changed from 1
+                                                                 n_bins=n_bins,
+                                                                 x_min=x_min,
+                                                                 x_max=x_max)
         elif binning_algo == "custom":
             bin_edges = binning
     #
