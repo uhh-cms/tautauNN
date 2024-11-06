@@ -8,7 +8,7 @@ def yield_requirement(bkgd_values,bkgd_weights, target_val=1e-4):
     bkgd_weights_cs = np.cumsum(bkgd_weights) 
     mask = bkgd_weights_cs>target_val
     if not any(mask):
-        #print(f"yield requirement cannot be reached. returnning the min")
+        # for this particular shift, the requirement cannot be reached
         return 1 # ignore this shift for req.
     else:
         return bkgd_values[mask][0]
@@ -30,17 +30,53 @@ def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
         return bkgd_values[mask][0]
 
 
-def sort_vals_and_weights(values, weights, square_weights=False):
+def sort_vals_and_weights(values, weights):
     sort_indices = ak.argsort(values, ascending=False)
     values = values[sort_indices]
     weights = weights[sort_indices]
     return values, weights
-    
+
 
 def update_vals_and_weights(vals, weights, edge):
     mask = vals < edge
     return vals[mask], weights[mask]
 
+
+def calc_rel_error(weights):
+    return np.sqrt(np.sum(weights**2))/np.sum(weights)
+
+
+def fill_counts(counts, next_edge, hh_shifts, dy_shifts, tt_shifts):
+    hh_mask = hh_shifts["nominal"][0]>=next_edge
+    dy_mask = dy_shifts["nominal"][0]>=next_edge
+    tt_mask = tt_shifts["nominal"][0]>=next_edge
+    counts["HH"][0].append(len(hh_shifts["nominal"][0][hh_mask]))
+    counts["HH"][1].append(np.sum(hh_shifts["nominal"][1][hh_mask]).astype("float64"))
+    counts["HH"][2].append(calc_rel_error(hh_shifts["nominal"][1][hh_mask]).astype("float64"))
+    counts["DY"][0].append(len(dy_shifts["nominal"][0][dy_mask]))
+    counts["DY"][1].append(np.sum(dy_shifts["nominal"][1][dy_mask]).astype("float64"))
+    counts["DY"][2].append(calc_rel_error(dy_shifts["nominal"][1][dy_mask]).astype("float64"))
+    counts["TT"][0].append(len(tt_shifts["nominal"][0][tt_mask]))
+    counts["TT"][1].append(np.sum(tt_shifts["nominal"][1][tt_mask]).astype("float64"))
+    counts["TT"][2].append(calc_rel_error(tt_shifts["nominal"][1][tt_mask]).astype("float64"))
+
+
+def check_yield_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1e-4):
+    mask = bkgd_values >= next_edge
+    return np.sum(bkgd_weights[mask]) > target_val
+
+
+def check_error_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1.):
+    mask = bkgd_values >= next_edge
+    return calc_rel_error(bkgd_weights[mask]) < target_val
+
+
+def get_conditions(dy_vals_weights, tt_vals_weights, next_edge, yield_target=1e-5, error_target=1.):
+    dy_conds = (check_yield_requirement(*dy_vals_weights, next_edge)
+                and check_error_requirement(*dy_vals_weights, next_edge))
+    tt_conds = (check_yield_requirement(*tt_vals_weights, next_edge)
+                and check_error_requirement(*tt_vals_weights, next_edge))
+    return dy_conds, tt_conds
 
 
 def flat_signal(signal_values: ak.Array,
@@ -232,509 +268,129 @@ def flatsguarded(hh_values: ak.Array,
     return bin_edges, stop_reason
 
 
-def flats_systs(hh_values: ak.Array,
-                hh_weights: ak.Array,
-                dy_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
-                tt_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
-                st_shifts: dict[str, (ak.Array, ak.Array)] | None = None,
+def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
+                dy_shifts: dict[str, Tuple[ak.Array, ak.Array]],
+                tt_shifts: dict[str, Tuple[ak.Array, ak.Array]],
+                yield_target: float=1e-5,
+                error_target: float=1.,
                 n_bins: int=10,
                 x_min: float=0.,
                 x_max: float=1.,):
-
-    continuous_st = False
-    if not st_shifts is None:
-        continuous_st = True
-        st_already_binned = False
-    # assert that dy_shifts and tt_shifts have the same keys
-    assert dy_shifts.keys() == tt_shifts.keys()
-    # binning should be done in the range [x_min, x_max]
-    assert x_min < x_max <= 1
-
-    assert len(hh_values) == len(hh_weights)
-    assert all(len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys())
-    assert all(len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys())
-    if continuous_st:
-        assert all(len(st_shifts[key][0]) == len(st_shifts[key][1]) for key in st_shifts.keys())
-        assert st_shifts.keys() == dy_shifts.keys()
-    bin_edges = [x_max]
-    edge_count = 1
-
-    # sort hh 
-    sort_indices = ak.argsort(hh_values, ascending=False)
-    hh_values = hh_values[sort_indices]
-    hh_weights = hh_weights[sort_indices]
-    required_signal_yield = np.max([np.sum(hh_weights)/n_bins,1e-4])
-    # sort dy and tt & replace weights with cumulative sums
+    
+    assert dy_shifts.keys() == tt_shifts.keys() == hh_shifts.keys() 
+    assert all([len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys()])
+    assert all([len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys()])
+    assert all([len(hh_shifts[key][0]) == len(hh_shifts[key][1]) for key in hh_shifts.keys()])
+    # sort dy and tt values and weights 
     for key in dy_shifts.keys():
+        hh_shifts[key] = sort_vals_and_weights(hh_shifts[key][0], hh_shifts[key][1])
         dy_shifts[key] = sort_vals_and_weights(dy_shifts[key][0], dy_shifts[key][1]) 
         tt_shifts[key] = sort_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1]) 
-        if continuous_st:
-            st_shifts[key] = sort_vals_and_weights(st_shifts[key][0], st_shifts[key][1])
 
+    required_signal_yield = np.max([np.sum(hh_shifts["nominal"][1])/n_bins,1e-5])
     # create a combined array of dy and tt values and squared weights cumulatively summed
     dy_tt_shifts = {key: sort_vals_and_weights(ak.concatenate([dy_shifts[key][0], tt_shifts[key][0]], axis=0),
                                             ak.concatenate([dy_shifts[key][1], tt_shifts[key][1]], axis=0),)
                     for key in dy_shifts.keys()}
 
-
-    def fill_counts(counts, next_edge, last_edge, continuous_st,
-                    hh_values, hh_weights, dy_shifts, tt_shifts, st_shifts):
-        def get_mask(values, upper_bound, lower_bound):
-            return np.logical_and(values>=lower_bound, values<upper_bound)
-
-        hh_mask = get_mask(hh_values, last_edge, next_edge)
-        dy_mask = get_mask(dy_shifts["nominal"][0], last_edge, next_edge)
-        tt_mask = get_mask(tt_shifts["nominal"][0], last_edge, next_edge) 
-        counts["HH"][0].append(len(hh_values[hh_mask]))
-        counts["HH"][1].append(np.sum(hh_weights[hh_mask]).astype("float64"))
-        counts["DY"][0].append(len(dy_shifts["nominal"][0][dy_mask]))
-        counts["DY"][1].append(np.sum(dy_shifts["nominal"][1][dy_mask]).astype("float64"))
-        counts["TT"][0].append(len(tt_shifts["nominal"][0][tt_mask]))
-        counts["TT"][1].append(np.sum(tt_shifts["nominal"][1][tt_mask]).astype("float64"))
-        if continuous_st:
-            st_mask = get_mask(st_shifts["nominal"][0], last_edge, next_edge) 
-            counts["ST"][0].append(len(st_shifts["nominal"][0][st_mask]))
-            counts["ST"][1].append(np.sum(st_shifts["nominal"][1][st_mask]).astype("float64"))
-
-    counts = {"HH": ([], []),
-              "DY": ([], []),
-              "TT": ([], []),}
-    if continuous_st:
-        counts["ST"] = ([], [])
+    counts = {"HH": [[],[],[]], "DY": [[],[],[]], "TT": [[],[],[]]}
+    bin_edges = [1]
     while True:
-        # let's just get the first bin
-        # 1st requirements: 1 dy & tt bar event 
-        dy_edge = min([dy_shifts[key][0][0] for key in dy_shifts])
-        tt_edge = min([tt_shifts[key][0][0] for key in tt_shifts])
-        # at least 4 of dy tt
-        dy_tt_edge = min([dy_tt_shifts[key][0][3] for key in dy_tt_shifts])
-        # now add the bkgd yield requirement
-        dy_yield_edges = [yield_requirement(*dy_shifts[key]) for key in dy_shifts]
-        tt_yield_edges = [yield_requirement(*tt_shifts[key]) for key in tt_shifts]
-        mask_dy = [i == 1 for i in dy_yield_edges]
-        mask_tt = [i == 1 for i in tt_yield_edges]
-        problem_shifts = []
-        if any(mask_dy) or any(mask_tt):
-            # also print which shifts are causing the problem
-            problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
-            problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
-            stop_reason = f"cannot guarantee dy/tt yield for shifts {set(problem_shifts)}"
-            fill_counts(counts, 0.1, bin_edges[-1], continuous_st, hh_values, hh_weights, 
-                        dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(0.1) # doing this just to make it easy to spot what was the reason
-            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
-                        dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(x_min)
-            break
-        # error requirements
-        dy_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
-                          if key == "nominal"
-                          else error_requirement(*dy_shifts[key], target_val=0.5)
-                          for key in dy_shifts]
-
-        tt_error_edges = [error_requirement(*dy_shifts[key], target_val=0.5)
-                          if key == "nominal"
-                          else error_requirement(*dy_shifts[key], target_val=0.5)
-                          for key in dy_shifts]
-        mask_dy = [i == 1 for i in dy_error_edges]
-        mask_tt = [i == 1 for i in tt_error_edges]
-        if any(mask_dy) or any(mask_tt):
-            # also print which shifts are causing the problem
-            problem_shifts += [key for key, mask in zip(dy_shifts.keys(), mask_dy) if mask]
-            problem_shifts += [key for key, mask in zip(tt_shifts.keys(), mask_tt) if mask]
-            stop_reason = f"cannot guarantee dy/tt error req. for shifts {set(problem_shifts)}"
-            fill_counts(counts, 0.15, bin_edges[-1], continuous_st, hh_values, hh_weights, 
-                        dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(0.15) # same as above
-            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
-                        dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(x_min)
-            break
-        next_edge = np.min([dy_edge, tt_edge, dy_tt_edge,
-                        np.min([dy_yield_edges]),
-                        np.min([tt_yield_edges]),
-                        np.min([dy_error_edges]),
-                        np.min([tt_error_edges])])
-        if continuous_st:
-            if st_already_binned:
-                # st has already been binned for some shift: just add the yield requirement for st
-                st_edges = [yield_requirement(*st_shifts[key]) for key in st_shifts]
-                next_edge = np.min([next_edge, np.min(st_edges)])
+        # apply the conditions on n_mc for dy, tt and dy_tt
+        # at least 1 event of dy and tt in each bin
+        dy_edge = np.min([dy_shifts[key][0][0] for key in dy_shifts.keys()])
+        tt_edge = np.min([tt_shifts[key][0][0] for key in tt_shifts.keys()])
+        # at least 4 events of dy and tt combined in each bin
+        dy_tt_edge = np.min([dy_tt_shifts[key][0][3] for key in dy_tt_shifts.keys()])
+        next_edge = np.min([dy_edge, tt_edge, dy_tt_edge])
+        # now check if the required signal yield is reached
+        hh_yields = [np.sum(hh_shifts[key][1][hh_shifts[key][0]>=next_edge]) for key in hh_shifts.keys()]
+        if any([y < required_signal_yield for y in hh_yields]): 
+            # advance the next edge such that we have the required signal yield
+            hh_yield_cs = [np.cumsum(hh_shifts[key][1]) for key in hh_shifts.keys()]
+            # make sure that we're checking beyond the next edge (due to negative weights)
+            hh_vals = [hh_shifts[key][0] for key in hh_shifts.keys()]
+            hh_yield_cs = [cs[vals<next_edge] for cs, vals in zip(hh_yield_cs, hh_vals)] 
+            hh_vals = [vals[vals<next_edge] for vals in hh_vals]
+            passing_yields = [y_cs>=required_signal_yield for y_cs in hh_yield_cs]
+            if not all([any(y) for y in passing_yields]):
+                stop_reason = "no more signal events left"
+                fill_counts(counts, x_min, hh_shifts, dy_shifts, tt_shifts)
+                bin_edges.append(x_min)
+                break
             else:
-                masks_st = [st_shifts[key][0]>next_edge for key in st_shifts]
-                # we only change the next_edge if st is binned for some shift 
-                if any([any(mask) for mask in masks_st]):
-                    # okay so for some shift we have already binned the st
-                    st_already_binned = True
-                    binned_masks = [mask for mask in masks_st if any(mask)]
-                    # let's find the largest idx out of all shifts
-                    max_idx = max([np.where(mask)[0][0] for mask in binned_masks])
-                    # this way we make sure that for this bin, st is included for all shifts
-                    next_edge = min([next_edge, *[st_shifts[key][0][max_idx] for key in st_shifts]])
-        # now calculate the signal  yield up to there
-        if edge_count == 1:
-            first_bin_yield = np.sum(hh_weights[np.logical_and((hh_values>=next_edge), (hh_values<1))])
-            if first_bin_yield < required_signal_yield:
-                yieldsum = np.cumsum(hh_weights)
-                mask = yieldsum>=required_signal_yield
-                if not any(mask):
-                    stop_reason = "reached end of signal yield"
-                    fill_counts(counts, np.min(hh_values), bin_edges[-1], continuous_st, 
-                                hh_values, hh_weights, dy_shifts, tt_shifts, 
-                                st_shifts)
-                    bin_edges.append(np.min(hh_values))
-                    fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, 
-                                hh_weights, dy_shifts, tt_shifts, st_shifts)
-                    bin_edges.append(x_min)
-                    break
-                else:
-                    next_edge = hh_values[mask][0]
-                    binned_signal_yield = np.sum(hh_weights[hh_values>=next_edge])
-                    assert binned_signal_yield > required_signal_yield
-                    required_signal_yield = binned_signal_yield 
+                # I think we can just take the min in this case because the signal samples don't have negative weights
+                next_edge = np.min([vals[y][0] for y, vals in zip(passing_yields, hh_vals)])
+        # now apply the yield requirements
+        yield_conds_not_met = True
+        # TODO: we should probably refactor the following block into a function
+        while yield_conds_not_met:
+            # TODO: do this for all shifts?
+            shifts_conds = {key: get_conditions(dy_shifts[key],tt_shifts[key],
+                                                next_edge, yield_target, error_target)
+                            for key in dy_shifts.keys()}
+            if all([all(conds) for conds in shifts_conds.values()]):
+                # current edge is fine
+                yield_conds_not_met = False
             else:
-                required_signal_yield = first_bin_yield
-        else:
-            signal_yield = np.sum(hh_weights[hh_values>=next_edge])
-            if signal_yield < required_signal_yield:
-                yieldsum = np.cumsum(hh_weights)
-                mask = yieldsum>=required_signal_yield
-                if not any(mask):
-                    stop_reason = "reached end of signal yield"
-                    next_edge = np.min([*hh_values, next_edge])
-                    fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, 
-                                hh_weights, dy_shifts, tt_shifts, st_shifts)
-                    bin_edges.append(next_edge)
-                    fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, 
-                                hh_weights, dy_shifts, tt_shifts, st_shifts)
-                    bin_edges.append(x_min)
-                    break
-                else:
-                    next_edge = hh_values[mask][0]
-                    assert np.sum(hh_weights[hh_values>=next_edge]) > required_signal_yield
-
-        if not any(hh_values<next_edge):
-            stop_reason = "no signal events left"
-            next_edge = np.min([*hh_values, next_edge])
-            fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, 
-                        hh_weights, dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(next_edge)
-            fill_counts(counts, x_min, bin_edges[-1], continuous_st, hh_values, hh_weights, 
-                        dy_shifts, tt_shifts, st_shifts)
-            bin_edges.append(x_min)
+                # first check if conditions are met for nominal
+                failing_shifts = [key for key, conds in shifts_conds.items() if not all(conds)]
+                shift = failing_shifts[0] # dy_shifts is an OrederedDict so it should always start with nominal
+                # advance the edge
+                dy_conds, tt_conds = shifts_conds[shift]
+                if ((not dy_conds) and (not tt_conds)):
+                    mask = dy_tt_shifts[shift][0]<next_edge
+                    if not any(mask):
+                        stop_reason = "no more dy_tt events left (yield/error requirements)"
+                        bin_edges.append(x_min)
+                        yield_conds_not_met = False
+                    else:
+                        next_edge = dy_tt_shifts[shift][0][mask][0]
+                elif not dy_conds:
+                    mask = dy_shifts[shift][0]<next_edge
+                    if not any(mask):
+                        stop_reason = "no more dy events left (yield/error requirements)"
+                        bin_edges.append(x_min)
+                        yield_conds_not_met = False
+                    else:
+                        next_edge = dy_shifts[shift][0][mask][0]
+                elif not tt_conds:
+                    mask = tt_shifts[shift][0]<next_edge
+                    if not any(mask):
+                        stop_reason = "no more tt events left (yield/error requirements)"
+                        bin_edges.append(x_min)
+                        yield_conds_not_met = False
+                    else:
+                        next_edge = tt_shifts[shift][0][mask][0]
+        if len(bin_edges) == 1:
+            # set the required signal yield to the yield in the first bin
+            required_signal_yield = np.sum(hh_shifts["nominal"][1][hh_shifts["nominal"][0]>=next_edge]) 
+        if x_min in bin_edges:
+            # stopping reason found due to yield / error requirements
             break
-        fill_counts(counts, next_edge, bin_edges[-1], continuous_st, hh_values, hh_weights,
-                    dy_shifts, tt_shifts, st_shifts)
-        hh_values, hh_weights = update_vals_and_weights(hh_values, hh_weights, next_edge)
-        # maybe this way it's slow but otherwise we'd have to keep track of offsets for all shifts..
-        for key in dy_shifts:
-            dy_shifts[key] = update_vals_and_weights(*dy_shifts[key],next_edge)
-            tt_shifts[key] = update_vals_and_weights(*tt_shifts[key],next_edge)
-            dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0],dy_tt_shifts[key][1],next_edge)
-            if continuous_st:
-                st_shifts[key] = update_vals_and_weights(*st_shifts[key],next_edge)
-
+        fill_counts(counts, next_edge, hh_shifts, dy_shifts, tt_shifts)
         bin_edges.append(next_edge)
-        edge_count += 1
-        if edge_count == n_bins:
+        # stopping conditions
+        if len(bin_edges) == n_bins:
+            stop_reason = "n_bins reached"
+            fill_counts(counts, x_min, hh_shifts, dy_shifts, tt_shifts)
             bin_edges.append(x_min)
-            stop_reason = "reached maximum number of bins"
             break
-    format_bins = lambda x: round(x - 1e-6, 6)
+        hh_vals = [hh_shifts[key][0] for key in hh_shifts.keys()]
+        hh_vals_masks = [v<next_edge for v in hh_vals]
+        if not all([any(v) for v in hh_vals_masks]):
+            stop_reason = "no more signal events left"
+            fill_counts(counts, x_min, hh_shifts, dy_shifts, tt_shifts)
+            bin_edges.append(x_min)
+            break
+        # update the values and weights
+        for key in dy_shifts.keys():
+            hh_shifts[key] = update_vals_and_weights(hh_shifts[key][0], hh_shifts[key][1], next_edge)
+            dy_shifts[key] = update_vals_and_weights(dy_shifts[key][0], dy_shifts[key][1], next_edge)
+            tt_shifts[key] = update_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1], next_edge)
+            dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0], dy_tt_shifts[key][1], next_edge)
+
+
+    format_bins = lambda x: float(x) #round(x - 1e-6, 6)
     bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
-    return bin_edges, stop_reason, problem_shifts, counts
-
-
-def non_res_like(hh_values: ak.Array,
-                hh_weights: ak.Array,
-                dy_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
-                tt_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
-                others_shifts: dict[str, (ak.Array, ak.Array)], # (values, weights)
-                n_bins: int=10,
-                x_min: float=0.,
-                x_max: float=1.,):
-
-    # assert that dy_shifts and tt_shifts have the same keys
-    assert dy_shifts.keys() == tt_shifts.keys() == others_shifts.keys()
-    # binning should be done in the range [x_min, x_max]
-    assert x_min < x_max <= 1
-
-    assert len(hh_values) == len(hh_weights)
-    assert all(len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys())
-    assert all(len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys())
-    assert all(len(others_shifts[key][0]) == len(others_shifts[key][1]) for key in others_shifts.keys())
-    bin_edges = [x_max]
-    edge_count = 1
-
-    # sort hh 
-    sort_indices = ak.argsort(hh_values, ascending=False)
-    hh_values = hh_values[sort_indices]
-    hh_weights = hh_weights[sort_indices]
-    required_signal_yield = np.max([np.sum(hh_weights)/n_bins,0.001])
-    # all bkgds
-    all_bkgds = {key: sort_vals_and_weights(ak.concatenate([dy_shifts[key][0], tt_shifts[key][0], others_shifts[key][0]], axis=0),
-                                      ak.concatenate([dy_shifts[key][1], tt_shifts[key][1], others_shifts[key][1]], axis=0))
-                    for key in dy_shifts.keys()}
-    # sort dy and tt & replace weights with cumulative sums
-    for key in dy_shifts.keys():
-        dy_shifts[key] = sort_vals_and_weights(dy_shifts[key][0], dy_shifts[key][1]) 
-        tt_shifts[key] = sort_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1]) 
-
-    while True:
-        # let's just get the first bin
-        # 1st requirements: 1 dy & tt bar event 
-        dy_edge = min([dy_shifts[key][0][0] for key in dy_shifts])
-        tt_edge = min([tt_shifts[key][0][0] for key in tt_shifts])
-        # 4 events combined
-        # dy_tt_edge = min([dy_tt_shifts[key][0][3] for key in dy_tt_shifts])
-        # now add the bkgd yield requirement
-        all_bkgd_edges = [yield_requirement(*all_bkgds[key], target_val=0.03) for key in dy_shifts]
-        if any([i == 1 for i in all_bkgd_edges]):
-            stop_reason = "cannot guarantee all bkgds error req. for all shifts"
-            bin_edges.append(np.min(hh_values))
-            bin_edges.append(x_min)
-            break
-        # add relative error req. on nominal bkgd yield
-        rel_error_edge = error_requirement(*all_bkgds["nominal"])
-        if rel_error_edge == 1:
-            stop_reason = "cannot reach rel. error req. on nominal bkgd."
-            bin_edges.append(np.min(hh_values))
-            bin_edges.append(x_min)
-            break
-        next_edge = np.min([dy_edge, tt_edge, np.min([all_bkgd_edges]), rel_error_edge])
-        # now calculate the signal  yield up to there
-        if edge_count == 1:
-            first_bin_yield = np.sum(hh_weights[np.logical_and((hh_values>=next_edge), (hh_values<1))])
-            if first_bin_yield < required_signal_yield:
-                yieldsum = np.cumsum(hh_weights)
-                mask = yieldsum>=required_signal_yield
-                if not any(mask):
-                    stop_reason = "reached end of signal yield"
-                    bin_edges.append(np.min(hh_values))
-                    bin_edges.append(x_min)
-                    break
-                else:
-                    next_edge = hh_values[mask][0]
-            else:
-                required_signal_yield = first_bin_yield
-        else:
-            signal_yield = np.sum(hh_weights[hh_values>=next_edge])
-            if signal_yield < required_signal_yield:
-                yieldsum = np.cumsum(hh_weights)
-                mask = yieldsum>=required_signal_yield
-                if not any(mask):
-                    stop_reason = "reached end of signal yield"
-                    bin_edges.append(np.min(hh_values))
-                    bin_edges.append(x_min)
-                    break
-                else:
-                    next_edge = hh_values[mask][0]
-
-        if not any(hh_values<next_edge):
-            stop_reason = "no signal events left"
-            bin_edges.append(np.min(hh_values))
-            bin_edges.append(x_min)
-            break
-        hh_values, hh_weights = update_vals_and_weights(hh_values, hh_weights, next_edge)
-        # maybe this way it's slow but otherwise we'd have to keep track of offsets for all shifts..
-        for key in dy_shifts:
-            dy_shifts[key] = update_vals_and_weights(*dy_shifts[key],next_edge)
-            tt_shifts[key] = update_vals_and_weights(*tt_shifts[key],next_edge)
-            all_bkgds[key] = update_vals_and_weights(*all_bkgds[key],next_edge)
-
-        bin_edges.append(next_edge)
-        edge_count += 1
-        if edge_count == n_bins:
-            bin_edges.append(x_min)
-            stop_reason = "reached maximum number of bins"
-            break
-    bin_edges = sorted([round(float(i), 6) for i in bin_edges])
-    return bin_edges, stop_reason
-
-
-# this shit didn't work because the rec array takes waay too much memory with all shifts
-# apart from the fact that there's probably still bugs in there
-#def flatsguarded_systs(hh_values: ak.Array,
-#                       hh_weights: ak.Array,
-#                       dy_shifts: dict[str, ak.Array], # (including nominal)
-#                       tt_shifts: dict[str, ak.Array],
-#                       n_bins: int=10,
-#                       x_min: float=0.,
-#                       x_max: float=1.,):
-#    
-#    # create a record array with eight entries:
-#    # - value
-#    # - process (0: hh, 1: tt, 2: dy)
-#    # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
-#    # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
-#
-#    tt_values = [tt_shifts[key][0] for key in tt_shifts]
-#    dy_values = [dy_shifts[key][0] for key in dy_shifts]
-#
-#    process_map = {
-#        "hh_nominal": 0,
-#        **{"tt_"+key: i for i,key in enumerate(tt_shifts.keys())},
-#        **{"dy_"+key: i+len(tt_shifts.keys()) for i,key in enumerate(dy_shifts.keys())}
-#    }
-#
-#    all_values_list = [hh_values, *tt_values, *dy_values]
-#    rec_list = [
-#                # value
-#                (all_values := np.concatenate(all_values_list, axis=0)),
-#                # process
-#                np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
-#               ]
-#    izeros = np.zeros(len(all_values), dtype=np.int32)
-#    fzeros = np.zeros(len(all_values), dtype=np.float32)
-#    for i in range(len(all_values_list)):
-#        rec_list.append(izeros)
-#        rec_list.append(fzeros)
-#    rec_names = "value,process,hh_count_cs,hh_weight_cs,"
-#    rec_names += ",".join([f"tt_{key}_count_cs,tt_{key}_weight_cs"
-#                           if key != "nominal" else "tt_count_cs,tt_weight_cs"
-#                           for key in tt_shifts])
-#    rec_names += ",".join([f"dy_{key}_count_cs,dy_{key}_weight_cs"
-#                           if key != "nominal" else "dy_count_cs,dy_weight_cs"
-#                           for key in dy_shifts])
-#
-#    rec = np.core.records.fromarrays(rec_list, names=rec_names)
-#    # insert counts and weights into columns for correct processes
-#    # (faster than creating arrays above which then get copied anyway when the recarray is created)
-#    rec.hh_count_cs[rec.process == process_map["hh_nominal"]] = 1
-#    rec.hh_weight_cs[rec.process == process_map["hh_nominal"]] = hh_weights
-#    for key in rec_names.split(",")[4:]:
-#        process_name = "_".join(key.split("_")[:2])
-#        if "counts" in key:
-#            rec[key][rec.process == process_map[process_name]] = 1
-#        if "weight" in key:
-#            if key.startswith("dy"):
-#                rec[key][rec.process == process_map[process_name]] = dy_shifts[key.split("_")[1]]
-#            elif key.startswith("tt"):
-#                rec[key][rec.process == process_map[process_name]] = tt_shifts[key.split("_")[1]]
-#            else:
-#                raise ValueError(f"Unknown process {key}")
-#    # sort by decreasing value to start binning from "the right" later on
-#    rec.sort(order="value")
-#    rec = np.flip(rec, axis=0)
-#    # replace counts and weights with their cumulative sums
-#    for key in rec_names.split(",")[2:]:
-#        rec[key][:] = np.cumsum(rec[key])
-#    # eager cleanup
-#    del all_values_list, izeros, fzeros
-#    del hh_values, hh_weights
-#    del dy_shifts, tt_shifts
-#    del rec_names, rec_list
-#    # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
-#    # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
-#    # but rather through simple subtraction of values at the respective indices instead
-#
-#    #
-#    # step 2: binning
-#    #
-#
-#    # determine the approximate hh yield per bin
-#    hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
-#    # keep track of bin edges and the hh yield accumulated so far
-#    bin_edges = [x_max]
-#    hh_yield_binned = 0.0
-#    min_hh_yield = 1.0e-5
-#    # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
-#    offset = 0
-#    # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
-#    get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
-#    # bookkeep reasons for stopping binning
-#    stop_reason = ""
-#    # start binning
-#    while len(bin_edges) < n_bins:
-#        # stopping condition 1: reached end of events
-#        if offset >= len(rec):
-#            stop_reason = "no more events left"
-#            break
-#        # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
-#        remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
-#        if remaining_hh_yield < min_hh_yield:
-#            stop_reason = "remaining signal yield insufficient"
-#            # remove the last bin edge and stop
-#            if len(bin_edges) > 1:
-#                bin_edges.pop()
-#            break
-#        # find the index of the event that would result in a hh yield increase of more than the expected
-#        # per-bin yield; this index would mark the start of the next bin given all constraints are met
-#        if remaining_hh_yield >= hh_yield_per_bin:
-#            threshold = hh_yield_binned + hh_yield_per_bin
-#            next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
-#        else:
-#            # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
-#            next_idx = offset + np.where(rec.process[offset:] == process_map["hh_nominal"])[0][-1] + 1
-#        # advance the index until backgrounds constraints are met
-#        while next_idx < len(rec):
-#            counts_per_shift = {
-#                shift: [get_integral(rec[f"dy_{shift}_count_cs"], next_idx), # n_dy
-#                        get_integral(rec[f"tt_{shift}_count_cs"], next_idx), # n_tt
-#                        get_integral(rec[f"dy_{shift}_weight_cs"], next_idx), # y_dy
-#                        get_integral(rec[f"tt_{shift}_weight_cs"], next_idx)] # y_tt
-#                for shift in dy_shifts
-#            }
-#            # evaluate constraints
-#            # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
-#            #       on dy, and vice-versa
-#            constraints_met = {shift: (counts_per_shift[shift][1] >= 1 and
-#                                       counts_per_shift[shift][0] >= 1 and
-#                                       counts_per_shift[shift][1] + counts_per_shift[shift][0] >= 3 and
-#                                       counts_per_shift[shift][2] > 0 and
-#                                       counts_per_shift[shift][3] > 0)
-#                               for shift in dy_shifts}
-#            if all(constraints_met.values()):
-#                # TODO: maybe also check if the background conditions are just barely met and advance next_idx
-#                # to the middle between the current value and the next one that would change anything about the
-#                # background predictions; this might be more stable as the current implementation can highly
-#                # depend on the exact value of a single event (the one that tips the constraints over the edge
-#                # to fulfillment)
-#
-#                # bin found, stop
-#                break
-#            # constraints not met, check which shifts cause the problem
-#            failing_shifts = [shift for shift, met in constraints_met.items() if not met]
-#            
-#            process_names = f"dy_{failing_shifts[0]}_count_cs",f"tt_{failing_shifts[0]}_count_cs"
-#
-#            next_bkg_indices = np.where(
-#                ((rec.process[next_idx:] == process_names[0]) | (rec.process[next_idx:] == process_names[1]))
-#            )[0]
-#            if len(next_bkg_indices) == 0:
-#                # no more background events left, move to the last position and let the stopping condition 3
-#                # below handle the rest
-#                next_idx = len(rec)
-#            else:
-#                next_idx += next_bkg_indices[0] + 1
-#        else:
-#            # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
-#            # constraints; however, this should practically never happen
-#            stop_reason = "no more events left while trying to fulfill constraints"
-#            if len(bin_edges) > 1:
-#                bin_edges.pop()
-#            break
-#        # next_idx found, update values
-#        edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
-#        bin_edges.append(max(min(edge_value, x_max), x_min))
-#        hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
-#        offset = next_idx
-#
-#    # make sure the minimum is included
-#    if bin_edges[-1] != x_min:
-#        if len(bin_edges) > n_bins:
-#            raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
-#        bin_edges.append(x_min)
-#
-#    # reverse edges and optionally re-set n_bins
-#    bin_edges = sorted(set(bin_edges))
-#    return bin_edges, stop_reason
-#
-
-
-
-
-        
-        
-        
-        
+    return bin_edges, stop_reason, counts 
