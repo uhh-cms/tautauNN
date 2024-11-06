@@ -1020,7 +1020,7 @@ def _write_datacard(
                 bin_edges, stop_reason, bin_counts = flats_systs(hh_shifts=hh_shifts,
                                                                  tt_shifts=tt_shifts,
                                                                  dy_shifts=dy_shifts,
-                                                                 error_target=0.25, # changed from 1
+                                                                 error_target=1, #0.25, # changed from 1
                                                                  n_bins=n_bins,
                                                                  x_min=x_min,
                                                                  x_max=x_max)
