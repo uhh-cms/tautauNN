@@ -6,6 +6,7 @@ import os
 import re
 import time
 import itertools
+import hashlib
 from collections import defaultdict
 
 import luigi
@@ -436,6 +437,128 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 _default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 
     
+class GetEfficiencies(MultiSkimTask, EvaluationParameters):
+
+    default_store = "$TN_STORE_DIR_MARCEL"
+
+    categories = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
+    )
+    variable = luigi.Parameter(
+        default="pdnn_m{mass}_s{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
+    )
+    parallel_read = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for reading; default: 4",
+    )
+    parallel_write = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for writing; default: 4",
+    )
+    output_suffix = luigi.Parameter(
+        default=law.NO_STR,
+        description="suffix to append to the output directory; default: ''",
+    )
+    rewrite_existing = luigi.BoolParameter(
+        default=False,
+        significant=False,
+        description="whether to rewrite existing datacards; default: False",
+    )
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
+        self._card_names = None
+
+    
+    @property
+    def card_names(self):
+        if self._card_names is None:
+            from tautaunn.write_datacards_stack import expand_categories
+            categories = expand_categories(self.categories)
+            self._card_names = [
+                self.card_pattern.format(category=category, spin=spin, mass=mass)
+                for spin, mass, category in itertools.product(self.spins, self.masses, categories)
+            ]
+
+        return self._card_names
+
+
+    def store_parts(self):
+        parts = super().store_parts()
+        parts.insert_before("version", "ensemble", self.get_model_name())
+        return parts
+
+
+    def output(self):
+        # prepare the output directory
+        # create a hash from the passed categories
+        
+        h = hashlib.sha256(str(self.categories).encode("utf-8")).hexdigest()[:10]
+        d = self.local_target(h, dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.path
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]: 
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
+
+        return law.LocalFileTarget(d.child("efficiencies.json", type="f"))
+
+    def run(self):
+        # load the datacard creating function
+        from tautaunn.get_efficiency import write_datacards
+
+        # prepare inputs
+        inp = self.input()
+
+        # prepare skim and eval directories, and samples to use per
+        skim_directories = defaultdict(list)
+        # hardcode the eval directories for now
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "gpfs") 
+        eval_directories = {}
+        for skim_name in self.skim_names:
+            sample = cfg.get_sample(skim_name, silent=True)
+            if sample is None:
+                sample_name, skim_year = self.split_skim_name(skim_name)
+                sample = cfg.Sample(sample_name, year=skim_year)
+            skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
+            if sample.year not in eval_directories:
+                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+                
+        # define arguments
+        datacard_kwargs = dict(
+            spin=list(self.spins),
+            mass=list(self.masses),
+            category=self.categories,
+            skim_directories=skim_directories,
+            eval_directories=eval_directories,
+            output_directory=self.output().abs_dirname,
+            output_pattern=self.card_pattern,
+            variable_pattern=self.variable,
+            # force using all samples, disabling the feature to select a subset
+            # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
+            n_parallel_read=self.parallel_read,
+            n_parallel_write=self.parallel_write,
+            cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
+            skip_existing=not self.rewrite_existing,
+        )
+
+        # create the cards
+        write_datacards(**datacard_kwargs)
+
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     default_store = "$TN_STORE_DIR_MARCEL"
