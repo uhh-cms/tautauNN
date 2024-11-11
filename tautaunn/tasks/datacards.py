@@ -574,7 +574,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flats",
-        choices=("equal", "flats", "flatsguarded", "flats_systs", "flats_systs_st", "non_res_like"),
+        choices=("equal", "flats", "flatsguarded", "flats_systs", "non_res_like"),
         description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
     )
     binning_file = luigi.Parameter(

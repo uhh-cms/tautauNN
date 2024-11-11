@@ -271,12 +271,32 @@ def flatsguarded(hh_values: ak.Array,
 def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 dy_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 tt_shifts: dict[str, Tuple[ak.Array, ak.Array]],
+                all_bkgds:  Tuple[ak.Array, ak.Array],
                 yield_target: float=1e-5,
                 error_target: float=1.,
                 n_bins: int=10,
                 x_min: float=0.,
                 x_max: float=1.,):
     
+
+    def add_bkgd_driven_bins(bin_edges,all_bkgds_scores,all_bkgds_weights):
+        bin_edges_arr = np.asarray(bin_edges)
+        if np.sum(np.logical_and(bin_edges_arr>x_min, bin_edges_arr<0.8)) >= 3:
+            return bin_edges
+        else:
+            additional_edges = 3-np.sum(np.logical_and(bin_edges_arr>x_min, bin_edges_arr<0.8))
+            # bin_edges should be reverse sorted at this point
+            upper_edge, lower_edge = bin_edges[-2:]
+            binmask = np.logical_and(all_bkgds_scores<=upper_edge, all_bkgds_scores>lower_edge)
+            last_yield = np.sum(all_bkgds_weights[binmask])
+            yield_cs = np.cumsum(all_bkgds_weights)
+            # set additional edges such that we still have increasing bkgd yields
+            additional_edges = np.min([additional_edges, int(yield_cs[-1]//last_yield)])
+            for i in range(additional_edges):
+                bin_edges.append(all_bkgds_scores[yield_cs>(i+1)*last_yield][0])
+            return bin_edges
+        
+
     assert dy_shifts.keys() == tt_shifts.keys() == hh_shifts.keys() 
     assert all([len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys()])
     assert all([len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys()])
@@ -286,6 +306,7 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
         hh_shifts[key] = sort_vals_and_weights(hh_shifts[key][0], hh_shifts[key][1])
         dy_shifts[key] = sort_vals_and_weights(dy_shifts[key][0], dy_shifts[key][1]) 
         tt_shifts[key] = sort_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1]) 
+    all_bkgds = sort_vals_and_weights(*all_bkgds)
 
     required_signal_yield = np.max([np.sum(hh_shifts["nominal"][1])/n_bins,1e-5])
     # create a combined array of dy and tt values and squared weights cumulatively summed
@@ -390,6 +411,7 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
             tt_shifts[key] = update_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1], next_edge)
             dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0], dy_tt_shifts[key][1], next_edge)
 
+    bin_edges = add_bkgd_driven_bins(bin_edges, *all_bkgds)
 
     format_bins = lambda x: float(x) #round(x - 1e-6, 6)
     bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])

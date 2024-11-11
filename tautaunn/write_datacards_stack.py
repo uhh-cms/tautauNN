@@ -771,7 +771,7 @@ def _write_datacard(
         else:
             n_bins, x_min, x_max, binning_algo = binning
         assert x_max > x_min
-        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "flats_systs_st", "non_res_like"}
+        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "non_res_like"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -898,7 +898,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'flats_systs_st', 'non_res_like',):
+    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like',):
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1004,15 +1004,29 @@ def _write_datacard(
             hh_shifts = OrderedDict()
             tt_shifts = OrderedDict()
             dy_shifts = OrderedDict()
+            all_bkgds = {} 
             for nuisance in shape_nuisances.values():
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
                     hh_values, hh_weights = get_values_and_weights(signal_process_name, nuisance, direction, br_hh_bbtt)
                     tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
                     dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
+                    if key == "nominal":
+                        all_bkgds["TT"] = tt_values, tt_weights
+                        all_bkgds["DY"] = dy_values, dy_weights
                     tt_shifts[key] = (tt_values, tt_weights)
                     dy_shifts[key] = (dy_values, dy_weights)
                     hh_shifts[key] = (hh_values, hh_weights)
+            # add all other bkgd processes to all_bkgds (just nominal)
+            for proc in processes:
+                if ((processes[proc].get("data", False)) or (processes[proc].get("signal", False)) or (proc == "QCD")):
+                    continue
+                elif proc in ["TT", "DY"]:
+                    continue
+                all_bkgds[proc] = get_values_and_weights(proc)
+            all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
+            all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
+            
             if len(hh_values) == 0:
                 print(f"no signal events found in ({category},{spin},{mass})")
                 bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
@@ -1020,6 +1034,7 @@ def _write_datacard(
                 bin_edges, stop_reason, bin_counts = flats_systs(hh_shifts=hh_shifts,
                                                                  tt_shifts=tt_shifts,
                                                                  dy_shifts=dy_shifts,
+                                                                 all_bkgds=(all_bkgds_values, all_bkgds_weights),
                                                                  error_target=1, #0.25, # changed from 1
                                                                  n_bins=n_bins,
                                                                  x_min=x_min,
