@@ -1,0 +1,3 @@
+[submodule "modules/datacard_utils"]
+	path = modules/datacard_utils
+	url = git@github.com:pkausw/datacard_utils.git
