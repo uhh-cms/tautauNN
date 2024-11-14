@@ -14,14 +14,18 @@ def yield_requirement(bkgd_values,bkgd_weights, target_val=1e-4):
         return bkgd_values[mask][0]
 
 
+def calc_rel_error(weights):
+    return np.sqrt(np.sum(weights**2))/np.sum(weights)
+
+
 def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
     bkgd_w_cs = np.cumsum(bkgd_weights)
     bkgd_w_cs_2 = np.cumsum(bkgd_weights**2)
-    neg_mask = bkgd_w_cs>0
-    bkgd_values = bkgd_values[neg_mask]
-    bkgd_w_cs = bkgd_w_cs[neg_mask]
-    bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
-    rel_error = np.sqrt(bkgd_w_cs_2/bkgd_w_cs)
+    #neg_mask = bkgd_w_cs>0
+    #bkgd_values = bkgd_values[neg_mask]
+    #bkgd_w_cs = bkgd_w_cs[neg_mask]
+    #bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
+    rel_error = np.sqrt(bkgd_w_cs_2)/bkgd_w_cs
     mask = rel_error<target_val
     if not any(mask):
         #print(f"error requirement cannot be reached. returning the min")
@@ -42,8 +46,6 @@ def update_vals_and_weights(vals, weights, edge):
     return vals[mask], weights[mask]
 
 
-def calc_rel_error(weights):
-    return np.sqrt(np.sum(weights**2))/np.sum(weights)
 
 
 def fill_counts(counts, next_edge, hh_shifts, dy_shifts, tt_shifts):
@@ -279,22 +281,57 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 x_max: float=1.,):
     
 
-    def add_bkgd_driven_bins(bin_edges,all_bkgds_scores,all_bkgds_weights):
+    def add_bkgd_driven_bins(bin_edges,
+                             dy_shifts,
+                             tt_shifts,
+                             all_bkgds_scores,
+                             all_bkgds_weights,
+                             x_min=0.):
+        if bin_edges[-1] == x_min:
+            bin_edges = bin_edges[:-1] 
         bin_edges_arr = np.asarray(bin_edges)
-        if np.sum(np.logical_and(bin_edges_arr>x_min, bin_edges_arr<0.8)) >= 3:
+        if np.sum(bin_edges_arr<0.8) >= 3:
+            bin_edges.append(x_min)
             return bin_edges
         else:
-            additional_edges = 3-np.sum(np.logical_and(bin_edges_arr>x_min, bin_edges_arr<0.8))
+            additional_edges = 3-np.sum(bin_edges_arr<0.8)
             # bin_edges should be reverse sorted at this point
-            upper_edge, lower_edge = bin_edges[-2:]
-            binmask = np.logical_and(all_bkgds_scores<=upper_edge, all_bkgds_scores>lower_edge)
+            binmask = np.logical_and(all_bkgds_scores<bin_edges_arr[-2], all_bkgds_scores>=bin_edges_arr[-1])
             last_yield = np.sum(all_bkgds_weights[binmask])
-            yield_cs = np.cumsum(all_bkgds_weights)
             # set additional edges such that we still have increasing bkgd yields
-            additional_edges = np.min([additional_edges, int(yield_cs[-1]//last_yield)])
+            last_error = calc_rel_error(all_bkgds_weights[binmask])
+            remaining_scores = all_bkgds_scores[all_bkgds_scores<bin_edges_arr[-1]]
+            remaining_weights = all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]
+            remaining_w_cs = np.cumsum(remaining_weights)
+            # we also need to make sure that enough dy and tt events are left
+            # per bin at least  25 dy and 25 tt events
+            dy_left = np.min([np.sum(dy_shifts[key][0] < bin_edges_arr[-1]) for key in dy_shifts.keys()])
+            tt_left = np.min([np.sum(tt_shifts[key][0] < bin_edges_arr[-1]) for key in tt_shifts.keys()])
+            additional_edges = int(np.min([additional_edges, int((dy_left//25)-1), int((tt_left//25)-1)]))
+            additional_edges = int(np.min([additional_edges, int((remaining_w_cs[-1]//(2*last_yield))-1)]))
             for i in range(additional_edges):
-                bin_edges.append(all_bkgds_scores[yield_cs>(i+1)*last_yield][0])
-            return bin_edges
+                yield_edge = remaining_scores[remaining_w_cs>(i+1)*2*last_yield][0]
+                error_edge = error_requirement(all_bkgds_scores, all_bkgds_weights, target_val=last_error)
+                next_edge = np.min([0.79,yield_edge, error_edge]) 
+                # we want to make sure we still have 25 dy and 25 tt events per bin (somewhat arbitrary)
+                dy_edges = [dy_shifts[key][0][int((i+1)*24)] for key in dy_shifts.keys()]
+                tt_edges = [tt_shifts[key][0][int((i+1)*24)] for key in tt_shifts.keys()]
+                next_edge = np.min([next_edge, np.min(dy_edges), np.min(tt_edges)])
+                # update the last_yield and last_error
+                binmask = np.logical_and(all_bkgds_scores<bin_edges_arr[-1], all_bkgds_scores>=next_edge)
+                last_yield = np.sum(all_bkgds_weights[binmask])
+                yield_left = np.sum(all_bkgds_weights[all_bkgds_scores<next_edge])
+                dy_left = np.min([np.sum(dy_shifts[key][0] < next_edge) for key in dy_shifts.keys()])
+                tt_left = np.min([np.sum(tt_shifts[key][0] < next_edge) for key in tt_shifts.keys()])
+                if (yield_left < 2*last_yield) or (dy_left < 25) or (tt_left < 25):
+                    break
+                if error_requirement(all_bkgds_scores[all_bkgds_scores<next_edge],
+                                     all_bkgds_weights[all_bkgds_scores<next_edge],
+                                     target_val=last_error) == 1:
+                    break
+                bin_edges_arr = np.append(bin_edges_arr, next_edge)
+            bin_edges_arr = np.append(bin_edges_arr, x_min)
+            return list(bin_edges_arr)
         
 
     assert dy_shifts.keys() == tt_shifts.keys() == hh_shifts.keys() 
@@ -411,7 +448,7 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
             tt_shifts[key] = update_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1], next_edge)
             dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0], dy_tt_shifts[key][1], next_edge)
 
-    bin_edges = add_bkgd_driven_bins(bin_edges, *all_bkgds)
+    bin_edges = add_bkgd_driven_bins(bin_edges, dy_shifts, tt_shifts, *all_bkgds)
 
     format_bins = lambda x: float(x) #round(x - 1e-6, 6)
     bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
