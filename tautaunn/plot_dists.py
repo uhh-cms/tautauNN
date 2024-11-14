@@ -278,31 +278,31 @@ def plot_mc_data_sig(data_hist: Hist,
     max_y = sum(bkgd_stack).values().max()
     #ax1.set_ylim((0.1*min_y, 100 * max_y))
     #ax1.set_ylim((min_y, 10 * max_y))
-    ax1.set_ylim((1e-2, 100 * max_y))
+    ax1.set_ylim((1e-2, 10 * max_y))
     ax1.set_xlabel("")
     ax1.set_ylabel("Events")
     
     ax2.set_xlabel("pDNN Score")
     ax2.set_ylabel("Data/MC")
-    ratio_hist = Hist.new.Var(data_hist.axes[0].edges, name="ratio").Weight()
-    ratio_hist.view().value = data_hist.values()/sum(bkgd_stack).values()
-    ratio_hist.view().variance = np.divide(np.sqrt(data_hist.variances()), data_hist.values())
+    #ratio_hist = Hist.new.Var(data_hist.axes[0].edges, name="ratio").Weight()
+    #ratio_hist.view().value = data_hist.values()/sum(bkgd_stack).values()
+    #ratio_hist.view().variance = np.divide(np.sqrt(data_hist.variances()), data_hist.values())
 
-    ratio_hist.view().value[~mask] = np.nan
-    ratio_hist.variances()[~mask] = np.nan
+    #ratio_hist.view().value[~mask] = np.nan
+    #ratio_hist.variances()[~mask] = np.nan
 
     ax2.hlines(1, 0, 1, color='black', linestyle='--')
-    ax2.hlines([0.5, 1.5], 0, 1, color='grey', linestyle='--')
+    ax2.hlines([0.75, 1.25], 0, 1, color='grey', linestyle='--')
     hep.histplot(data_hist.values()/sum(bkgd_stack).values(),
                  data_hist.axes[0].edges,
-                 yerr=np.sqrt(data_hist.values())/sum(bkgd_stack).values(),
+                 yerr=np.sqrt(data_hist.variances())/sum(bkgd_stack).values(),
                  ax=ax2, histtype='errorbar', color='black')
     #ax2.errorbar(ratio_hist.axes[0].centers, ratio_hist.values(), yerr=ratio_hist.variances(), fmt='o', color='black')
     #plot_mc_stat(bkgd_stack, ax2, mode="ratio")
     #yerr = ratio_uncertainty(data_hist.values(),sum(bkgd_stack).values(), "poisson-ratio")
     yerr = np.divide(np.sqrt(stack_error_hist.variances()), stack_error_hist.values())
     ax2.stairs(1+yerr, edges=data_hist.axes[0].edges, baseline=1-yerr, **errps)
-    ax2.set_ylim(0.4, 1.6)
+    ax2.set_ylim(0.7, 1.3)
     ax2.set_xlim(0, 1)
     ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
     if not Path(savename).parent.exists():
