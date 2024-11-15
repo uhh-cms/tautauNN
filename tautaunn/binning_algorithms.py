@@ -21,10 +21,10 @@ def calc_rel_error(weights):
 def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
     bkgd_w_cs = np.cumsum(bkgd_weights)
     bkgd_w_cs_2 = np.cumsum(bkgd_weights**2)
-    #neg_mask = bkgd_w_cs>0
-    #bkgd_values = bkgd_values[neg_mask]
-    #bkgd_w_cs = bkgd_w_cs[neg_mask]
-    #bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
+    neg_mask = bkgd_w_cs>0
+    bkgd_values = bkgd_values[neg_mask]
+    bkgd_w_cs = bkgd_w_cs[neg_mask]
+    bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
     rel_error = np.sqrt(bkgd_w_cs_2)/bkgd_w_cs
     mask = rel_error<target_val
     if not any(mask):
@@ -294,42 +294,28 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
             bin_edges.append(x_min)
             return bin_edges
         else:
-            additional_edges = 3-np.sum(bin_edges_arr<0.8)
-            # bin_edges should be reverse sorted at this point
-            binmask = np.logical_and(all_bkgds_scores<bin_edges_arr[-2], all_bkgds_scores>=bin_edges_arr[-1])
+            binmask = np.logical_and(all_bkgds_scores>=bin_edges_arr[-1], all_bkgds_scores<bin_edges_arr[-2])
             last_yield = np.sum(all_bkgds_weights[binmask])
-            # set additional edges such that we still have increasing bkgd yields
-            last_error = calc_rel_error(all_bkgds_weights[binmask])
+            additional_edges = 3 - np.sum(bin_edges_arr<0.8)
             remaining_scores = all_bkgds_scores[all_bkgds_scores<bin_edges_arr[-1]]
             remaining_weights = all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]
             remaining_w_cs = np.cumsum(remaining_weights)
-            # we also need to make sure that enough dy and tt events are left
-            # per bin at least  25 dy and 25 tt events
-            dy_left = np.min([np.sum(dy_shifts[key][0] < bin_edges_arr[-1]) for key in dy_shifts.keys()])
-            tt_left = np.min([np.sum(tt_shifts[key][0] < bin_edges_arr[-1]) for key in tt_shifts.keys()])
-            additional_edges = int(np.min([additional_edges, int((dy_left//25)-1), int((tt_left//25)-1)]))
-            additional_edges = int(np.min([additional_edges, int((remaining_w_cs[-1]//(2*last_yield))-1)]))
-            for i in range(additional_edges):
-                yield_edge = remaining_scores[remaining_w_cs>(i+1)*2*last_yield][0]
-                error_edge = error_requirement(all_bkgds_scores, all_bkgds_weights, target_val=last_error)
-                next_edge = np.min([0.79,yield_edge, error_edge]) 
-                # we want to make sure we still have 25 dy and 25 tt events per bin (somewhat arbitrary)
-                dy_edges = [dy_shifts[key][0][int((i+1)*24)] for key in dy_shifts.keys()]
-                tt_edges = [tt_shifts[key][0][int((i+1)*24)] for key in tt_shifts.keys()]
-                next_edge = np.min([next_edge, np.min(dy_edges), np.min(tt_edges)])
-                # update the last_yield and last_error
-                binmask = np.logical_and(all_bkgds_scores<bin_edges_arr[-1], all_bkgds_scores>=next_edge)
-                last_yield = np.sum(all_bkgds_weights[binmask])
-                yield_left = np.sum(all_bkgds_weights[all_bkgds_scores<next_edge])
-                dy_left = np.min([np.sum(dy_shifts[key][0] < next_edge) for key in dy_shifts.keys()])
-                tt_left = np.min([np.sum(tt_shifts[key][0] < next_edge) for key in tt_shifts.keys()])
-                if (yield_left < 2*last_yield) or (dy_left < 25) or (tt_left < 25):
+            #additional_edges = min(additional_edges, int(np.floor(np.log2(remaining_yield // last_yield))))
+            while additional_edges > 0:
+                if np.sum(all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]) < 2*last_yield:
                     break
-                if error_requirement(all_bkgds_scores[all_bkgds_scores<next_edge],
-                                     all_bkgds_weights[all_bkgds_scores<next_edge],
-                                     target_val=last_error) == 1:
+                yield_edge = remaining_scores[np.searchsorted(remaining_w_cs, last_yield*2)]
+                error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.01)
+                if error_edge == 1:
                     break
+                next_edge = min(yield_edge, error_edge)
+                
+                last_yield = np.sum(remaining_weights[remaining_scores>=next_edge])
+                remaining_scores = all_bkgds_scores[all_bkgds_scores<next_edge]
+                remaining_weights = all_bkgds_weights[all_bkgds_scores<next_edge]
+                remaining_w_cs = np.cumsum(remaining_weights)
                 bin_edges_arr = np.append(bin_edges_arr, next_edge)
+                additional_edges -= 1
             bin_edges_arr = np.append(bin_edges_arr, x_min)
             return list(bin_edges_arr)
         
