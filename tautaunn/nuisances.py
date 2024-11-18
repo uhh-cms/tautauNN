@@ -502,6 +502,10 @@ RateNuisance.new(
         RateEffect(process="!QCD", year="2018", effect="1.020"),
     ],
 )
+RateNuisance.new(
+    name="Muon_WP_mismatch",
+    rate_effects=[RateEffect(process="!QCD", effect="1.05")],
+)
 
 
 def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_percent: float) -> None:
