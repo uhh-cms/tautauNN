@@ -19,12 +19,12 @@ def calc_rel_error(weights):
 
 
 def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
-    bkgd_w_cs = np.cumsum(bkgd_weights)
+    bkgd_w_cs = np.cumsum(np.abs(bkgd_weights))
     bkgd_w_cs_2 = np.cumsum(bkgd_weights**2)
-    neg_mask = bkgd_w_cs>0
-    bkgd_values = bkgd_values[neg_mask]
-    bkgd_w_cs = bkgd_w_cs[neg_mask]
-    bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
+    #neg_mask = bkgd_w_cs>0
+    #bkgd_values = bkgd_values[neg_mask]
+    #bkgd_w_cs = bkgd_w_cs[neg_mask]
+    #bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
     rel_error = np.sqrt(bkgd_w_cs_2)/bkgd_w_cs
     mask = rel_error<target_val
     if not any(mask):
@@ -44,8 +44,6 @@ def sort_vals_and_weights(values, weights):
 def update_vals_and_weights(vals, weights, edge):
     mask = vals < edge
     return vals[mask], weights[mask]
-
-
 
 
 def fill_counts(counts, next_edge, hh_shifts, dy_shifts, tt_shifts):
@@ -305,17 +303,19 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 if np.sum(all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]) < 2*last_yield:
                     break
                 yield_edge = remaining_scores[np.searchsorted(remaining_w_cs, last_yield*2)]
-                error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.01)
+                error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.05)
                 if error_edge == 1:
                     break
-                next_edge = min(yield_edge, error_edge)
-                
+                next_edge = min([0.75,yield_edge, error_edge])
                 last_yield = np.sum(remaining_weights[remaining_scores>=next_edge])
                 remaining_scores = all_bkgds_scores[all_bkgds_scores<next_edge]
                 remaining_weights = all_bkgds_weights[all_bkgds_scores<next_edge]
                 remaining_w_cs = np.cumsum(remaining_weights)
-                bin_edges_arr = np.append(bin_edges_arr, next_edge)
-                additional_edges -= 1
+                if remaining_w_cs[-1] > 2*last_yield:
+                    bin_edges_arr = np.append(bin_edges_arr, next_edge)
+                    additional_edges -= 1
+                else:
+                    break
             bin_edges_arr = np.append(bin_edges_arr, x_min)
             return list(bin_edges_arr)
         
