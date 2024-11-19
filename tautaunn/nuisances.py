@@ -503,8 +503,8 @@ RateNuisance.new(
     ],
 )
 RateNuisance.new(
-    name="Muon_WP_mismatch",
-    rate_effects=[RateEffect(process="!QCD", effect="1.05")],
+    name="CMS_bbtt_m_wp_mismatch",
+    rate_effects=[RateEffect(process="!QCD", channel="mutau", effect="1.05")],
 )
 
 
