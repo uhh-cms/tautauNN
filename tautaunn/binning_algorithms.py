@@ -4,7 +4,7 @@ import itertools
 from typing import List, Tuple
 
 
-def yield_requirement(bkgd_values,bkgd_weights, target_val=1e-4):
+def yield_requirement(bkgd_values,bkgd_weights, target_val=1e-5):
     bkgd_weights_cs = np.cumsum(bkgd_weights) 
     mask = bkgd_weights_cs>target_val
     if not any(mask):
@@ -280,8 +280,6 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
     
 
     def add_bkgd_driven_bins(bin_edges,
-                             dy_shifts,
-                             tt_shifts,
                              all_bkgds_scores,
                              all_bkgds_weights,
                              x_min=0.):
@@ -434,8 +432,112 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
             tt_shifts[key] = update_vals_and_weights(tt_shifts[key][0], tt_shifts[key][1], next_edge)
             dy_tt_shifts[key] = update_vals_and_weights(dy_tt_shifts[key][0], dy_tt_shifts[key][1], next_edge)
 
-    bin_edges = add_bkgd_driven_bins(bin_edges, dy_shifts, tt_shifts, *all_bkgds)
+    bin_edges = add_bkgd_driven_bins(bin_edges, *all_bkgds)
 
     format_bins = lambda x: float(x) #round(x - 1e-6, 6)
     bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
     return bin_edges, stop_reason, counts 
+
+
+def flats(hh: Tuple[ak.Array, ak.Array],
+          dy: Tuple[ak.Array, ak.Array],
+          tt: Tuple[ak.Array, ak.Array],
+          all_bkgds: Tuple[ak.Array, ak.Array],
+          n_bins: int=10,
+          x_min: float=0.,
+         x_max: float=1.):
+
+    """ 
+        just a flat-s without taking into account the systematics 
+        (for debugging purposes)
+    """
+
+    def add_bkgd_driven_bins(bin_edges,
+                             all_bkgds_scores,
+                             all_bkgds_weights,
+                             x_min=0.):
+        if bin_edges[-1] == x_min:
+            bin_edges = bin_edges[:-1] 
+        bin_edges_arr = np.asarray(bin_edges)
+        if np.sum(bin_edges_arr<0.5) >= 3:
+            bin_edges.append(x_min)
+            return bin_edges
+        else:
+            binmask = np.logical_and(all_bkgds_scores>=bin_edges_arr[-1], all_bkgds_scores<bin_edges_arr[-2])
+            last_yield = np.sum(all_bkgds_weights[binmask])
+            additional_edges = 3 - np.sum(bin_edges_arr<0.5)
+            remaining_scores = all_bkgds_scores[all_bkgds_scores<bin_edges_arr[-1]]
+            remaining_weights = all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]
+            remaining_w_cs = np.cumsum(remaining_weights)
+            #additional_edges = min(additional_edges, int(np.floor(np.log2(remaining_yield // last_yield))))
+            while additional_edges > 0:
+                if np.sum(all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]) < 2*last_yield:
+                    break
+                yield_edge = remaining_scores[np.searchsorted(remaining_w_cs, last_yield*2)]
+                error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.05)
+                if error_edge == 1:
+                    break
+                next_edge = min([0.5,yield_edge, error_edge])
+                last_yield = np.sum(remaining_weights[remaining_scores>=next_edge])
+                remaining_scores = all_bkgds_scores[all_bkgds_scores<next_edge]
+                remaining_weights = all_bkgds_weights[all_bkgds_scores<next_edge]
+                remaining_w_cs = np.cumsum(remaining_weights)
+                if remaining_w_cs[-1] > 2*last_yield:
+                    bin_edges_arr = np.append(bin_edges_arr, next_edge)
+                    additional_edges -= 1
+                else:
+                    break
+            bin_edges_arr = np.append(bin_edges_arr, x_min)
+            return list(bin_edges_arr)
+
+    signal = sort_vals_and_weights(*signal)
+    dy = sort_vals_and_weights(*dy)
+    tt = sort_vals_and_weights(*tt)
+    dy_tt = sort_vals_and_weights(ak.concatenate([dy[0], tt[0]]),
+                                  ak.concatenate([dy[1], tt[1]]))
+    all_bkgds = sort_vals_and_weights(*all_bkgds)
+    
+    bin_edges = [1.]
+    stop_reason = ""
+    signal_cs = np.cumsum(signal[1])
+    signal_yield_target = signal_cs[-1]/n_bins
+    while True:
+        error_edges = [error_requirement(dy[0],dy[1]),
+                       error_requirement(tt[0],tt[1]),
+                       error_requirement(dy_tt[0],dy_tt[1],target_val=0.5)]
+        if any(error_edges == 1):
+            # not enough events to fulfill error requirements
+            stop_reason = "not enough events to fulfill error requirements"
+            break
+        yield_edges = [yield_requirement(dy[0],dy[1]),
+                       yield_requirement(tt[0],tt[1]),
+                       yield_requirement(dy_tt[0],dy_tt[1])]
+        if any(yield_edges == 1):
+            # not enough events to fulfill yield requirements
+            stop_reason = "not enough events to fulfill yield requirements"
+            break
+        signal_edge = yield_requirement(signal[0],signal[1],target_val=signal_yield_target)
+        if signal_edge == 1:
+            # not enough events to fulfill signal yield requirements
+            stop_reason = "not enough events to fulfill signal yield requirements"
+            break
+        next_edge = np.min([error_edges,yield_edges,signal_edge])
+        if len(bin_edges) == 1:
+            signal_yield_target = np.sum(signal[1][signal[0]>=next_edge])
+        bin_edges.append(next_edge)
+        if len(bin_edges) == n_bins:
+            stop_reason = "n_bins reached"
+            break
+        # update the values and weights
+        signal = update_vals_and_weights(*signal, next_edge)
+        dy = update_vals_and_weights(*dy, next_edge)
+        tt = update_vals_and_weights(*tt, next_edge)
+        dy_tt = update_vals_and_weights(*dy_tt, next_edge)
+
+    bin_edges = add_bkgd_driven_bins(bin_edges, *all_bkgds)
+
+    format_bins = lambda x: round(x - 1e-6, 6)
+    bin_edges = sorted([format_bins(i) if ((i != x_min) and (i != x_max)) else i for i in bin_edges])
+    return bin_edges, stop_reason
+
+

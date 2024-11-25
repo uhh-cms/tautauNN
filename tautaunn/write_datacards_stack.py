@@ -45,7 +45,7 @@ from tautaunn.config import masses, spins, klub_index_columns, luminosities, bta
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline 
 
-from tautaunn.binning_algorithms import flats_systs, flatsguarded
+from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
 
 
 #
@@ -965,24 +965,24 @@ def _write_datacard(
                 return (None, None, None)
             # sort by increasing value
             hh_values, hh_weights = sort_values_and_weights(hh_values, hh_weights)
-            # compute quantiles
-            weighted_quantiles = (
-                (np.cumsum(hh_weights) - 0.5 * hh_weights) /
-                np.sum(hh_weights)
-            )
-            # obtain edges
-            thresholds = np.linspace(x_min, x_max, n_bins + 1)[1:-1]
-            inner_edges = np.interp(thresholds, weighted_quantiles, hh_values)
-            bin_edges = [x_min] + inner_edges.tolist() + [x_max]
-            # floating point protection, round to 5 digits and sort
-            bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
-            _n_bins_actual = len(bin_edges) - 1
-            if _n_bins_actual < n_bins:
-                print(
-                    f"  reducing n_bins from {n_bins} to {_n_bins_actual} in ({category},{spin},{mass}) "
-                    f"due to edge value rounding in process {signal_process_name}",
-                )
-                n_bins = _n_bins_actual
+            tt_values, tt_weights = get_values_and_weights("TT")
+            dy_values, dy_weights = get_values_and_weights("DY")
+            all_bkgds = {} 
+            for proc in processes:
+                if ((processes[proc].get("data", False)) or (processes[proc].get("signal", False)) or (proc == "QCD")):
+                    continue
+                elif proc in ["TT", "DY"]:
+                    continue
+                all_bkgds[proc] = get_values_and_weights(proc)
+            all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
+            all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
+            bin_edges, stop_reason = flats(hh=(hh_values, hh_weights),
+                                           tt=(tt_values, tt_weights),
+                                           dy=(dy_values, dy_weights),
+                                           all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                                           n_bins=n_bins,
+                                           x_min=x_min,
+                                           x_max=x_max)
         elif binning_algo == "flatsguarded":  # flatsguarded
             #
             # step 1: data preparation
