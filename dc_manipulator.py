@@ -107,39 +107,18 @@ def remove_minor_bkgs(harvester):
                 harvester.cp().era([era]).PrintProcs()
                 print(("="*130))
 
-# def load_datacards(groups, harvester):
-
-#     cardpaths = {}
-#     for group in groups:
-        
-#         cards = glob(group)
-#         for f in cards:
-#             print(("loading '{}'".format(f)))
-#             harvester.ParseDatacard(f)
-#             eras = harvester.era_set()
-#             if len(eras) == 0:
-#                 cardpaths["all_years"] = [f]
-#             for e in eras:
-#                 if e in f:
-#                     if not e in cardpaths:
-#                         cardpaths[e] = []
-#                     print(("saving path '{}' for era '{}'".format(f, e)))
-#                     cardpaths[e].append(f)
-#     print((json.dumps(cardpaths, indent = 4)))
-#     # exit()
-#     return cardpaths
-
 def load_datacards(groups, harvester):
 
     cardpaths = {}
     for group in groups:
-        template, wildcard = group.split(":")
-        cards = glob(wildcard)
-        print(("template: {}".format(template)))
+        
+        cards = glob(group)
         for f in cards:
             print(("loading '{}'".format(f)))
-            harvester.ParseDatacard(f, template)
+            harvester.ParseDatacard(f)
             eras = harvester.era_set()
+            if len(eras) == 0:
+                cardpaths["all_years"] = [f]
             for e in eras:
                 if e in f:
                     if not e in cardpaths:
@@ -149,6 +128,27 @@ def load_datacards(groups, harvester):
     print((json.dumps(cardpaths, indent = 4)))
     # exit()
     return cardpaths
+
+# def load_datacards(groups, harvester):
+
+#     cardpaths = {}
+#     for group in groups:
+#         template, wildcard = group.split(":")
+#         cards = glob(wildcard)
+#         print(("template: {}".format(template)))
+#         for f in cards:
+#             print(("loading '{}'".format(f)))
+#             harvester.ParseDatacard(f, template)
+#             eras = harvester.era_set()
+#             for e in eras:
+#                 if e in f:
+#                     if not e in cardpaths:
+#                         cardpaths[e] = []
+#                     print(("saving path '{}' for era '{}'".format(f, e)))
+#                     cardpaths[e].append(f)
+#     print((json.dumps(cardpaths, indent = 4)))
+#     # exit()
+#     return cardpaths
 
 def write_harvester(harvester, cardname, outfile, group_manipulator):
     # print(group_manipulator)
