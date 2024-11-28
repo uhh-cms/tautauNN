@@ -46,7 +46,8 @@ action() {
         export TN_STORE_DIR_MARCEL="/gpfs/dust/cms/user/riegerma/taunn_data/store"
         export TN_SKIMS_2016APV="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16APV"
         export TN_SKIMS_2016="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16"
-        export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17"
+        # export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17"
+        export TN_SKIMS_2017="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17_uhh_2017_v6_06Aug24/"
         export TN_SKIMS_2018="/gpfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL18"
         export TN_SLURM_FLAVOR="maxwell"
         export TN_SLURM_PARTITION="allgpu"
@@ -60,7 +61,8 @@ action() {
         export TN_STORE_DIR_MARCEL="/nfs/dust/cms/user/riegerma/taunn_data/store"
         export TN_SKIMS_2016APV="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16APV"
         export TN_SKIMS_2016="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16"
-        export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17"
+        # export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17"
+        export TN_SKIMS_2017="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17_uhh_2017_v6_06Aug24/"
         export TN_SKIMS_2018="/nfs/dust/cms/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL18"
         export TN_HTCONDOR_FLAVOR="naf"
         host_matched="true"
@@ -179,6 +181,7 @@ EOF
             "tensorboard_plugin_profile" \
             "numpy" \
             "scipy" \
+            "scinum" \
             "scikit-learn" \
             "nvidia-pyindex" \
             "nvidia-tensorrt" \
