@@ -456,6 +456,10 @@ def flats(hh: Tuple[ak.Array, ak.Array],
                              all_bkgds_scores,
                              all_bkgds_weights,
                              x_min=0.):
+        if len(bin_edges) < 2:
+            if x_min not in bin_edges:
+                bin_edges.append(x_min)
+            return bin_edges
         if bin_edges[-1] == x_min:
             bin_edges = bin_edges[:-1] 
         bin_edges_arr = np.asarray(bin_edges)
@@ -490,7 +494,7 @@ def flats(hh: Tuple[ak.Array, ak.Array],
             bin_edges_arr = np.append(bin_edges_arr, x_min)
             return list(bin_edges_arr)
 
-    signal = sort_vals_and_weights(*signal)
+    hh = sort_vals_and_weights(*hh)
     dy = sort_vals_and_weights(*dy)
     tt = sort_vals_and_weights(*tt)
     dy_tt = sort_vals_and_weights(ak.concatenate([dy[0], tt[0]]),
@@ -499,37 +503,37 @@ def flats(hh: Tuple[ak.Array, ak.Array],
     
     bin_edges = [1.]
     stop_reason = ""
-    signal_cs = np.cumsum(signal[1])
+    signal_cs = np.cumsum(hh[1])
     signal_yield_target = signal_cs[-1]/n_bins
     while True:
         error_edges = [error_requirement(dy[0],dy[1]),
                        error_requirement(tt[0],tt[1]),
                        error_requirement(dy_tt[0],dy_tt[1],target_val=0.5)]
-        if any(error_edges == 1):
+        if any([i == 1 for i in error_edges]):
             # not enough events to fulfill error requirements
             stop_reason = "not enough events to fulfill error requirements"
             break
         yield_edges = [yield_requirement(dy[0],dy[1]),
                        yield_requirement(tt[0],tt[1]),
                        yield_requirement(dy_tt[0],dy_tt[1])]
-        if any(yield_edges == 1):
+        if any([i == 1 for i in yield_edges]):
             # not enough events to fulfill yield requirements
             stop_reason = "not enough events to fulfill yield requirements"
             break
-        signal_edge = yield_requirement(signal[0],signal[1],target_val=signal_yield_target)
+        signal_edge = yield_requirement(hh[0],hh[1],target_val=signal_yield_target)
         if signal_edge == 1:
             # not enough events to fulfill signal yield requirements
             stop_reason = "not enough events to fulfill signal yield requirements"
             break
-        next_edge = np.min([error_edges,yield_edges,signal_edge])
+        next_edge = np.min([*error_edges,*yield_edges,signal_edge])
         if len(bin_edges) == 1:
-            signal_yield_target = np.sum(signal[1][signal[0]>=next_edge])
+            signal_yield_target = np.sum(hh[1][hh[0]>=next_edge])
         bin_edges.append(next_edge)
         if len(bin_edges) == n_bins:
             stop_reason = "n_bins reached"
             break
         # update the values and weights
-        signal = update_vals_and_weights(*signal, next_edge)
+        hh = update_vals_and_weights(*hh, next_edge)
         dy = update_vals_and_weights(*dy, next_edge)
         tt = update_vals_and_weights(*tt, next_edge)
         dy_tt = update_vals_and_weights(*dy_tt, next_edge)

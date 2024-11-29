@@ -729,18 +729,15 @@ def write_datacards(
             spin, mass, category = args[2:5]
             edges = res[2]
             stop_reason = res[-2]
-            bin_counts = res[-1]
+            #bin_counts = res[-1]
             key = f"{category}__s{spin}__m{mass}"
             # do not overwrite when edges are None (in case the datacard was skipped)
             if key in all_bin_edges and not edges:
                 continue
-            all_bin_edges[key] = edges, stop_reason, bin_counts
+            all_bin_edges[key] = edges, stop_reason#, bin_counts
         # write them
-        try:
-            with open(bin_edges_file, "w") as f:
-                json.dump(all_bin_edges, f, indent=4)
-        except:
-            from IPython import embed; embed()
+        with open(bin_edges_file, "w") as f:
+            json.dump(all_bin_edges, f, indent=4)
     return datacard_results
 
 
@@ -976,13 +973,17 @@ def _write_datacard(
                 all_bkgds[proc] = get_values_and_weights(proc)
             all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
             all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
-            bin_edges, stop_reason = flats(hh=(hh_values, hh_weights),
-                                           tt=(tt_values, tt_weights),
-                                           dy=(dy_values, dy_weights),
-                                           all_bkgds=(all_bkgds_values, all_bkgds_weights),
-                                           n_bins=n_bins,
-                                           x_min=x_min,
-                                           x_max=x_max)
+            if len(hh_values) == 0:
+                print(f"no signal events found in ({category},{spin},{mass})")
+                bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
+            else:
+                bin_edges, stop_reason = flats(hh=(hh_values, hh_weights),
+                                            tt=(tt_values, tt_weights),
+                                            dy=(dy_values, dy_weights),
+                                            all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                                            n_bins=n_bins,
+                                            x_min=x_min,
+                                            x_max=x_max)
         elif binning_algo == "flatsguarded":  # flatsguarded
             #
             # step 1: data preparation
@@ -1453,7 +1454,7 @@ def _write_datacard(
     os.chmod(abs_datacard_path, 0o664)
 
     # return output paths
-    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason, bin_counts
+    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason#, bin_counts
 
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
