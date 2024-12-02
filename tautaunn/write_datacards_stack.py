@@ -953,15 +953,18 @@ def category_factory(channel: str) -> dict[str, Callable]:
     @selector(needs=["tauH_mass", "bH_mass"])
     def sel_mass_window_res(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            (array.tauH_mass >= 20.0) &
-            (array.bH_mass >= 40.0)
+            (array.tauH_mass >= 15.0) &
+            (array.tauH_mass <= 130) &
+            (array.bH_mass >= 40.0) &
+            (array.bH_mass <= 270)
         )
 
-    @selector(needs=["tauH_mass"])
+    @selector(needs=["tauH_mass", "fatjet_softdropMass"])
     def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            (array.tauH_mass >= 20.0) &
-            (array.tauH_mass <= 130)
+            (array.tauH_mass >= 15.0) &
+            (array.tauH_mass <= 130) &
+            (array.fatjet_softdropMass <= 450.0)
         )
 
     @selector(
