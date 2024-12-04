@@ -17,7 +17,7 @@ import awkward as ak
 from pathlib import Path
 from tqdm import tqdm
 
-from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow
+from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
@@ -706,7 +706,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         write_datacards(**datacard_kwargs)
 
 
-class PlotDists(WriteDatacards,):
+class PlotDists(Task):
 
     datacards = law.CSVParameter(
         default=_default_categories,
