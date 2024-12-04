@@ -19,16 +19,11 @@ def calc_rel_error(weights):
 
 
 def error_requirement(bkgd_values,bkgd_weights, target_val=1.):
-    bkgd_w_cs = np.cumsum(np.abs(bkgd_weights))
+    bkgd_w_cs = np.cumsum(bkgd_weights)
     bkgd_w_cs_2 = np.cumsum(bkgd_weights**2)
-    #neg_mask = bkgd_w_cs>0
-    #bkgd_values = bkgd_values[neg_mask]
-    #bkgd_w_cs = bkgd_w_cs[neg_mask]
-    #bkgd_w_cs_2 = bkgd_w_cs_2[neg_mask]
     rel_error = np.sqrt(bkgd_w_cs_2)/bkgd_w_cs
-    mask = rel_error<target_val
+    mask = np.logical_and(rel_error<target_val, rel_error>0) 
     if not any(mask):
-        #print(f"error requirement cannot be reached. returning the min")
         return 1 # ignore this shift for req. 
     else:
         return bkgd_values[mask][0]
@@ -61,7 +56,7 @@ def fill_counts(counts, next_edge, hh_shifts, dy_shifts, tt_shifts):
     counts["TT"][2].append(calc_rel_error(tt_shifts["nominal"][1][tt_mask]).astype("float64"))
 
 
-def check_yield_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1e-4):
+def check_yield_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1e-5):
     mask = bkgd_values >= next_edge
     return np.sum(bkgd_weights[mask]) > target_val
 
@@ -72,10 +67,10 @@ def check_error_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1.)
 
 
 def get_conditions(dy_vals_weights, tt_vals_weights, next_edge, yield_target=1e-5, error_target=1.):
-    dy_conds = (check_yield_requirement(*dy_vals_weights, next_edge)
-                and check_error_requirement(*dy_vals_weights, next_edge))
-    tt_conds = (check_yield_requirement(*tt_vals_weights, next_edge)
-                and check_error_requirement(*tt_vals_weights, next_edge))
+    dy_conds = (check_yield_requirement(*dy_vals_weights, next_edge, yield_target)
+                and check_error_requirement(*dy_vals_weights, next_edge, error_target))
+    tt_conds = (check_yield_requirement(*tt_vals_weights, next_edge, yield_target)
+                and check_error_requirement(*tt_vals_weights, next_edge, error_target))
     return dy_conds, tt_conds
 
 
@@ -365,9 +360,7 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 next_edge = np.min([vals[y][0] for y, vals in zip(passing_yields, hh_vals)])
         # now apply the yield requirements
         yield_conds_not_met = True
-        # TODO: we should probably refactor the following block into a function
         while yield_conds_not_met:
-            # TODO: do this for all shifts?
             shifts_conds = {key: get_conditions(dy_shifts[key],tt_shifts[key],
                                                 next_edge, yield_target, error_target)
                             for key in dy_shifts.keys()}
@@ -375,9 +368,8 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 # current edge is fine
                 yield_conds_not_met = False
             else:
-                # first check if conditions are met for nominal
                 failing_shifts = [key for key, conds in shifts_conds.items() if not all(conds)]
-                shift = failing_shifts[0] # dy_shifts is an OrederedDict so it should always start with nominal
+                shift = failing_shifts[0]
                 # advance the edge
                 dy_conds, tt_conds = shifts_conds[shift]
                 if ((not dy_conds) and (not tt_conds)):

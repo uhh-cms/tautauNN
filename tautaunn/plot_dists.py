@@ -221,7 +221,7 @@ def plot_mc_data_sig(data_hist: Hist,
     # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # unblind all bins up to 0.8 
     if len(bin_edges) > 2:
-        mask = bin_edges[1:] < 0.8
+        mask = bin_edges[1:] < 0.8 #0.8
         if all(~mask):
             # unblind just the first bin
             mask = np.zeros_like(signal_hist.values(), dtype=bool)
