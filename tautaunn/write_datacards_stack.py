@@ -39,6 +39,7 @@ import numpy as np
 import awkward as ak
 import uproot
 import hist
+from scinum import Number
 
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps, klub_weight_columns
@@ -400,9 +401,10 @@ def get_cache_path(
     ], [])))
 
     # create a hash
+    # TODO: remove trailing path sep and resolve links to abs location
     h = [
-        transform_data_dir_cache(skim_directory),
-        transform_data_dir_cache(eval_directory),
+        transform_data_dir_cache(skim_directory),  # .rstrip(os.sep)
+        transform_data_dir_cache(eval_directory),  # .rstrip(os.sep)
         sel_baseline.str_repr.strip(),
         klub_columns,
         klub_extra_columns,
@@ -1132,7 +1134,7 @@ def _write_datacard(
             # actual qcd estimation
             if qcd_estimation:
                 # mapping year -> region -> hist
-                qcd_hists: dict[str, dict[str, hist.Hist]] = defaultdict(dict)
+                qcd_hists: dict[str, dict[str, tuple[hist.Hist, hist.Hist]]] = defaultdict(dict)
 
                 # create data-minus-background histograms in the 4 regions
                 for region_name, _qcd_data in qcd_data.items():
@@ -1165,51 +1167,49 @@ def _write_datacard(
                                     "weight": _data[varied_weight_field] * scale,
                                 })
                         # subtract the mc from the data
-                        h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
-                        h_qcd.view().value[...] = h_data.view().value - h_mc.view().value
-                        h_qcd.view().variance[...] = h_mc.view().variance
-                        qcd_hists[year][region_name] = h_qcd
+                        # h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
+                        # h_qcd.view().value[...] = h_data.view().value - h_mc.view().value
+                        # h_qcd.view().variance[...] = h_mc.view().variance
+                        # qcd_hists[year][region_name] = h_qcd
+                        qcd_hists[year][region_name] = (h_data, h_mc)
 
                 # ABCD method per year
                 # TODO: consider using averaging between the two options where the shape is coming from
                 for year, region_hists in qcd_hists.items():
                     datacard_year = datacard_years[year]
+                    full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
+                    h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
                     # shape placeholders
                     B, C, D = "ss_iso", "os_noniso", "ss_noniso"
                     # test
                     # B, C, D = "os_noniso", "ss_iso", "ss_noniso"
-                    # take shape from region "B"
-                    h_qcd = region_hists[B]
-                    # get the intgral and its uncertainty from region "C" (numerator)
-                    num_val = region_hists[C].sum().value
-                    num_var = region_hists[C].sum().variance
-                    # get the intgral and its uncertainty from region "D" (denominator)
-                    denom_val = region_hists[D].sum().value
-                    denom_var = region_hists[D].sum().variance
-                    # stop if any yield is negative (due to more MC than data)
-                    qcd_invalid = h_qcd.sum().value <= 0 or num_val <= 0 or denom_val <= 0
+                    h_data_b, h_mc_b = region_hists[B]
+                    h_data_c, h_mc_c = region_hists[C]
+                    h_data_d, h_mc_d = region_hists[D]
+                    # compute transfer factor and separate mc and data uncertainties
+                    int_data_c = Number(h_data_c.sum().value, {"data": h_data_c.sum().variance**0.5})
+                    int_data_d = Number(h_data_d.sum().value, {"data": h_data_d.sum().variance**0.5})
+                    int_mc_c = Number(h_mc_c.sum().value, {"mc": h_mc_c.sum().variance**0.5})
+                    int_mc_d = Number(h_mc_d.sum().value, {"mc": h_mc_d.sum().variance**0.5})
+                    # deem the qcd estimation invalid if either difference is negative
+                    qcd_invalid = (int_mc_c > int_data_c) or (int_mc_d > int_data_d)
                     if not qcd_invalid:
-                        # create the normalization correction including uncorrelated uncertainty propagation
-                        corr_val = num_val / denom_val
-                        corr_var = corr_val**2 * (num_var / num_val**2 + denom_var / denom_val**2)
-                        # scale the shape by updating values and variances in-place
-                        val = h_qcd.view().value
-                        _var = h_qcd.view().variance
-                        new_val = val * corr_val
-                        _var[:] = new_val**2 * (_var / val**2 + corr_var / corr_val**2)
-                        val[:] = new_val
-                    else:
-                        # zero-fill the histogram
-                        h_qcd *= 0.0
-                        # print(
-                        #     f"  skipping QCD estimation in ({category},{nuisance.name}{direction},{year},{spin},{mass}) "  # noqa
-                        #     f"due to negative yields in normalization regions: ss_iso={num_val}, ss_noniso={denom_val}",  # noqa
-                        # )
+                        # compute the QCD shape with error propagation
+                        values_data_b = Number(h_data_b.view().value, {"data": h_data_b.view().variance**0.5})
+                        values_mc_b = Number(h_mc_b.view().value, {"mc": h_mc_b.view().variance**0.5})
+                        tf = (int_data_c - int_mc_c) / (int_data_d - int_mc_d)
+                        qcd = (values_data_b - values_mc_b) * tf
+                        # inject values
+                        h_qcd.view().value[...] = qcd.n
+                        # inject variances, combining data and mc uncertainties, assuming symmetric errors
+                        h_qcd.view().variance[...] = qcd.get("up", unc=True)**2
                     # zero-fill
                     hval = h_qcd.view().value
+                    hvar = h_qcd.view().variance
                     zero_mask = hval <= 0
+                    # keep the variance proportion that reaches into positive values
+                    hvar[zero_mask] = (np.maximum(0, hvar[zero_mask]**0.5 + hval[zero_mask]))**2
                     hval[zero_mask] = 1.0e-5
-                    h_qcd.view().variance[zero_mask] = 0.0
                     # store it
                     hists[(year, "QCD")][(nuisance.get_combine_name(year=datacard_year), direction)] = h_qcd
                     any_qcd_valid[year] |= not qcd_invalid
