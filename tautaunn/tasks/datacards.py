@@ -436,7 +436,7 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 #_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
 _default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 
-    
+
 class GetEfficiencies(MultiSkimTask, EvaluationParameters):
 
     default_store = "$TN_STORE_DIR_MARCEL"
@@ -476,7 +476,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
-    
+
     @property
     def card_names(self):
         if self._card_names is None:
@@ -499,13 +499,13 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
     def output(self):
         # prepare the output directory
         # create a hash from the passed categories
-        
+
         h = hashlib.sha256(str(self.categories).encode("utf-8")).hexdigest()[:10]
         d = self.local_target(h, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
         path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
+        if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
             d = self.local_target(new_path, dir=True)
@@ -527,7 +527,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
         if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "gpfs") 
+            eval_dir = eval_dir.replace("nfs", "gpfs")
         eval_directories = {}
         for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
@@ -537,7 +537,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
                 eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
-                
+
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
@@ -619,7 +619,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             self.binning = "custom"
             print(f"using custom binning from file '{self.binning_file}'")
 
-    
+
     @property
     def card_names(self):
         if self._card_names is None:
@@ -632,12 +632,16 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
+    def requires(self):
+        return {
+            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
 
     def store_parts(self):
         parts = super().store_parts()
         parts.insert_before("version", "ensemble", self.get_model_name())
         return parts
-
 
     def output(self):
         # prepare the output directory
@@ -645,13 +649,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
-        # hotfix location in case TN_STORE_DIR is set to Marcel's
-        output_path = d.path
-        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
-            new_path = output_path.replace(path_user, os.environ["USER"])
-            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
-            d = self.local_target(new_path, dir=True)
 
         return law.SiblingFileCollection({
             name: {
@@ -670,28 +667,16 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
-        # hardcode the eval directories for now
-        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
-        # even newer evals
-        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "gpfs") 
         eval_directories = {}
-        for skim_name in self.skim_names:
+        for skim_name in inp:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(skim_name)
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
-                
+                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+
         #
         # define arguments
         datacard_kwargs = dict(
@@ -720,7 +705,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         # create the cards
         write_datacards(**datacard_kwargs)
 
-        
+
 class PlotDists(WriteDatacards,):
 
     datacards = law.CSVParameter(
@@ -738,7 +723,7 @@ class PlotDists(WriteDatacards,):
         default="png",
         choices=("png", "pdf"),
         description="type of the plot files, choices: png, pdf; default: png",
-    ) 
+    )
 
 
     def get_card_dir(self, card):
@@ -748,7 +733,7 @@ class PlotDists(WriteDatacards,):
             _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
         return f"{year}/{channel}/{cat}/"
 
-    
+
     def get_signal_name_and_dir(self, card):
         if len(card.split("_")) == 11:
             _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
@@ -756,11 +741,11 @@ class PlotDists(WriteDatacards,):
         if len(card.split("_")) == 12:
             _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
             return f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
-        
+
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         assert self.file_type in ("png", "pdf")
         import re
         # Regular expression pattern to match the years 2016, 2016APV, 2017, and 2018
@@ -787,7 +772,7 @@ class PlotDists(WriteDatacards,):
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
         path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
+        if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
             d = self.local_target(new_path, dir=True)
@@ -829,7 +814,7 @@ class PlotDists(WriteDatacards,):
                                 signal_name=signal_name,
                                 savename=path.path,
                                 limit_value=lim)
-            else: 
+            else:
                 signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,

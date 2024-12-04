@@ -44,7 +44,7 @@ from scinum import Number
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps, klub_weight_columns
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
-from tautaunn.cat_selectors import category_factory, sel_baseline 
+from tautaunn.cat_selectors import category_factory, sel_baseline
 
 from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
 
@@ -580,7 +580,7 @@ def write_datacards(
         print(f"found binning for categories: {cats_in_file}")
         print(f"requested categories {_categories}")
         assert set(_categories) == set(cats_in_file), "categories in binning file do not match the requested categories"
-        
+
 
     # get a list of all sample names per skim directory
     all_sample_names = {
@@ -915,7 +915,12 @@ def _write_datacard(
         signal_process_name = {year: names[0] for year, names in signal_process_names.items()}
 
         # helper to get values of weights of a process
-        def get_values_and_weights(process_name: str | dict[str, str], nuisance: ShapeNuisance = shape_nuisances["nominal"], direction: str = "", weight_scale: float | int = 1.0):
+        def get_values_and_weights(
+            process_name: str | dict[str, str],
+            nuisance: ShapeNuisance = shape_nuisances["nominal"],
+            direction: str = "",
+            weight_scale: float | int = 1.0,
+        ):
             if isinstance(process_name, str):
                 process_name = {year: process_name for year in sample_data}
 
@@ -966,7 +971,7 @@ def _write_datacard(
             hh_values, hh_weights = sort_values_and_weights(hh_values, hh_weights)
             tt_values, tt_weights = get_values_and_weights("TT")
             dy_values, dy_weights = get_values_and_weights("DY")
-            all_bkgds = {} 
+            all_bkgds = {}
             for proc in processes:
                 if ((processes[proc].get("data", False)) or (processes[proc].get("signal", False)) or (proc == "QCD")):
                     continue
@@ -979,13 +984,15 @@ def _write_datacard(
                 print(f"no signal events found in ({category},{spin},{mass})")
                 bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
             else:
-                bin_edges, stop_reason = flats(hh=(hh_values, hh_weights),
-                                            tt=(tt_values, tt_weights),
-                                            dy=(dy_values, dy_weights),
-                                            all_bkgds=(all_bkgds_values, all_bkgds_weights),
-                                            n_bins=n_bins,
-                                            x_min=x_min,
-                                            x_max=x_max)
+                bin_edges, stop_reason = flats(
+                    hh=(hh_values, hh_weights),
+                    tt=(tt_values, tt_weights),
+                    dy=(dy_values, dy_weights),
+                    all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                    n_bins=n_bins,
+                    x_min=x_min,
+                    x_max=x_max,
+                )
         elif binning_algo == "flatsguarded":  # flatsguarded
             #
             # step 1: data preparation
@@ -994,20 +1001,22 @@ def _write_datacard(
             # get tt and dy data
             tt_values, tt_weights = get_values_and_weights("TT")
             dy_values, dy_weights = get_values_and_weights("DY")
-            bin_edges, stop_reason = flatsguarded(hh_values=hh_values,
-                                                  hh_weights=hh_weights,
-                                                  tt_values=tt_values,
-                                                  tt_weights=tt_weights,
-                                                  dy_values=dy_values,
-                                                  dy_weights=dy_weights,
-                                                  n_bins=n_bins,
-                                                  x_min=x_min,
-                                                  x_max=x_max)
+            bin_edges, stop_reason = flatsguarded(
+                hh_values=hh_values,
+                hh_weights=hh_weights,
+                tt_values=tt_values,
+                tt_weights=tt_weights,
+                dy_values=dy_values,
+                dy_weights=dy_weights,
+                n_bins=n_bins,
+                x_min=x_min,
+                x_max=x_max,
+            )
         elif binning_algo == "flats_systs":
             hh_shifts = OrderedDict()
             tt_shifts = OrderedDict()
             dy_shifts = OrderedDict()
-            all_bkgds = {} 
+            all_bkgds = {}
             for nuisance in shape_nuisances.values():
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
@@ -1029,21 +1038,24 @@ def _write_datacard(
                 all_bkgds[proc] = get_values_and_weights(proc)
             all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
             all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
-            
+
             if len(hh_values) == 0:
                 print(f"no signal events found in ({category},{spin},{mass})")
                 bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
             else:
-                bin_edges, stop_reason, bin_counts = flats_systs(hh_shifts=hh_shifts,
-                                                                 tt_shifts=tt_shifts,
-                                                                 dy_shifts=dy_shifts,
-                                                                 all_bkgds=(all_bkgds_values, all_bkgds_weights),
-                                                                 error_target=1, #0.25, # changed from 1
-                                                                 n_bins=n_bins,
-                                                                 x_min=x_min,
-                                                                 x_max=x_max)
+                bin_edges, stop_reason, bin_counts = flats_systs(
+                    hh_shifts=hh_shifts,
+                    tt_shifts=tt_shifts,
+                    dy_shifts=dy_shifts,
+                    all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                    error_target=1,
+                    n_bins=n_bins,
+                    x_min=x_min,
+                    x_max=x_max,
+                )
         elif binning_algo == "custom":
             bin_edges = binning
+
     #
     # write shapes
     #
@@ -1454,7 +1466,7 @@ def _write_datacard(
     os.chmod(abs_datacard_path, 0o664)
 
     # return output paths
-    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason#, bin_counts
+    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason
 
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
