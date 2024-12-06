@@ -6,6 +6,7 @@ import os
 import re
 import time
 import itertools
+import hashlib
 from collections import defaultdict
 
 import luigi
@@ -13,8 +14,10 @@ import law
 import numpy as np
 import tensorflow as tf
 import awkward as ak
+from pathlib import Path
+from tqdm import tqdm
 
-from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
+from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
@@ -430,10 +433,11 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+#_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 
 
-class WriteDatacards(MultiSkimTask, EvaluationParameters):
+class GetEfficiencies(MultiSkimTask, EvaluationParameters):
 
     default_store = "$TN_STORE_DIR_MARCEL"
 
@@ -442,27 +446,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
         brace_expand=True,
     )
-    qcd_estimation = luigi.BoolParameter(
-        default=True,
-        description="whether to estimate QCD contributions from data; default: True",
-    )
-    binning = luigi.ChoiceParameter(
-        default="flats",
-        choices=("equal", "flats", "flatsguarded"),
-        description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
-    )
-    n_bins = luigi.IntParameter(
-        default=10,
-        description="number of bins to use; default: 10",
-    )
-    # uncertainty = luigi.FloatParameter(
-    #     default=0.1,
-    #     description="uncertainty to use for the ud binning; default: 0.1",
-    # )
-    # signal_uncertainty = luigi.FloatParameter(
-    #     default=0.5,
-    #     description="signal uncertainty to use for uncertainty-driven and tt_dy_driven binning; default: 0.5",
-    # )
     variable = luigi.Parameter(
         default="pdnn_m{mass}_s{spin}_hh",
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
@@ -486,11 +469,156 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
+
+
+    @property
+    def card_names(self):
+        if self._card_names is None:
+            from tautaunn.write_datacards_stack import expand_categories
+            categories = expand_categories(self.categories)
+            self._card_names = [
+                self.card_pattern.format(category=category, spin=spin, mass=mass)
+                for spin, mass, category in itertools.product(self.spins, self.masses, categories)
+            ]
+
+        return self._card_names
+
+
+    def store_parts(self):
+        parts = super().store_parts()
+        parts.insert_before("version", "ensemble", self.get_model_name())
+        return parts
+
+
+    def output(self):
+        # prepare the output directory
+        # create a hash from the passed categories
+
+        h = hashlib.sha256(str(self.categories).encode("utf-8")).hexdigest()[:10]
+        d = self.local_target(h, dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.path
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]:
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
+
+        return law.LocalFileTarget(d.child("efficiencies.json", type="f"))
+
+    def run(self):
+        # load the datacard creating function
+        from tautaunn.get_efficiency import write_datacards
+
+        # prepare inputs
+        inp = self.input()
+
+        # prepare skim and eval directories, and samples to use per
+        skim_directories = defaultdict(list)
+        # hardcode the eval directories for now
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "gpfs")
+        eval_directories = {}
+        for skim_name in self.skim_names:
+            sample = cfg.get_sample(skim_name, silent=True)
+            if sample is None:
+                sample_name, skim_year = self.split_skim_name(skim_name)
+                sample = cfg.Sample(sample_name, year=skim_year)
+            skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
+            if sample.year not in eval_directories:
+                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+
+        # define arguments
+        datacard_kwargs = dict(
+            spin=list(self.spins),
+            mass=list(self.masses),
+            category=self.categories,
+            skim_directories=skim_directories,
+            eval_directories=eval_directories,
+            output_directory=self.output().abs_dirname,
+            output_pattern=self.card_pattern,
+            variable_pattern=self.variable,
+            # force using all samples, disabling the feature to select a subset
+            # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
+            n_parallel_read=self.parallel_read,
+            n_parallel_write=self.parallel_write,
+            cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
+            skip_existing=not self.rewrite_existing,
+        )
+
+        # create the cards
+        write_datacards(**datacard_kwargs)
+
+class WriteDatacards(MultiSkimTask, EvaluationParameters):
+
+    default_store = "$TN_STORE_DIR_MARCEL"
+
+    categories = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
+    )
+    qcd_estimation = luigi.BoolParameter(
+        default=True,
+        description="whether to estimate QCD contributions from data; default: True",
+    )
+    binning = luigi.ChoiceParameter(
+        default="flats",
+        choices=("equal", "flats", "flatsguarded", "flats_systs", "non_res_like"),
+        description="binning to use; choices: equal, flats, flatsguarded(on tt and dy); default: flats",
+    )
+    binning_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a binning file; default: ''",
+    )
+    n_bins = luigi.IntParameter(
+        default=10,
+        description="number of bins to use; default: 10",
+    )
+    variable = luigi.Parameter(
+        default="pdnn_m{mass}_s{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
+    )
+    parallel_read = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for reading; default: 4",
+    )
+    parallel_write = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for writing; default: 4",
+    )
+    output_suffix = luigi.Parameter(
+        default=law.NO_STR,
+        description="suffix to append to the output directory; default: ''",
+    )
+    rewrite_existing = luigi.BoolParameter(
+        default=False,
+        significant=False,
+        description="whether to rewrite existing datacards; default: False",
+    )
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
+        self._card_names = None
+
+        if self.binning_file != law.NO_STR:
+            self.binning = "custom"
+            print(f"using custom binning from file '{self.binning_file}'")
+
 
     @property
     def card_names(self):
@@ -518,8 +646,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def output(self):
         # prepare the output directory
         dirname = f"{self.binning}{self.n_bins}"
-        if self.binning in ["ud", "ud_flats", "tt_dy_driven"]:
-            dirname += f"_{self.uncertainty}_{self.signal_uncertainty}"
         if self.output_suffix not in ("", law.NO_STR):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
@@ -551,11 +677,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             if sample.year not in eval_directories:
                 eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
 
+        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
-            category=list(self.categories),
+            category=self.categories,
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
@@ -564,6 +691,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             # force using all samples, disabling the feature to select a subset
             # sample_names=[sample_name.replace("SKIM_", "") for sample_name in sample_names],
             binning=(self.n_bins, 0.0, 1.0, self.binning),
+            binning_file=self.binning_file if self.binning == "custom" else "",
             # TODO: port additional binning options to stacked datacard script
             # uncertainty=self.uncertainty,
             # signal_uncertainty=self.signal_uncertainty,
@@ -576,3 +704,128 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # create the cards
         write_datacards(**datacard_kwargs)
+
+
+class PlotDists(Task):
+
+    datacards = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
+    )
+
+    limits_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a limits.npz file; default: ''",
+    )
+
+    file_type = luigi.ChoiceParameter(
+        default="png",
+        choices=("png", "pdf"),
+        description="type of the plot files, choices: png, pdf; default: png",
+    )
+
+
+    def get_card_dir(self, card):
+        if len(card.split("_")) == 11:
+            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
+        if len(card.split("_")) == 12:
+            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+        return f"{year}/{channel}/{cat}/"
+
+
+    def get_signal_name_and_dir(self, card):
+        if len(card.split("_")) == 11:
+            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
+            return f"cat_{year}_{channel}_{cat}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
+        if len(card.split("_")) == 12:
+            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+            return f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        assert self.file_type in ("png", "pdf")
+        import re
+        # Regular expression pattern to match the years 2016, 2016APV, 2017, and 2018
+        year_pattern = r"2016(?:APV)?|2017|2018"
+        from glob import glob
+        # glob the datacards
+        self.matched_cards = []
+        for pattern in self.datacards:
+            self.matched_cards.append(glob(pattern.replace("datacard_", "shapes_").replace(".txt", ".root")))
+        self.matched_cards = list(itertools.chain(*self.matched_cards))
+        try:
+            years = set([re.search(year_pattern, card).group() for card in self.matched_cards])
+        except AttributeError as e:
+            raise ValueError(f"Couldn't match any cards with provided pattern {self.datacards}")
+        if len(years) > 1 and self.limits_file != law.NO_STR:
+            print(("\n WARNING: \n"
+                  f"datacards are across multiple years ({years}) a limits file was passed."
+                  f"This might not work as expected."))
+
+
+    def output(self):
+        # prepare the output directory
+        d = self.local_target("", dir=True)
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.path
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]:
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
+
+        return law.FileCollection({
+            card: d.child(f"{self.get_card_dir(stem:=Path(card).stem)}/{stem}.{self.file_type}", type="f")
+            for card in self.matched_cards
+        })
+
+
+    def run(self):
+
+        from tautaunn.plot_dists import plot_mc_data_sig, load_hists, load_reslim
+
+        fc = self.output()
+        for card, path in tqdm(fc.targets.items()):
+            card_name = Path(card).stem
+            if len(card_name.split("_")) == 11:
+                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card_name.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
+            elif len(card_name.split("_")) == 12:
+                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card_name.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
+            else:
+                raise ValueError("Card name does not match the expected format.")
+            signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
+            stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
+            if self.limits_file is not law.NO_STR:
+                lim = load_reslim(self.limits_file, mass)
+                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                plot_mc_data_sig(data_hist=data,
+                                signal_hist=sig,
+                                bkgd_stack=stack,
+                                stack_error_hist=stack_err,
+                                bin_edges=bin_edges,
+                                year=year,
+                                channel=channel,
+                                cat=cat,
+                                signal_name=signal_name,
+                                savename=path.path,
+                                limit_value=lim)
+            else:
+                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                plot_mc_data_sig(data_hist=data,
+                                signal_hist=sig,
+                                bkgd_stack=stack,
+                                stack_error_hist=stack_err,
+                                bin_edges=bin_edges,
+                                year=year,
+                                channel=channel,
+                                cat=cat,
+                                signal_name=signal_name,
+                                savename=path.path,
+                                limit_value=None)
+
+

@@ -43,6 +43,10 @@ from scinum import Number
 
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps, klub_weight_columns
+from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
+from tautaunn.cat_selectors import category_factory, sel_baseline
+
+from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
 
 
 #
@@ -66,334 +70,6 @@ datacard_years = {
     "2017": "2017",
     "2018": "2018",
 }
-shape_nuisances = {}
-
-
-@dataclass
-class ShapeNuisance:
-    name: str
-    combine_name: str = ""
-    processes: list[str] = field(default_factory=lambda: ["*"])
-    weights: dict[str, tuple[str, str]] = field(default_factory=dict)  # original name mapped to (up, down) variations
-    discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
-    channels: set[str] = field(default_factory=set)
-    skip: bool = False
-
-    @classmethod
-    def new(cls, *args, **kwargs):
-        inst = cls(*args, **kwargs)
-        shape_nuisances[inst.name] = inst
-        return inst
-
-    @classmethod
-    def create_full_name(cls, name: str, *, year: str) -> str:
-        return name.format(year=year)
-
-    def __post_init__(self):
-        # never skip nominal
-        if self.is_nominal:
-            self.skip = False
-
-        # default combine name
-        if not self.combine_name:
-            self.combine_name = self.name
-
-    @property
-    def is_nominal(self) -> bool:
-        return self.name == "nominal"
-
-    def get_combine_name(self, *, year: str) -> str:
-        return self.create_full_name(self.combine_name, year=year)
-
-    def get_directions(self) -> list[str]:
-        return [""] if self.is_nominal else ["up", "down"]
-
-    def get_varied_weight(self, nominal_weight: str, direction: str) -> str:
-        assert direction in ("", "up", "down")
-        if direction:
-            for nom, (up, down) in self.weights.items():
-                if nom == nominal_weight:
-                    return up if direction == "up" else down
-        return nominal_weight
-
-    def get_varied_full_weight(self, direction: str) -> str:
-        assert direction in ("", "up", "down")
-        # use the default weight field in case the nuisance is nominal or has no dedicated weight variations
-        if not direction or not self.weights:
-            return "full_weight_nominal"
-        # compose the full weight field name
-        return f"full_weight_{self.name}_{direction}"
-
-    def get_varied_discriminator(self, nominal_discriminator: str, direction: str) -> str:
-        assert direction in ("", "up", "down")
-        suffix = ""
-        if direction and (suffix := self.discriminator_suffix[direction == "down"]):
-            suffix = f"_{suffix}"
-        return nominal_discriminator + suffix
-
-    def applies_to_process(self, process_name: str) -> bool:
-        return any(fnmatch(process_name, pattern) for pattern in self.processes)
-
-    def applies_to_channel(self, channel_name: str) -> bool:
-        return not self.channels or channel_name in self.channels
-
-
-ShapeNuisance.new(
-    name="nominal",
-)
-ShapeNuisance.new(
-    name="btag_hf",
-    combine_name="CMS_btag_HF_2016_2017_2018",
-    weights={"bTagweightReshape": ("bTagweightReshape_hf_up", "bTagweightReshape_hf_down")},
-)
-ShapeNuisance.new(
-    name="btag_lf",
-    combine_name="CMS_btag_LF_2016_2017_2018",
-    weights={"bTagweightReshape": ("bTagweightReshape_lf_up", "bTagweightReshape_lf_down")},
-)
-ShapeNuisance.new(
-    name="btag_lfstats1",
-    combine_name="CMS_btag_lfstats1_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_lfstats1_up", "bTagweightReshape_lfstats1_down")},
-)
-ShapeNuisance.new(
-    name="btag_lfstats2",
-    combine_name="CMS_btag_lfstats2_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_lfstats2_up", "bTagweightReshape_lfstats2_down")},
-)
-ShapeNuisance.new(
-    name="btag_hfstats1",
-    combine_name="CMS_btag_hfstats1_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_hfstats1_up", "bTagweightReshape_hfstats1_down")},
-)
-ShapeNuisance.new(
-    name="btag_hfstats2",
-    combine_name="CMS_btag_hfstats2_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_hfstats2_up", "bTagweightReshape_hfstats2_down")},
-)
-ShapeNuisance.new(
-    name="btag_cferr1",
-    combine_name="CMS_btag_cfeff1_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_cferr1_up", "bTagweightReshape_cferr1_down")},
-)
-ShapeNuisance.new(
-    name="btag_cferr2",
-    combine_name="CMS_btag_cfeff2_{year}",
-    weights={"bTagweightReshape": ("bTagweightReshape_cferr2_up", "bTagweightReshape_cferr2_down")},
-)
-
-for (name, add_year) in [
-    ("stat0_DM0", True),
-    ("stat1_DM0", True),
-    ("systuncorrdmeras_DM0", True),
-    ("stat0_DM1", True),
-    ("stat1_DM1", True),
-    ("systuncorrdmeras_DM1", True),
-    ("stat0_DM10", True),
-    ("stat1_DM10", True),
-    ("systuncorrdmeras_DM10", True),
-    ("stat0_DM11", True),
-    ("stat1_DM11", True),
-    ("systuncorrdmeras_DM11", True),
-    ("systcorrdmeras", False),
-    ("systcorrdmuncorreras", True),
-    ("systcorrerasgt140", False),
-    ("stat0gt140", True),
-    ("stat1gt140", True),
-    ("extrapgt140", False),
-]:
-    ShapeNuisance.new(
-        name=f"id_tauid_2d_{name}",
-        combine_name=f"CMS_eff_t_{name}" + (r"_{year}" if add_year else ""),
-        weights={"dauSFs": (f"dauSFs_tauid_2d_{name}_up", f"dauSFs_tauid_2d_{name}_down")},
-    )
-# TODO: are we certain all of the following uncertainties should be uncorrelated across years?
-ShapeNuisance.new(
-    name="id_etauFR_barrel",
-    combine_name="CMS_bbtt_etauFR_barrel_{year}",
-    weights={"dauSFs": ("dauSFs_etauFR_barrel_up", "dauSFs_etauFR_barrel_down")},
-)
-ShapeNuisance.new(
-    name="id_etauFR_endcap",
-    combine_name="CMS_bbtt_etauFR_endcap_{year}",
-    weights={"dauSFs": ("dauSFs_etauFR_endcap_up", "dauSFs_etauFR_endcap_down")},
-)
-ShapeNuisance.new(
-    name="id_mutauFR_etaLt0p4",
-    combine_name="CMS_bbtt_mutauFR_etaLt0p4_{year}",
-    weights={"dauSFs": ("dauSFs_mutauFR_etaLt0p4_up", "dauSFs_mutauFR_etaLt0p4_down")},
-)
-ShapeNuisance.new(
-    name="id_mutauFR_eta0p4to0p8",
-    combine_name="CMS_bbtt_mutauFR_eta0p4to0p8_{year}",
-    weights={"dauSFs": ("dauSFs_mutauFR_eta0p4to0p8_up", "dauSFs_mutauFR_eta0p4to0p8_down")},
-)
-ShapeNuisance.new(
-    name="id_mutauFR_eta0p8to1p2",
-    combine_name="CMS_bbtt_mutauFR_eta0p8to1p2_{year}",
-    weights={"dauSFs": ("dauSFs_mutauFR_eta0p8to1p2_up", "dauSFs_mutauFR_eta0p8to1p2_down")},
-)
-ShapeNuisance.new(
-    name="id_mutauFR_etaGt1p2to1p7",
-    combine_name="CMS_bbtt_mutauFR_eta1p2to1p7_{year}",
-    weights={"dauSFs": ("dauSFs_mutauFR_eta1p2to1p7_up", "dauSFs_mutauFR_eta1p2to1p7_down")},
-)
-ShapeNuisance.new(
-    name="id_mutauFR_etaGt1p7",
-    combine_name="CMS_bbtt_mutauFR_etaGt1p7_{year}",
-    weights={"dauSFs": ("dauSFs_mutauFR_etaGt1p7_up", "dauSFs_mutauFR_etaGt1p7_down")},
-)
-ShapeNuisance.new(
-    name="id_muid",
-    combine_name="CMS_eff_m_id_{year}",
-    weights={"dauSFs": ("dauSFs_muID_up", "dauSFs_muID_down")},
-    channels={"mutau"},
-)
-ShapeNuisance.new(
-    name="id_muiso",
-    combine_name="CMS_eff_m_iso_{year}",
-    weights={"dauSFs": ("dauSFs_muIso_up", "dauSFs_muIso_down")},
-    channels={"mutau"},
-)
-ShapeNuisance.new(
-    name="id_elereco",
-    combine_name="CMS_eff_e_reco_{year}",
-    weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
-    channels={"etau"},
-)
-ShapeNuisance.new(
-    name="id_eleid",
-    combine_name="CMS_eff_e_id_{year}",
-    weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
-    channels={"etau"},
-)
-ShapeNuisance.new(
-    name="pu_jet_id",
-    combine_name="CMS_eff_j_PUJET_id_{year}",
-    weights={"PUjetID_SF": ("PUjetID_SF_up", "PUjetID_SF_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_tau_DM0",
-    combine_name="CMS_bbtt_{year}_trigSFTauDM0",
-    weights={"trigSF": ("trigSF_tau_DM0_up", "trigSF_tau_DM0_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_tau_DM1",
-    combine_name="CMS_bbtt_{year}_trigSFTauDM1",
-    weights={"trigSF": ("trigSF_tau_DM1_up", "trigSF_tau_DM1_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_tau_DM10",
-    combine_name="CMS_bbtt_{year}_trigSFTauDM10",
-    weights={"trigSF": ("trigSF_tau_DM10_up", "trigSF_tau_DM10_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_DM11",
-    combine_name="CMS_bbtt_{year}_trigSFTauDM11",
-    weights={"trigSF": ("trigSF_tau_DM11_up", "trigSF_tau_DM11_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_met",
-    combine_name="CMS_bbtt_{year}_trigSFMET",
-    weights={"trigSF": ("trigSF_met_up", "trigSF_met_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_stau",
-    combine_name="CMS_bbtt_{year}_trigSFSingleTau",
-    weights={"trigSF": ("trigSF_stau_up", "trigSF_stau_down")},
-)
-ShapeNuisance.new(
-    name="trigSF_ele",
-    combine_name="CMS_bbtt_{year}_trigSFEle",
-    weights={"trigSF": ("trigSF_ele_up", "trigSF_ele_down")},
-    channels={"etau"},
-)
-ShapeNuisance.new(
-    name="trigSF_mu",
-    combine_name="CMS_bbtt_{year}_trigSFEMu",
-    weights={"trigSF": ("trigSF_mu_up", "trigSF_mu_down")},
-    channels={"mutau"},
-)
-ShapeNuisance.new(
-    name="ees",
-    combine_name="CMS_scale_e_{year}",
-    discriminator_suffix=("ees_up", "ees_down"),
-    channels={"etau"},
-)
-ShapeNuisance.new(
-    name="eer",
-    combine_name="CMS_res_e_{year}",
-    discriminator_suffix=("eer_up", "eer_down"),
-    channels={"etau"},
-)
-ShapeNuisance.new(
-    name="fes_DM0",
-    combine_name="CMS_scale_t_eFake_DM0_{year}",
-    discriminator_suffix=("fes_DM0_up", "fes_DM0_down"),
-)
-ShapeNuisance.new(
-    name="fes_DM1",
-    combine_name="CMS_scale_t_eFake_DM1_{year}",
-    discriminator_suffix=("fes_DM1_up", "fes_DM1_down"),
-)
-ShapeNuisance.new(
-    name="tes_DM0",
-    combine_name="CMS_scale_t_DM0_{year}",
-    discriminator_suffix=("tes_DM0_up", "tes_DM0_down"),
-)
-ShapeNuisance.new(
-    name="tes_DM1",
-    combine_name="CMS_scale_t_DM1_{year}",
-    discriminator_suffix=("tes_DM1_up", "tes_DM1_down"),
-)
-ShapeNuisance.new(
-    name="tes_DM10",
-    combine_name="CMS_scale_t_DM10_{year}",
-    discriminator_suffix=("tes_DM10_up", "tes_DM10_down"),
-)
-ShapeNuisance.new(
-    name="tes_DM11",
-    combine_name="CMS_scale_t_DM11_{year}",
-    discriminator_suffix=("tes_DM11_up", "tes_DM11_down"),
-)
-ShapeNuisance.new(
-    name="mes",
-    combine_name="CMS_scale_t_muFake_{year}",
-    discriminator_suffix=("mes_up", "mes_down"),
-)
-ShapeNuisance.new(
-    name="PUReweight",
-    combine_name="CMS_pileup_{year}",
-    weights={"PUReweight": ("PUReweight_up", "PUReweight_down")},
-)
-ShapeNuisance.new(
-    name="l1_prefiring",
-    combine_name="CMS_l1_prefiring_{year}",
-    weights={"L1pref_weight": ("L1pref_weight_up", "L1pref_weight_down")},
-)
-
-jes_names = {
-    1: "CMS_scale_j_Abs",
-    2: "CMS_scale_j_Abs_{year}",
-    3: "CMS_scale_j_BBEC1",
-    4: "CMS_scale_j_BBEC1_{year}",
-    5: "CMS_scale_j_EC2",
-    6: "CMS_scale_j_EC2_{year}",
-    7: "CMS_scale_j_FlavQCD",
-    8: "CMS_scale_j_HF",
-    9: "CMS_scale_j_HF_{year}",
-    10: "CMS_scale_j_RelBal",
-    11: "CMS_scale_j_RelSample_{year}",
-}
-
-for js in range(1, 12):
-    ShapeNuisance.new(
-        name=f"jes_{js}",
-        combine_name=jes_names[js],
-        discriminator_suffix=(f"jes_{js}_up", f"jes_{js}_down"),
-        weights={"bTagweightReshape": (f"bTagweightReshape_jetup{js}", f"bTagweightReshape_jetdown{js}")},
-    )
-
 # TODO: JER
 
 processes = OrderedDict({
@@ -506,222 +182,6 @@ processes = OrderedDict({
     },
 })
 
-rate_nuisances = {}
-
-
-@dataclass
-class RateEffect:
-
-    effect: str
-    process: str = "*"
-    year: str = "*"
-    channel: str = "*"
-    category: str = "*"
-
-    def applies_to_process(self, process_name: str) -> bool:
-        negate = self.process.startswith("!")
-        return fnmatch(process_name, self.process.lstrip("!")) != negate
-
-    def applies_to_year(self, year: str) -> bool:
-        negate = self.year.startswith("!")
-        return fnmatch(year, self.year.lstrip("!")) != negate
-
-    def applies_to_channel(self, channel: str) -> bool:
-        negate = self.channel.startswith("!")
-        return fnmatch(channel, self.channel.lstrip("!")) != negate
-
-    def applies_to_category(self, category: str) -> bool:
-        negate = self.category.startswith("!")
-        return fnmatch(category, self.category.lstrip("!")) != negate
-
-
-@dataclass
-class RateNuisance:
-
-    name: str
-    rate_effects: list[RateEffect]
-
-    @classmethod
-    def new(cls, *args, **kwargs):
-        inst = cls(*args, **kwargs)
-        rate_nuisances[inst.name] = inst
-        return inst
-
-
-RateNuisance.new(
-    name="BR_hbb",
-    rate_effects=[
-        RateEffect(process="*_hbb", effect="0.9874/1.0124"),
-        RateEffect(process="*_hbbhtt", effect="0.9874/1.0124"),
-    ],
-)
-RateNuisance.new(
-    name="BR_htt",
-    rate_effects=[
-        RateEffect(process="*_htt", effect="0.9837/1.0165"),
-        RateEffect(process="*_hbbhtt", effect="0.9837/1.0165"),
-    ],
-)
-RateNuisance.new(
-    name="pdf_gg",
-    rate_effects=[RateEffect(process="TT", effect="1.042")],
-)
-RateNuisance.new(
-    name="pdf_qqbar",
-    rate_effects=[
-        RateEffect(process="ST", effect="1.028"),  # conservatively from t-channel, also added to tW-channel
-        RateEffect(process="WZ", effect="1.044"),
-    ],
-)
-RateNuisance.new(
-    name="pdf_Higgs_gg",
-    rate_effects=[RateEffect(process="ggH_*", effect="1.019")],
-)
-RateNuisance.new(
-    name="pdf_Higgs_qqbar",
-    rate_effects=[
-        RateEffect(process="qqH_*", effect="1.021"),
-        RateEffect(process="WH_*", effect="1.017"),
-        RateEffect(process="ZH_*", effect="1.013"),
-    ],
-)
-RateNuisance.new(
-    name="pdf_Higgs_ttH",
-    rate_effects=[RateEffect(process="ttH_*", effect="1.030")],
-)
-RateNuisance.new(
-    name="pdf_Higgs_ggHH",
-    rate_effects=[RateEffect(process="ggHH_*", effect="1.030")],
-)
-RateNuisance.new(
-    name="pdf_Higgs_qqHH",
-    rate_effects=[RateEffect(process="qqHH_*", effect="1.021")],
-)
-RateNuisance.new(
-    name="QCDscale_ttbar",
-    rate_effects=[
-        RateEffect(process="TT", effect="0.965/1.024"),
-        RateEffect(process="ST", effect="0.979/1.031"),  # conservatively from t-channel
-    ],
-)
-RateNuisance.new(
-    name="QCDscale_VV",
-    rate_effects=[RateEffect(process="WZ", effect="1.036")],
-)
-RateNuisance.new(
-    name="QCDscale_ggH",
-    rate_effects=[RateEffect(process="ggH_*", effect="1.039")],
-)
-RateNuisance.new(
-    name="QCDscale_qqH",
-    rate_effects=[RateEffect(process="qqH_*", effect="0.997/1.004")],
-)
-RateNuisance.new(
-    name="QCDscale_VH",
-    rate_effects=[
-        RateEffect(process="WH_*", effect="0.993/1.005"),
-        RateEffect(process="ZH_*", effect="0.970/1.038"),
-    ],
-)
-RateNuisance.new(
-    name="QCDscale_ttH",
-    rate_effects=[RateEffect(process="ttH_*", effect="0.908/1.058")],
-)
-RateNuisance.new(
-    name="QCDscale_ggHH",
-    rate_effects=[RateEffect(process="ggHH_*", effect="0.770/1.060")],  # includes fully correlated mtop uncertainty
-
-)
-RateNuisance.new(
-    name="QCDscale_qqHH",
-    rate_effects=[RateEffect(process="qqHH_*", effect="0.9996/1.0003")],
-)
-RateNuisance.new(
-    name="alpha_s",
-    rate_effects=[
-        RateEffect(process="ggH_*", effect="1.026"),
-        RateEffect(process="qqH_*", effect="1.005"),
-        RateEffect(process="ZH_*", effect="1.009"),
-        RateEffect(process="WH_*", effect="1.009"),
-        RateEffect(process="ttH_*", effect="1.020"),
-    ],
-)
-RateNuisance.new(
-    name="qqHH_pythiaDipoleOn",
-    rate_effects=[RateEffect(process="qqHH_*", effect="0.781/1.219")],
-)
-RateNuisance.new(
-    name="lumi_13TeV_2016",
-    rate_effects=[RateEffect(process="!QCD", year="2016*", effect="1.010")],
-)
-RateNuisance.new(
-    name="lumi_13TeV_2017",
-    rate_effects=[RateEffect(process="!QCD", year="2017", effect="1.020")],
-)
-RateNuisance.new(
-    name="lumi_13TeV_2018",
-    rate_effects=[RateEffect(process="!QCD", year="2018", effect="1.015")],
-)
-RateNuisance.new(
-    name="lumi_13TeV_1718",
-    rate_effects=[
-        RateEffect(process="!QCD", year="2017", effect="1.006"),
-        RateEffect(process="!QCD", year="2018", effect="1.002"),
-    ],
-)
-RateNuisance.new(
-    name="lumi_13TeV_correlated",
-    rate_effects=[
-        RateEffect(process="!QCD", year="2016*", effect="1.006"),
-        RateEffect(process="!QCD", year="2017", effect="1.009"),
-        RateEffect(process="!QCD", year="2018", effect="1.020"),
-    ],
-)
-
-
-def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_percent: float) -> None:
-    if effect_percent < 10:
-        effect_str = f"{1 + effect_percent * 0.01}"
-    else:
-        effect_str = f"{max(1 - effect_percent * 0.01, 0.01)}/{1 + effect_percent * 0.01}"
-
-    RateNuisance.new(
-        name=f"CMS_bbtt_qcd_{name}_{year}_{channel}_{category}",
-        rate_effects=[RateEffect(process="QCD", year=year, channel=channel, category=category + "*", effect=effect_str)],
-    )
-
-
-# taken from tables 36-39 in AN
-add_qcd_rate("stat", "2016APV", "etau", "resolved1b", 8.02)
-add_qcd_rate("stat", "2016APV", "mutau", "resolved1b", 3.96)
-add_qcd_rate("stat", "2016APV", "tautau", "resolved1b", 2.44)
-add_qcd_rate("stat", "2016APV", "mutau", "resolved2b", 33.33)
-add_qcd_rate("stat", "2016APV", "tautau", "resolved2b", 33.33)
-add_qcd_rate("stat", "2016APV", "tautau", "boosted", 12.2)
-
-add_qcd_rate("stat", "2016", "etau", "resolved1b", 10.89)
-add_qcd_rate("stat", "2016", "mutau", "resolved1b", 3.93)
-add_qcd_rate("stat", "2016", "tautau", "resolved1b", 3.08)
-add_qcd_rate("stat", "2016", "mutau", "resolved2b", 21.62)
-add_qcd_rate("stat", "2016", "tautau", "resolved2b", 15.92)
-
-add_qcd_rate("stat", "2017", "etau", "resolved1b", 9.16)
-add_qcd_rate("stat", "2017", "mutau", "resolved1b", 2.72)
-add_qcd_rate("stat", "2017", "tautau", "resolved1b", 2.28)
-add_qcd_rate("stat", "2017", "mutau", "resolved2b", 6.59)
-add_qcd_rate("stat", "2017", "tautau", "resolved2b", 11.5)
-add_qcd_rate("stat", "2017", "etau", "boosted", 12.41)
-add_qcd_rate("stat", "2017", "mutau", "boosted", 9.6)
-
-add_qcd_rate("stat", "2018", "etau", "resolved1b", 6.24)
-add_qcd_rate("stat", "2018", "mutau", "resolved1b", 2.17)
-add_qcd_rate("stat", "2018", "tautau", "resolved1b", 1.71)
-add_qcd_rate("stat", "2018", "etau", "resolved2b", 256.25)
-add_qcd_rate("add", "2018", "etau", "resolved2b", 400.0)
-add_qcd_rate("stat", "2018", "mutau", "resolved2b", 5.47)
-add_qcd_rate("stat", "2018", "tautau", "resolved2b", 7.73)
-add_qcd_rate("stat", "2018", "tautau", "boosted", 31.82)
-
 
 def merge_dicts(*dicts):
     assert dicts
@@ -743,346 +203,6 @@ def dir_is_skim_dir(dir_name: str) -> bool:
 
 def make_list(x):
     return list(x) if isinstance(x, (list, tuple, set)) else [x]
-
-
-def selector(
-    needs: list | None = None,
-    str_repr: str | None = None,
-    **extra,
-) -> Callable:
-    def decorator(func: Callable) -> Callable:
-        # declare func to be a selector
-        func.is_selector = True
-
-        # store extra data
-        func.extra = extra
-
-        # store raw list of required columns
-        func.raw_columns = list(needs or [])
-
-        # store recursive flat list of actual column names
-        func.flat_columns = []
-        for obj in func.raw_columns:
-            if isinstance(obj, str):
-                func.flat_columns.append(obj)
-            elif getattr(obj, "is_selector", False):
-                func.flat_columns.extend(obj.flat_columns)
-            else:
-                raise TypeError(f"cannot interpret columns '{obj}'")
-        func.flat_columns = sorted(set(func.flat_columns), key=func.flat_columns.index)
-
-        # store the string representation
-        func.str_repr = str_repr
-
-        @wraps(func)
-        def wrapper(*args, **kwargs) -> ak.Array:
-            return ak.values_astype(func(*args, **kwargs), bool)
-
-        return wrapper
-    return decorator
-
-
-@selector(
-    needs=["pairType", "dau1_deepTauVsJet", "dau1_iso", "dau1_eleMVAiso"],
-    str_repr="((pairType == 0) & (dau1_iso < 0.15)) | ((pairType == 1) & (dau1_eleMVAiso == 1)) | ((pairType == 2) & (dau1_deepTauVsJet >= 5))",  # noqa
-)
-def sel_iso_first_lep(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        ((array.pairType == 0) & (array.dau1_iso < 0.15)) |
-        ((array.pairType == 1) & (array.dau1_eleMVAiso == 1)) |
-        ((array.pairType == 2) & (array.dau1_deepTauVsJet >= 5))
-    )
-
-
-@selector(
-    needs=["isLeptrigger", "isMETtrigger", "isSingleTautrigger"],
-    str_repr="((isLeptrigger == 1) | (isMETtrigger == 1) | (isSingleTautrigger == 1))",
-)
-def sel_trigger(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        (array.isLeptrigger == 1) | (array.isMETtrigger == 1) | (array.isSingleTautrigger == 1)
-    )
-
-
-@selector(
-    needs=[sel_trigger, sel_iso_first_lep, "nleps", "nbjetscand", "isBoosted"],
-    str_repr=f"({sel_trigger.str_repr}) & ({sel_iso_first_lep.str_repr}) & (nleps == 0) & ((nbjetscand > 1) | (isBoosted == 1))",  # noqa
-)
-def sel_baseline(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        sel_trigger(array, **kwargs) &
-        # including cut on first isolated lepton to reduce memory footprint
-        # (note that this is not called "baseline" anymore by KLUB standards)
-        sel_iso_first_lep(array, **kwargs) &
-        (array.nleps == 0) &
-        ((array.nbjetscand > 1) | (array.isBoosted == 1))
-    )
-
-
-@selector(
-    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-)
-def sel_region_os_iso(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        sel_iso_first_lep(array, **kwargs) &
-        (array.isOS == 1) &
-        (array.dau2_deepTauVsJet >= 5)
-    )
-
-
-@selector(
-    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-)
-def sel_region_ss_iso(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        sel_iso_first_lep(array, **kwargs) &
-        (array.isOS == 0) &
-        (array.dau2_deepTauVsJet >= 5)
-    )
-
-
-@selector(
-    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-)
-def sel_region_os_noniso(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        sel_iso_first_lep(array, **kwargs) &
-        (array.isOS == 1) &
-        (array.dau2_deepTauVsJet < 5) &
-        (array.dau2_deepTauVsJet >= 1)
-    )
-
-
-@selector(
-    needs=["isOS", "dau2_deepTauVsJet", sel_iso_first_lep],
-)
-def sel_region_ss_noniso(array: ak.Array, **kwargs) -> ak.Array:
-    return (
-        sel_iso_first_lep(array, **kwargs) &
-        (array.isOS == 0) &
-        (array.dau2_deepTauVsJet < 5) &
-        (array.dau2_deepTauVsJet >= 1)
-    )
-
-
-region_sels = [
-    sel_region_os_iso,
-    sel_region_ss_iso,
-    sel_region_os_noniso,
-    sel_region_ss_noniso,
-]
-
-
-region_sel_names = ["os_iso", "ss_iso", "os_noniso", "ss_noniso"]
-
-
-def category_factory(channel: str) -> dict[str, Callable]:
-    pair_type = channels[channel]
-
-    @selector(needs=["pairType"])
-    def sel_channel(array: ak.Array, **kwargs) -> ak.Array:
-        return array.pairType == pair_type
-
-    @selector(needs=["isBoosted"])
-    def sel_ak8(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            (array.isBoosted == 1)
-        )
-
-    @selector(needs=["fatjet_particleNetMDJetTags_probXbb"])
-    def sel_pnet(array: ak.Array, **kwargs) -> ak.Array:
-        year = kwargs["year"]
-        return (
-            (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
-        )
-
-    @selector(needs=[sel_ak8, sel_pnet])
-    def sel_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_ak8(array, **kwargs) &
-            sel_pnet(array, **kwargs)
-        )
-
-    def sel_combinations(main_sel, sub_sels):
-        def create(sub_sel):
-            @selector(
-                needs=[main_sel, sub_sel],
-                channel=channel,
-            )
-            def func(array: ak.Array, **kwargs) -> ak.Array:
-                return main_sel(array, **kwargs) & sub_sel(array, **kwargs)
-            return func
-
-        return [create(sub_sel) for sub_sel in sub_sels]
-
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_m(array: ak.Array, **kwargs) -> ak.Array:
-        year = kwargs["year"]
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
-            (array.bjet2_bID_deepFlavor <= btag_wps[year]["medium"])
-        ) | (
-            (array.bjet1_bID_deepFlavor <= btag_wps[year]["medium"]) &
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-        )
-
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_mm(array: ak.Array, **kwargs) -> ak.Array:
-        year = kwargs["year"]
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) &
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-        )
-
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_ll(array: ak.Array, **kwargs) -> ak.Array:
-        year = kwargs["year"]
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["loose"]) &
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["loose"])
-        )
-
-    @selector(needs=["bjet1_bID_deepFlavor", "bjet2_bID_deepFlavor"])
-    def sel_btag_m_first(array: ak.Array, **kwargs) -> ak.Array:
-        year = kwargs["year"]
-        return (
-            (array.bjet1_bID_deepFlavor > btag_wps[year]["medium"]) |
-            (array.bjet2_bID_deepFlavor > btag_wps[year]["medium"])
-        )
-
-    @selector(needs=["tauH_mass", "bH_mass"])
-    def sel_mass_window_res(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            (array.tauH_mass >= 15.0) &
-            (array.tauH_mass <= 130) &
-            (array.bH_mass >= 40.0) &
-            (array.bH_mass <= 270)
-        )
-
-    @selector(needs=["tauH_mass", "fatjet_softdropMass"])
-    def sel_mass_window_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            (array.tauH_mass >= 15.0) &
-            (array.tauH_mass <= 130) &
-            (array.fatjet_softdropMass <= 450.0)
-        )
-
-    @selector(
-        needs=[sel_baseline],
-        channel=channel,
-    )
-    def cat_baseline(array: ak.Array, **kwargs) -> ak.Array:
-        return sel_baseline(array, **kwargs)
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_m, sel_mass_window_res],
-        channel=channel,
-    )
-    def cat_resolved_1b(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            ~sel_boosted(array, **kwargs) &
-            sel_btag_m(array, **kwargs) &
-            sel_mass_window_res(array, **kwargs)
-        )
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_btag_mm, sel_mass_window_res],
-        channel=channel,
-    )
-    def cat_resolved_2b(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            ~sel_boosted(array, **kwargs) &
-            sel_btag_mm(array, **kwargs) &
-            sel_mass_window_res(array, **kwargs)
-        )
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, sel_mass_window_boosted],
-        channel=channel,
-    )
-    def cat_boosted(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_boosted(array, **kwargs) &
-            sel_mass_window_boosted(array, **kwargs)
-        )
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
-        channel=channel,
-    )
-    def cat_resolved_1b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            ~sel_ak8(array, **kwargs) &
-            sel_btag_m(array, **kwargs) &
-            sel_mass_window_res(array, **kwargs)
-        )
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
-        channel=channel,
-    )
-    def cat_resolved_2b_no_ak8(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            ~sel_ak8(array, **kwargs) &
-            sel_btag_mm(array, **kwargs) &
-            sel_mass_window_res(array, **kwargs)
-        )
-
-    @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_mass_window_res],
-        channel=channel,
-    )
-    def cat_resolved_2b_first(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_btag_mm(array, **kwargs) &
-            sel_mass_window_res(array, **kwargs)
-        )
-
-    @selector(
-        needs=[cat_boosted, cat_resolved_2b_first],
-        channel=channel,
-    )
-    def cat_boosted_not_res2b(array: ak.Array, **kwargs) -> ak.Array:
-        return (
-            cat_boosted(array, **kwargs) &
-            ~cat_resolved_2b_first(array, **kwargs)
-        )
-
-    # create a dict of all selectors, but without subdivision into regions
-    selectors = {
-        "baseline": cat_baseline,
-        "resolved1b": cat_resolved_1b,
-        "resolved2b": cat_resolved_2b,
-        "boosted": cat_boosted,
-        "resolved1b_noak8": cat_resolved_1b_no_ak8,  # to use with boosted & resolved2b_no_ak8 or resolved2b_first & boosted_not_res2b
-        "resolved2b_noak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
-        "resolved2b_first": cat_resolved_2b_first,  # to use with boosted_not_res2b & resolved1b_no_ak8
-        "boosted_notres2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
-    }
-
-    # add all region combinations
-    for name, sel in list(selectors.items()):
-        selectors.update({
-            f"{name}_{region_name}": combined_sel
-            for region_name, combined_sel in zip(
-                region_sel_names,
-                sel_combinations(sel, region_sels),
-            )
-        })
-
-    return selectors
 
 
 categories = {}
@@ -1420,6 +540,7 @@ def write_datacards(
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
+    binning_file: str = "",
     qcd_estimation: bool = True,
     n_parallel_read: int = 4,
     n_parallel_write: int = 2,
@@ -1450,6 +571,16 @@ def write_datacards(
         assert category in categories
     for year in skim_directories:
         assert year in eval_directories
+
+    if binning_file != "":
+        print(f"reading binning from file {binning_file}")
+        with open(binning_file, "r") as f:
+            binnings = json.load(f)
+        cats_in_file = list(set([key.split("__")[0] for key in binnings.keys()]))
+        print(f"found binning for categories: {cats_in_file}")
+        print(f"requested categories {_categories}")
+        assert set(_categories) == set(cats_in_file), "categories in binning file do not match the requested categories"
+
 
     # get a list of all sample names per skim directory
     all_sample_names = {
@@ -1537,20 +668,40 @@ def write_datacards(
 
     # write each spin, mass and category combination
     datacard_args = []
-    for spin, mass, category in itertools.product(_spins, _masses, _categories):
-        datacard_args.append((
-            sample_map,
-            sample_data,
-            spin,
-            mass,
-            category,
-            output_directory,
-            output_pattern.format(spin=spin, mass=mass, category=category),
-            variable_pattern.format(spin=spin, mass=mass),
-            binning,
-            qcd_estimation,
-            skip_existing,
-        ))
+    if binning_file == "":
+        for spin, mass, category in itertools.product(_spins, _masses, _categories):
+            datacard_args.append((
+                sample_map,
+                sample_data,
+                spin,
+                mass,
+                category,
+                output_directory,
+                output_pattern.format(spin=spin, mass=mass, category=category),
+                variable_pattern.format(spin=spin, mass=mass),
+                binning,
+                qcd_estimation,
+                skip_existing,
+            ))
+    else:
+        for key in binnings:
+            bin_edges = sorted(list(set(binnings[key][0]))) if len(binnings[key]) == 2 else sorted(list(set(binnings[key])))
+            spin, mass = (int(i[1:]) for i in key.split("__")[1:])
+            #spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
+            category = key.split("__")[0]
+            datacard_args.append((
+                sample_map,
+                sample_data,
+                int(spin),
+                int(mass),
+                category,
+                output_directory,
+                output_pattern.format(spin=spin, mass=mass, category=category),
+                variable_pattern.format(spin=spin, mass=mass),
+                bin_edges,
+                qcd_estimation,
+                skip_existing,
+            ))
 
     print(f"\nwriting datacard{'s' if len(datacard_args) > 1 else ''} ...")
     if n_parallel_write > 1:
@@ -1567,27 +718,28 @@ def write_datacards(
         ))
     print("done")
 
-    # write bin edges into a file
-    bin_edges_file = os.path.join(output_directory, "bin_edges.json")
-    # load them first when the file is existing
-    all_bin_edges = {}
-    if os.path.exists(bin_edges_file):
-        with open(bin_edges_file, "r") as f:
-            all_bin_edges = json.load(f)
-    # update with new bin edges
-    for args, res in zip(datacard_args, datacard_results):
-        spin, mass, category = args[2:5]
-        edges = res[2]
-        key = f"{category}__s{spin}__m{mass}"
-        # do not overwrite when edges are None (in case the datacard was skipped)
-        if key in all_bin_edges and not edges:
-            continue
-        all_bin_edges[key] = edges
-    # write them
-    with open(bin_edges_file, "w") as f:
-        json.dump(all_bin_edges, f, indent=4)
-    os.chmod(bin_edges_file, 0o664)
-
+    if binning_file == "":
+        # write bin edges into a file
+        bin_edges_file = os.path.join(output_directory, "bin_edges.json")
+        # load them first when the file is existing
+        all_bin_edges = {}
+        if os.path.exists(bin_edges_file):
+            with open(bin_edges_file, "r") as f:
+                all_bin_edges = json.load(f)
+        # update with new bin edges
+        for args, res in zip(datacard_args, datacard_results):
+            spin, mass, category = args[2:5]
+            edges = res[2]
+            stop_reason = res[-2]
+            #bin_counts = res[-1]
+            key = f"{category}__s{spin}__m{mass}"
+            # do not overwrite when edges are None (in case the datacard was skipped)
+            if key in all_bin_edges and not edges:
+                continue
+            all_bin_edges[key] = edges, stop_reason#, bin_counts
+        # write them
+        with open(bin_edges_file, "w") as f:
+            json.dump(all_bin_edges, f, indent=4)
     return datacard_results
 
 
@@ -1600,21 +752,25 @@ def _write_datacard(
     output_directory: str,
     output_name: str,
     variable_name: str,
-    binning: tuple[int, float, float, str] | tuple[float, float, str],
+    binning: tuple[int, float, float, str] | tuple[float, float, str] | list[float],
     qcd_estimation: bool,
     skip_existing: bool,
 ) -> tuple[str | None, str | None, list[float] | None]:
     cat_data = categories[category]
 
-    # input checks
-    assert len(binning) in [3, 4]
-    if len(binning) == 3:
-        x_min, x_max, binning_algo = binning
-        n_bins = cat_data["n_bins"]
+    if isinstance(binning, list):
+        binning_algo = "custom"
+        print(f"using custom binning for category {category}")
     else:
-        n_bins, x_min, x_max, binning_algo = binning
-    assert x_max > x_min
-    assert binning_algo in {"equal", "flats", "flatsguarded"}
+        # input checks
+        assert len(binning) in [3, 4]
+        if len(binning) == 3:
+            x_min, x_max, binning_algo = binning
+            n_bins = cat_data["n_bins"]
+        else:
+            n_bins, x_min, x_max, binning_algo = binning
+        assert x_max > x_min
+        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "non_res_like"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]
@@ -1741,7 +897,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
-    else:  # flats or flatsguarded
+    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like',):
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -1759,24 +915,25 @@ def _write_datacard(
         signal_process_name = {year: names[0] for year, names in signal_process_names.items()}
 
         # helper to get values of weights of a process
-        def get_values_and_weights(process_name: str | dict[str, str], weight_scale: float | int = 1.0):
+        def get_values_and_weights(
+            process_name: str | dict[str, str],
+            nuisance: ShapeNuisance = shape_nuisances["nominal"],
+            direction: str = "",
+            weight_scale: float | int = 1.0,
+        ):
             if isinstance(process_name, str):
                 process_name = {year: process_name for year in sample_data}
 
             def extract(getter):
                 return ak.concatenate(
-                    sum(
-                        (
+                    list(itertools.chain.from_iterable(
                             [getter(year, data, sample_name) for sample_name in sample_map[year][process_name[year]]]
                             for year, data in sample_data.items()
-                        ),
-                        [],
-                    ),
-                    axis=0,
+                        ))
                 )
 
-            values = extract(lambda year, data, sample_name: data[sample_name][variable_name])
-            weights = extract(lambda year, data, sample_name: data[sample_name].full_weight_nominal * luminosities[year] * weight_scale)  # noqa
+            values = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)])  # noqa
+            weights = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_full_weight(direction)] * luminosities[year] * weight_scale)  # noqa
 
             # complain when values are out of bounds or non-finite
             outlier_mask = (values < x_min) | (values > x_max) | ~np.isfinite(values)
@@ -1795,7 +952,7 @@ def _write_datacard(
             values, weights = values[sort_indices], weights[sort_indices]
             return (values if inc else np.flip(values, axis=0)), (weights if inc else np.flip(weights, axis=0))
 
-        hh_values, hh_weights = get_values_and_weights(signal_process_name, weight_scale=br_hh_bbtt)
+        hh_values, hh_weights = get_values_and_weights(process_name=signal_process_name, weight_scale=br_hh_bbtt)
 
         # distinguish non-guarded and guarded flats binnings from here on
         if binning_algo == "flats":
@@ -1812,26 +969,31 @@ def _write_datacard(
                 return (None, None, None)
             # sort by increasing value
             hh_values, hh_weights = sort_values_and_weights(hh_values, hh_weights)
-            # compute quantiles
-            weighted_quantiles = (
-                (np.cumsum(hh_weights) - 0.5 * hh_weights) /
-                np.sum(hh_weights)
-            )
-            # obtain edges
-            thresholds = np.linspace(x_min, x_max, n_bins + 1)[1:-1]
-            inner_edges = np.interp(thresholds, weighted_quantiles, hh_values)
-            bin_edges = [x_min] + inner_edges.tolist() + [x_max]
-            # floating point protection, round to 5 digits and sort
-            bin_edges = sorted(set(round(edge, 5) for edge in bin_edges))
-            _n_bins_actual = len(bin_edges) - 1
-            if _n_bins_actual < n_bins:
-                print(
-                    f"  reducing n_bins from {n_bins} to {_n_bins_actual} in ({category},{spin},{mass}) "
-                    f"due to edge value rounding in process {signal_process_name}",
+            tt_values, tt_weights = get_values_and_weights("TT")
+            dy_values, dy_weights = get_values_and_weights("DY")
+            all_bkgds = {}
+            for proc in processes:
+                if ((processes[proc].get("data", False)) or (processes[proc].get("signal", False)) or (proc == "QCD")):
+                    continue
+                elif proc in ["TT", "DY"]:
+                    continue
+                all_bkgds[proc] = get_values_and_weights(proc)
+            all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
+            all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
+            if len(hh_values) == 0:
+                print(f"no signal events found in ({category},{spin},{mass})")
+                bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
+            else:
+                bin_edges, stop_reason = flats(
+                    hh=(hh_values, hh_weights),
+                    tt=(tt_values, tt_weights),
+                    dy=(dy_values, dy_weights),
+                    all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                    n_bins=n_bins,
+                    x_min=x_min,
+                    x_max=x_max,
                 )
-                n_bins = _n_bins_actual
-
-        else:  # flatsguarded
+        elif binning_algo == "flatsguarded":  # flatsguarded
             #
             # step 1: data preparation
             #
@@ -1839,156 +1001,60 @@ def _write_datacard(
             # get tt and dy data
             tt_values, tt_weights = get_values_and_weights("TT")
             dy_values, dy_weights = get_values_and_weights("DY")
-            # create a record array with eight entries:
-            # - value
-            # - process (0: hh, 1: tt, 2: dy)
-            # - hh_count_cs, tt_count_cs, dy_count_cs (cumulative sums of raw event counts)
-            # - hh_weight_cs, tt_weight_cs, dy_weight_cs (cumulative sums of weights)
-            all_values_list = [hh_values, tt_values, dy_values]
-            rec = np.core.records.fromarrays(
-                [
-                    # value
-                    (all_values := np.concatenate(all_values_list, axis=0)),
-                    # process
-                    np.concatenate([i * np.ones(len(v), dtype=np.int8) for i, v in enumerate(all_values_list)], axis=0),
-                    # counts and weights per process
-                    (izeros := np.zeros(len(all_values), dtype=np.int32)),
-                    (fzeros := np.zeros(len(all_values), dtype=np.float32)),
-                    izeros,
-                    fzeros,
-                    izeros,
-                    fzeros,
-                ],
-                names="value,process,hh_count_cs,hh_weight_cs,tt_count_cs,tt_weight_cs,dy_count_cs,dy_weight_cs",
+            bin_edges, stop_reason = flatsguarded(
+                hh_values=hh_values,
+                hh_weights=hh_weights,
+                tt_values=tt_values,
+                tt_weights=tt_weights,
+                dy_values=dy_values,
+                dy_weights=dy_weights,
+                n_bins=n_bins,
+                x_min=x_min,
+                x_max=x_max,
             )
-            # insert counts and weights into columns for correct processes
-            # (faster than creating arrays above which then get copied anyway when the recarray is created)
-            HH, TT, DY = range(3)
-            rec.hh_count_cs[rec.process == HH] = 1
-            rec.tt_count_cs[rec.process == TT] = 1
-            rec.dy_count_cs[rec.process == DY] = 1
-            rec.hh_weight_cs[rec.process == HH] = hh_weights
-            rec.tt_weight_cs[rec.process == TT] = tt_weights
-            rec.dy_weight_cs[rec.process == DY] = dy_weights
-            # sort by decreasing value to start binning from "the right" later on
-            rec.sort(order="value")
-            rec = np.flip(rec, axis=0)
-            # replace counts and weights with their cumulative sums
-            rec.hh_count_cs[:] = np.cumsum(rec.hh_count_cs)
-            rec.tt_count_cs[:] = np.cumsum(rec.tt_count_cs)
-            rec.dy_count_cs[:] = np.cumsum(rec.dy_count_cs)
-            rec.hh_weight_cs[:] = np.cumsum(rec.hh_weight_cs)
-            rec.tt_weight_cs[:] = np.cumsum(rec.tt_weight_cs)
-            rec.dy_weight_cs[:] = np.cumsum(rec.dy_weight_cs)
-            # eager cleanup
-            del all_values, izeros, fzeros
-            del hh_values, hh_weights
-            del tt_values, tt_weights
-            del dy_values, dy_weights
-            # now, between any two possible discriminator values, we can easily extract the hh, tt and dy integrals,
-            # as well as raw event counts without the need for additional, costly accumulation ops (sum, count, etc.),
-            # but rather through simple subtraction of values at the respective indices instead
+        elif binning_algo == "flats_systs":
+            hh_shifts = OrderedDict()
+            tt_shifts = OrderedDict()
+            dy_shifts = OrderedDict()
+            all_bkgds = {}
+            for nuisance in shape_nuisances.values():
+                for direction in nuisance.get_directions():
+                    key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
+                    hh_values, hh_weights = get_values_and_weights(signal_process_name, nuisance, direction, br_hh_bbtt)
+                    tt_values, tt_weights = get_values_and_weights("TT", nuisance, direction)
+                    dy_values, dy_weights = get_values_and_weights("DY", nuisance, direction)
+                    if key == "nominal":
+                        all_bkgds["TT"] = tt_values, tt_weights
+                        all_bkgds["DY"] = dy_values, dy_weights
+                    tt_shifts[key] = (tt_values, tt_weights)
+                    dy_shifts[key] = (dy_values, dy_weights)
+                    hh_shifts[key] = (hh_values, hh_weights)
+            # add all other bkgd processes to all_bkgds (just nominal)
+            for proc in processes:
+                if ((processes[proc].get("data", False)) or (processes[proc].get("signal", False)) or (proc == "QCD")):
+                    continue
+                elif proc in ["TT", "DY"]:
+                    continue
+                all_bkgds[proc] = get_values_and_weights(proc)
+            all_bkgds_values = np.concatenate([v[0] for v in all_bkgds.values()])
+            all_bkgds_weights = np.concatenate([v[1] for v in all_bkgds.values()])
 
-            #
-            # step 2: binning
-            #
-
-            # determine the approximate hh yield per bin
-            hh_yield_per_bin = rec.hh_weight_cs[-1] / n_bins
-            # keep track of bin edges and the hh yield accumulated so far
-            bin_edges = [x_max]
-            hh_yield_binned = 0.0
-            min_hh_yield = 1.0e-5
-            # during binning, do not remove leading entries, but remember the index that denotes the start of the bin
-            offset = 0
-            # helper to extract a cumulative sum between the start offset (included) and the stop index (not included)
-            get_integral = lambda cs, stop: cs[stop - 1] - (0 if offset == 0 else cs[offset - 1])
-            # bookkeep reasons for stopping binning
-            stop_reason = ""
-            # start binning
-            while len(bin_edges) < n_bins:
-                # stopping condition 1: reached end of events
-                if offset >= len(rec):
-                    stop_reason = "no more events left"
-                    break
-                # stopping condition 2: remaining hh yield too small, so cause a background bin to be created
-                remaining_hh_yield = rec.hh_weight_cs[-1] - hh_yield_binned
-                if remaining_hh_yield < min_hh_yield:
-                    stop_reason = "remaining signal yield insufficient"
-                    break
-                # find the index of the event that would result in a hh yield increase of more than the expected
-                # per-bin yield; this index would mark the start of the next bin given all constraints are met
-                if remaining_hh_yield >= hh_yield_per_bin:
-                    threshold = hh_yield_binned + hh_yield_per_bin
-                    next_idx = offset + np.where(rec.hh_weight_cs[offset:] > threshold)[0][0]
-                else:
-                    # special case: remaining hh yield smaller than the expected per-bin yield, so find the last event
-                    next_idx = offset + np.where(rec.process[offset:] == HH)[0][-1] + 1
-                # advance the index until backgrounds constraints are met
-                while next_idx < len(rec):
-                    # get the number of tt events and their yield
-                    n_tt = get_integral(rec.tt_count_cs, next_idx)
-                    y_tt = get_integral(rec.tt_weight_cs, next_idx)
-                    # get the number of dy events and their yield
-                    n_dy = get_integral(rec.dy_count_cs, next_idx)
-                    y_dy = get_integral(rec.dy_weight_cs, next_idx)
-                    # evaluate constraints
-                    # TODO: potentially relax constraints here, e.g when there are 3 (4?) tt events, drop the constraint
-                    #       on dy, and vice-versa
-                    constraints_met = (
-                        # tt and dy events
-                        n_tt >= 1 and
-                        n_dy >= 1 and
-                        n_tt + n_dy >= 4 and
-                        # yields must be positive to avoid negative sums of weights per process
-                        y_tt > 0 and
-                        y_dy > 0
-                    )
-                    if constraints_met:
-                        # TODO: maybe also check if the background conditions are just barely met and advance next_idx
-                        # to the middle between the current value and the next one that would change anything about the
-                        # background predictions; this might be more stable as the current implementation can highly
-                        # depend on the exact value of a single event (the one that tips the constraints over the edge
-                        # to fulfillment)
-
-                        # bin found, stop
-                        break
-                    # constraints not met, advance index to include the next tt or dy event and try again
-                    next_bkg_indices = np.where(rec.process[next_idx:] != HH)[0]
-                    if len(next_bkg_indices) == 0:
-                        # no more background events left, move to the last position and let the stopping condition 3
-                        # below handle the rest
-                        next_idx = len(rec)
-                    else:
-                        next_idx += next_bkg_indices[0] + 1
-                else:
-                    # stopping condition 3: no more events left, so the last bin (most left one) does not fullfill
-                    # constraints; however, this should practically never happen
-                    stop_reason = "no more events left while trying to fulfill constraints"
-                    break
-                # next_idx found, update values
-                edge_value = x_min if next_idx == 0 else float(rec.value[next_idx - 1:next_idx + 1].mean())
-                bin_edges.append(max(min(edge_value, x_max), x_min))
-                hh_yield_binned += get_integral(rec.hh_weight_cs, next_idx)
-                offset = next_idx
-
-            # make sure the minimum is included
-            if bin_edges[-1] != x_min:
-                if len(bin_edges) > n_bins:
-                    raise RuntimeError(f"number of bins reached and initial bin edge is not x_min (edges: {bin_edges})")
-                bin_edges.append(x_min)
-
-            # reverse edges and optionally re-set n_bins
-            bin_edges = sorted(set(bin_edges))
-            n_bins_actual = len(bin_edges) - 1
-            if n_bins_actual > n_bins:
-                raise Exception("number of actual bins ended up larger than requested (implementation bug)")
-            if n_bins_actual < n_bins:
-                print(
-                    f"  reducing n_bins from {n_bins} to {n_bins_actual} in ({category},{spin},{mass})\n"
-                    f"    -> reason: {stop_reason or 'NO REASON!?'}",
+            if len(hh_values) == 0:
+                print(f"no signal events found in ({category},{spin},{mass})")
+                bin_edges, stop_reason, bin_counts = [0., 1.], "no signal events found", None
+            else:
+                bin_edges, stop_reason, bin_counts = flats_systs(
+                    hh_shifts=hh_shifts,
+                    tt_shifts=tt_shifts,
+                    dy_shifts=dy_shifts,
+                    all_bkgds=(all_bkgds_values, all_bkgds_weights),
+                    error_target=1,
+                    n_bins=n_bins,
+                    x_min=x_min,
+                    x_max=x_max,
                 )
-                n_bins = n_bins_actual
+        elif binning_algo == "custom":
+            bin_edges = binning
 
     #
     # write shapes
@@ -2037,11 +1103,7 @@ def _write_datacard(
                 for year in _map.keys():
                     datacard_year = datacard_years[year]
                     full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
-                    try:
-                        h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
-                    except:
-                        print(f"creating histogram in ({category},{spin},{mass}) with edges {bin_edges} failed")
-                        raise
+                    h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                     hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)] = h
 
             # fill histograms
@@ -2404,7 +1466,7 @@ def _write_datacard(
     os.chmod(abs_datacard_path, 0o664)
 
     # return output paths
-    return abs_datacard_path, abs_shapes_path, bin_edges
+    return abs_datacard_path, abs_shapes_path, bin_edges, stop_reason
 
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
