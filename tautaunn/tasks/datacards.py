@@ -719,6 +719,16 @@ class PlotDists(Task):
         description="path to a limits.npz file; default: ''",
     )
 
+    unblind_edge = luigi.FloatParameter(
+        default=0.0,
+        description="unblinding edge; default: 0.0 -> no unblinding",
+    )
+
+    control_region = luigi.BoolParameter(
+        default=False,
+        description="whether to plot the control region; default: False",
+    )
+
     file_type = luigi.ChoiceParameter(
         default="png",
         choices=("png", "pdf"),
@@ -727,11 +737,35 @@ class PlotDists(Task):
 
 
     def get_card_dir(self, card):
-        if len(card.split("_")) == 11:
-            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
-        if len(card.split("_")) == 12:
-            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+        if any([s in card for s in ("first", "noak8", "notres2b")]): 
+            if "cr_" in card:
+                _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
+            else:
+                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+        else:
+            if "cr_" in card:
+                _, _, year, channel, cat, region, sign, isolation, _, spin, _, mass = card.split("_")
+            else:
+                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
         return f"{year}/{channel}/{cat}/"
+
+
+    def get_data_dir(self, card):
+        if any([s in card for s in ("first", "noak8", "notres2b")]): 
+            if "cr_" in card:
+                _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{region}_{sign}_{isolation}"
+            else:
+                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
+        else:
+            if "cr_" in card:
+                _, _, year, channel, cat, region, sign, isolation, _, spin, _, mass = card.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{region}_{sign}_{isolation}"
+            else:
+                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
+                data_dir = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
+        return data_dir, channel, cat, spin, mass, year
 
 
     def get_signal_name_and_dir(self, card):
@@ -762,7 +796,8 @@ class PlotDists(Task):
             raise ValueError(f"Couldn't match any cards with provided pattern {self.datacards}")
         if len(years) > 1 and self.limits_file != law.NO_STR:
             print(("\n WARNING: \n"
-                  f"datacards are across multiple years ({years}) a limits file was passed."
+                  f"Datacard pattern includes multiple years ({years}) "
+                   "and a limits file was passed (just for one year ?).\n"
                   f"This might not work as expected."))
 
 
@@ -790,19 +825,20 @@ class PlotDists(Task):
         fc = self.output()
         for card, path in tqdm(fc.targets.items()):
             card_name = Path(card).stem
-            if len(card_name.split("_")) == 11:
-                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card_name.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
-            elif len(card_name.split("_")) == 12:
-                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card_name.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
-            else:
-                raise ValueError("Card name does not match the expected format.")
-            signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
+            data_dir, channel, cat, spin, mass, year = self.get_data_dir(card_name)
+            signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not self.control_region else None
             stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
             if self.limits_file is not law.NO_STR:
                 lim = load_reslim(self.limits_file, mass)
-                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                signal_name = " ".join(
+                    signal_name.split("_")[0:5]
+                    ).replace(
+                        "ggf", "ggf;"
+                        ).replace(
+                            "spin ", 's:'
+                            ).replace(
+                                "mass ", "m:"
+                                ) if not self.control_region else None
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
@@ -813,9 +849,18 @@ class PlotDists(Task):
                                 cat=cat,
                                 signal_name=signal_name,
                                 savename=path.path,
-                                limit_value=lim)
+                                limit_value=lim,
+                                unblind_edge= self.unblind_edge if self.unblind_edge > 0.0 else None)
             else:
-                signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+                signal_name = " ".join(
+                    signal_name.split("_")[0:5]
+                    ).replace(
+                        "ggf", "ggf;"
+                        ).replace(
+                            "spin ", 's:'
+                            ).replace(
+                                "mass ", "m:"
+                                ) if not self.control_region else None
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
@@ -826,6 +871,141 @@ class PlotDists(Task):
                                 cat=cat,
                                 signal_name=signal_name,
                                 savename=path.path,
-                                limit_value=None)
+                                limit_value=None,
+                                unblind_edge=self.unblind_edge if self.unblind_edge > 0.0 else None)
 
 
+_default_categories_cr = ("2017_*tau_resolved1b_noak8_cr_os_iso", "2017_*tau_resolved2b_first_cr_os_iso", "2017_*tau_boosted_notres2b_cr_os_iso")
+
+class ControlPlots(MultiSkimTask, EvaluationParameters):
+
+    default_store = "$TN_STORE_DIR_MARCEL"
+
+    categories = law.CSVParameter(
+        default=_default_categories_cr,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories_cr)}",
+        brace_expand=True,
+    )
+    qcd_estimation = luigi.BoolParameter(
+        default=True,
+        description="whether to estimate QCD contributions from data; default: True",
+    )
+    binning_file = luigi.Parameter(
+        default=law.NO_STR,
+        description="path to a binning file; default: ''",
+    )
+    n_bins = luigi.IntParameter(
+        default=5,
+        description="number of bins per control region; default: 5",
+    )
+    variable = luigi.Parameter(
+        default="pdnn_m{mass}_s{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
+    )
+    parallel_read = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for reading; default: 4",
+    )
+    parallel_write = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for writing; default: 4",
+    )
+    rewrite_existing = luigi.BoolParameter(
+        default=False,
+        significant=False,
+        description="whether to rewrite existing datacards; default: False",
+    )
+    spins = luigi.ListParameter(
+        default=cfg.spins,
+        description="spins to use; default: ['0', '2']",
+    )
+    masses = luigi.ListParameter(
+        default=cfg.masses,
+        description="masses to use; default: all",
+    )
+    
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
+        self._card_names = None
+
+    @property
+    def card_names(self):
+        if self._card_names is None:
+            from tautaunn.write_datacards_stack import expand_categories
+            categories = expand_categories(self.categories)
+            self._card_names = [
+                self.card_pattern.format(category=category, spin=spin, mass=mass)
+                for spin, mass, category in itertools.product(self.spins, self.masses, categories)
+            ]
+
+        return self._card_names
+
+    def requires(self):
+        return {
+            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
+
+    def output(self):
+        d = self.local_target(dir=True)
+        return law.FileCollection({
+            name: {
+                "shapes": d.child(f"shapes_{name}.root", type="f"),
+            }
+            for name in self.card_names
+        })
+
+    def run(self):
+        # load the datacard creating function
+        from tautaunn.control_region import write_datacards
+
+        # i don't know how to make this task work without hardocding the eval_dir
+        # I know i can set the --EvaluateSkims-version to prod7 but setting the version for all
+        # of the Training parameters is too annoying. I guess I could change the defaults of the Training task
+        # in the future
+        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        #if "max-" in os.environ["HOSTNAME"]:
+            #eval_dir = eval_dir.replace("nfs", "data") 
+
+        inp = self.input()
+        # prepare skim and eval directories, and samples to use per
+        skim_directories = defaultdict(list)
+        eval_directories = {}
+        for skim_name in inp:
+            sample = cfg.get_sample(skim_name, silent=True)
+            if sample is None:
+                sample_name, skim_year = self.split_skim_name(skim_name)
+                sample = cfg.Sample(sample_name, year=skim_year)
+            skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
+            if sample.year not in eval_directories:
+                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+                #eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+
+        #
+        # define arguments
+        datacard_kwargs = dict(
+            spin=list(self.spins),
+            mass=list(self.masses),
+            category=self.categories,
+            skim_directories=skim_directories,
+            eval_directories=eval_directories,
+            output_directory=self.output().first_target.absdirname,
+            n_bins=self.n_bins,
+            output_pattern=self.card_pattern,
+            variable_pattern=self.variable,
+            qcd_estimation=self.qcd_estimation,
+            n_parallel_read=self.parallel_read,
+            n_parallel_write=self.parallel_write,
+            cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
+            skip_existing=not self.rewrite_existing,
+        )
+
+        # create the cards
+        write_datacards(**datacard_kwargs)
