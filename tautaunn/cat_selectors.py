@@ -235,7 +235,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
     
     @selector(needs=["tauH_mass", "bH_mass"])
-    def sel_mass_window_res_inverted(array: ak.Array, **kwargs) -> ak.Array:
+    def sel_mass_window_res_cr(array: ak.Array, **kwargs) -> ak.Array:
         return (
             (array.tauH_mass < 15.0) |
             (array.tauH_mass > 130) |
@@ -244,7 +244,7 @@ def category_factory(channel: str) -> dict[str, Callable]:
         )
     
     @selector(needs=["tauH_mass", "fatjet_softdropMass"])
-    def sel_mass_window_boosted_inverted(array: ak.Array, **kwargs) -> ak.Array:
+    def sel_mass_window_boosted_cr(array: ak.Array, **kwargs) -> ak.Array:
         return (
             (array.tauH_mass < 15.0) |
             (array.tauH_mass > 130) |
@@ -346,41 +346,39 @@ def category_factory(channel: str) -> dict[str, Callable]:
 
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res_inverted],
+        needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res_cr],
         channel=channel,
     )
-    def cat_resolved_1b_no_ak8_inverted(array: ak.Array, **kwargs) -> ak.Array:
+    def cat_resolved_1b_no_ak8_cr(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             ~sel_ak8(array, **kwargs) &
             sel_btag_m(array, **kwargs) &
-            sel_mass_window_res_inverted(array, **kwargs)
+            sel_mass_window_res_cr(array, **kwargs)
         )
     
     @selector(
-        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_mass_window_res_inverted],
+        needs=[sel_baseline, sel_channel, sel_btag_mm, sel_mass_window_res_cr],
         channel=channel,
     )
-    def cat_resolved_2b_first_inverted(array: ak.Array, **kwargs) -> ak.Array:
+    def cat_resolved_2b_first_cr(array: ak.Array, **kwargs) -> ak.Array:
         return (
             sel_baseline(array, **kwargs) &
             sel_channel(array, **kwargs) &
             sel_btag_mm(array, **kwargs) &
-            sel_mass_window_res_inverted(array, **kwargs)
+            sel_mass_window_res_cr(array, **kwargs)
         )
 
     @selector(
-        needs=[sel_baseline, sel_channel, sel_boosted, cat_resolved_2b_first, sel_mass_window_boosted_inverted],
+        needs=[cat_boosted, cat_resolved_2b_first_cr, sel_mass_window_boosted_cr],
         channel=channel,
     )
-    def cat_boosted_not_res2b_inverted(array: ak.Array, **kwargs) -> ak.Array:
+    def cat_boosted_not_res2b_cr(array: ak.Array, **kwargs) -> ak.Array:
         return (
-            sel_baseline(array, **kwargs) &
-            sel_channel(array, **kwargs) &
-            sel_boosted(array, **kwargs) &
-            ~cat_resolved_2b_first(array, **kwargs) & 
-            sel_mass_window_boosted_inverted(array, **kwargs) &
+            cat_boosted(array, **kwargs) &
+            ~cat_resolved_2b_first_cr(array, **kwargs) &
+            sel_mass_window_boosted_cr(array, **kwargs)
         )
 
     # create a dict of all selectors, but without subdivision into regions
@@ -393,9 +391,9 @@ def category_factory(channel: str) -> dict[str, Callable]:
         "resolved2b_noak8": cat_resolved_2b_no_ak8,  # to use with boosted & resolved1b_no_ak8
         "resolved2b_first": cat_resolved_2b_first,  # to use with boosted_not_res2b & resolved1b_no_ak8
         "boosted_notres2b": cat_boosted_not_res2b,  # to use with resolved2b_first & resolved1b_no_ak8
-        "resolved1b_noak8_inverted": cat_resolved_1b_no_ak8_inverted,
-        "resolved2b_first_inverted": cat_resolved_2b_first_inverted,
-        "boosted_notres2b_inverted": cat_boosted_not_res2b_inverted,
+        "resolved1b_noak8_cr": cat_resolved_1b_no_ak8_cr,
+        "resolved2b_first_cr": cat_resolved_2b_first_cr,
+        "boosted_notres2b_cr": cat_boosted_not_res2b_cr,
     }
 
     # add all region combinations
