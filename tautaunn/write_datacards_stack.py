@@ -420,7 +420,6 @@ def load_sample_data(
     eval_directory: str,
     year: str,
     sample_name: str,
-    selection_columns: list[str] | None = None,
     dnn_output_columns: list[str] | None = None,
     n_parallel: int = 4,
     cache_directory: str = "",
@@ -636,11 +635,6 @@ def write_datacards(
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
-    # prepare columns to read from klub files for the selection
-    selection_columns = list(set(sum((
-        categories[category]["selection"].flat_columns for category in _categories
-    ), [])))
-
     # prepare dnn output columns
     dnn_output_columns = [
         variable_pattern.format(spin=spin, mass=mass)
@@ -656,7 +650,6 @@ def write_datacards(
                 eval_directories[year],
                 year,
                 sample_name,
-                selection_columns,
                 dnn_output_columns,
                 n_parallel=n_parallel_read,
                 cache_directory=cache_directory,
