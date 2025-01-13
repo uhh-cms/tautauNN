@@ -39,6 +39,8 @@ def make_parser():
     parser.add_argument("-s", "--spin", required=False, default=None, type=str, help="spin of the signal sample")
     parser.add_argument("-l", "--limits_file", required=False, default=None,
                         type=str, help='/full/path/to/reslimits.npz file')
+    parser.add_argument("-e", "--unblind_edge", required=False, default=0.8, type=float,
+                        help="unblind all bins up to this edge")
     return parser
 
 
@@ -57,7 +59,7 @@ def histo_equalwidth(h):
 
 def load_hists(filename: str | Path,
                dirname: str,
-               signal_name: str,
+               signal_name: str | None,
                year: str) -> tuple[Stack, Hist]:
     with uproot.open(filename) as f:
         objects = f[dirname].classnames()
@@ -65,7 +67,7 @@ def load_hists(filename: str | Path,
         hists = {o: f[dirname][o].to_hist() for o in nominal_hists if o != signal_name and o != 'data_obs'}
 
         non_nominal_bkgd_hists = [o for o in objects
-                                  if "Up" in o and not any(s in o for s in [signal_name, 'data_obs'])]
+                                  if "Up" in o and not any(s in o for s in ["ggf_", "vbf_" 'data_obs'])]
         bkgd_errors = []
         for shape in non_nominal_bkgd_hists:
             bkgd = shape.split("__")[0]
@@ -78,24 +80,25 @@ def load_hists(filename: str | Path,
         bin_edges = hists[list(hists.keys())[0]].axes[0].edges
         equal_width_hists = {name.replace(f"_{year}", ""): histo_equalwidth(hists[name])[0] for name in hists}
 
-        sig = histo_equalwidth(f[dirname][signal_name].to_hist())[0]
+        sig = histo_equalwidth(f[dirname][signal_name].to_hist())[0] if signal_name is not None else None
         data = histo_equalwidth(f[dirname]['data_obs'].to_hist())[0]
-        main_bkgds = ['TT', 'ST', 'DY', 'W', 'QCD']
-        bkgd_dict  = {name: h for name, h in equal_width_hists.items() if any(name == s for s in main_bkgds)}
-        others = reduce(add, (h for name, h in equal_width_hists.items() if name not in bkgd_dict))
-        bkgd_dict["Others"] = others
-        #sorted_bkgd_dict = dict(sorted(bkgd_dict.items(), key=lambda x: x[1].sum().value, reverse=False))
-        # instead impose a fixed order of "Others", "QCD", "W", "ST", "DY", "TT"
-        sorted_bkgd_dict = OrderedDict()
-        for name in ["Others", "QCD", "W", "ST", "DY", "TT"]:
-            if name in bkgd_dict:
-                sorted_bkgd_dict[name] = bkgd_dict[name]
-        bkgd_stack = Stack.from_dict(sorted_bkgd_dict)
-        bkgd_stack_error_hist = hist.new.Reg(len(bin_edges)-1, bin_edges[0], bin_edges[-1], name="bkgd_stack_error").Weight()
-        bkgd_stack_error_hist.view().value = sum(bkgd_stack).values()
-        # add the statistical error in quadrature
-        bkgd_stack_error_hist.view().variance = bkgd_stack_variance + np.array(sum(bkgd_stack).variances())
-        return bkgd_stack, bkgd_stack_error_hist, sig, data, bin_edges
+
+    main_bkgds = ['TT', 'ST', 'DY', 'W', 'QCD']
+    bkgd_dict  = {name: h for name, h in equal_width_hists.items() if any(name == s for s in main_bkgds)}
+    others = reduce(add, (h for name, h in equal_width_hists.items() if name not in bkgd_dict))
+    bkgd_dict["Others"] = others
+    #sorted_bkgd_dict = dict(sorted(bkgd_dict.items(), key=lambda x: x[1].sum().value, reverse=False))
+    # instead impose a fixed order of "Others", "QCD", "W", "ST", "DY", "TT"
+    sorted_bkgd_dict = OrderedDict()
+    for name in ["Others", "QCD", "W", "ST", "DY", "TT"]:
+        if name in bkgd_dict:
+            sorted_bkgd_dict[name] = bkgd_dict[name]
+    bkgd_stack = Stack.from_dict(sorted_bkgd_dict)
+    bkgd_stack_error_hist = hist.new.Reg(len(bin_edges)-1, bin_edges[0], bin_edges[-1], name="bkgd_stack_error").Weight()
+    bkgd_stack_error_hist.view().value = sum(bkgd_stack).values()
+    # add the statistical error in quadrature
+    bkgd_stack_error_hist.view().variance = bkgd_stack_variance + np.array(sum(bkgd_stack).variances())
+    return bkgd_stack, bkgd_stack_error_hist, sig, data, bin_edges
 
 
 def load_reslim(file: str | Path,
@@ -197,7 +200,7 @@ def plot_mc_stat(mc: Stack,
 
 
 def plot_mc_data_sig(data_hist: Hist,
-                     signal_hist: Hist,
+                     signal_hist: Hist | None,
                      bkgd_stack: Stack,
                      stack_error_hist: Hist,
                      bin_edges: list,
@@ -205,30 +208,36 @@ def plot_mc_data_sig(data_hist: Hist,
                      channel: str,
                      cat: str,
                      savename: str | Path,
-                     signal_name: str,
+                     signal_name: str | None = None,
                      limit_value = None,
+                     unblind_edge: float | None = 0.8,
                      ) -> None:
 
-    if limit_value is None:
-        label = (f"{signal_name} $\\times$ 1")
-        signal_hist *= 1
-    else:
-        label = (f"{signal_name}\n"
-                #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
-                f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
-                "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
-        signal_hist *= limit_value * br_hh_bbtt
+    if not signal_name is None:
+        if limit_value is None:
+            label = (f"{signal_name} $\\times$ 1")
+            signal_hist *= 1
+        else:
+            label = (f"{signal_name}\n"
+                    #"$\cdot\,\sigma(\mathrm{pp}\rightarrow\mathrm{X}\rightarrow{HH})$"
+                    f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
+                    "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
+            signal_hist *= limit_value * br_hh_bbtt
     # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # unblind all bins up to 0.8 
-    if len(bin_edges) > 2:
-        mask = bin_edges[1:] < 0.8 #0.8
-        if all(~mask):
-            # unblind just the first bin
-            mask = np.zeros_like(signal_hist.values(), dtype=bool)
-            mask[0] = True
+    if unblind_edge is not None:
+        if len(bin_edges) > 2:
+            mask = bin_edges[1:] < unblind_edge
+            if all(~mask):
+                # unblind just the first bin
+                mask = np.zeros_like(data_hist.values(), dtype=bool)
+                mask[0] = True
+        else:
+            # don't unblind
+            mask = np.zeros_like(data_hist.values(), dtype=bool)
     else:
-        # don't unblind
-        mask = np.zeros_like(signal_hist.values(), dtype=bool)
+        # unblind all bins
+        mask = np.ones_like(data_hist.values(), dtype=bool)
     # blind data
     data_hist.values()[~mask] = np.nan
     data_hist.variances()[~mask] = np.nan
@@ -259,11 +268,12 @@ def plot_mc_data_sig(data_hist: Hist,
     #hep.histplot(sum(bkgd_stack), histtype="band", ax=ax1, **errps)
     data_hist.plot(ax=ax1, color='black', label="Data", histtype='errorbar')
     hep.histplot(stack_error_hist, ax=ax1, histtype="band", **errps, label="Unc. (stat. & syst.)")
-    signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
+    if not signal_hist is None:
+        signal_hist.plot(color='black', ax=ax1, label=label) #signal_name)
     
     if any(mask):
         idx = np.where(mask)[0][-1] + 1
-        x = signal_hist.axes[0].edges[idx]
+        x = data_hist.axes[0].edges[idx]
         y = sum(bkgd_stack).values()[idx-1]*2 
         ax1.vlines(x, 0, y,
                 color='red', linestyle='--', label=f"unblinding edge")
@@ -273,8 +283,8 @@ def plot_mc_data_sig(data_hist: Hist,
     lgd.get_frame().set_boxstyle("Square", pad=0.0)
     ax1.set_yscale("log")
     min_y_tt_dy = min([bkgd_stack[h].values().min() for h in ["DY", "TT"]])
-    min_y_sig = signal_hist.values().min()
-    min_y = min(min_y_tt_dy, min_y_sig)
+    #min_y_sig = signal_hist.values().min()
+    #min_y = min(min_y_tt_dy, min_y_sig)
     max_y = sum(bkgd_stack).values().max()
     #ax1.set_ylim((0.1*min_y, 100 * max_y))
     #ax1.set_ylim((min_y, 10 * max_y))
@@ -292,7 +302,10 @@ def plot_mc_data_sig(data_hist: Hist,
     #ratio_hist.variances()[~mask] = np.nan
 
     ax2.hlines(1, 0, 1, color='black', linestyle='--')
-    ax2.hlines([0.75, 1.25], 0, 1, color='grey', linestyle='--')
+    if not signal_hist is None:
+        ax2.hlines([0.75, 1.25], 0, 1, color='grey', linestyle='--')
+    else:
+        ax2.hlines([0.5, 1.5], 0, 1, color='grey', linestyle='--')
     hep.histplot(data_hist.values()/sum(bkgd_stack).values(),
                  data_hist.axes[0].edges,
                  yerr=np.sqrt(data_hist.variances())/sum(bkgd_stack).values(),
@@ -302,9 +315,12 @@ def plot_mc_data_sig(data_hist: Hist,
     #yerr = ratio_uncertainty(data_hist.values(),sum(bkgd_stack).values(), "poisson-ratio")
     yerr = np.divide(np.sqrt(stack_error_hist.variances()), stack_error_hist.values())
     ax2.stairs(1+yerr, edges=data_hist.axes[0].edges, baseline=1-yerr, **errps)
-    ax2.set_ylim(0.7, 1.3)
+    if not signal_hist is None:
+        ax2.set_ylim(0.7, 1.3)
+    else:
+        ax2.set_ylim(0.4, 1.6)
     ax2.set_xlim(0, 1)
-    ax2.set_xticks(signal_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
+    ax2.set_xticks(data_hist.axes[0].edges, [round(i, 4) for i in bin_edges], rotation=60)
     if not Path(savename).parent.exists():
         os.makedirs(Path(savename).parent)
     plt.savefig(savename, bbox_inches='tight', pad_inches=0.05)
@@ -315,7 +331,9 @@ def make_plots(input_dir: str | Path,
                output_dir: str | Path,
                year: str,
                spin: str,
-               limits_file: str | Path | None = None):
+               limits_file: str | Path | None = None,
+               unblind_edge: float | None = 0.8,
+               control_region: bool = False) -> None:
     if output_dir == "":
         output_dir = f"./{Path(input_dir).parent.stem}"
     if not os.path.exists(output_dir):
@@ -332,7 +350,7 @@ def make_plots(input_dir: str | Path,
         #_, _, _, channel, cat, sign, isolation, _, spin, _, mass = filename.stem.split("_")
         _, _, _, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = filename.stem.split("_")
         dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
-        signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt"
+        signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not control_region else None
         stack, stack_error_hist, sig, data, bin_edges = load_hists(filename, dirname, signal_name, year)
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
@@ -347,7 +365,8 @@ def make_plots(input_dir: str | Path,
                              cat=cat,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
-                             limit_value=lim)
+                             limit_value=lim,
+                             unblind_edge=unblind_edge,)
         else: 
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
             plot_mc_data_sig(data_hist=data,
@@ -360,7 +379,8 @@ def make_plots(input_dir: str | Path,
                              cat=cat,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
-                             limit_value=None)
+                             limit_value=None,
+                             unblind_edge=unblind_edge)
             #lim = None
             #plot_hist_cms_style(bkgd_stack=stack,
                                 #signal_hist=sig,
@@ -376,12 +396,14 @@ def main(input_dir: str | Path,
          output_dir: str | Path,
          year: str,
          spin: str,
-         limits_file: str | Path | None) -> None:
+         limits_file: str | Path | None,
+         unblind_edge: float | None = 0.8) -> None:
     make_plots(input_dir=input_dir,
                output_dir=output_dir,
                year=year,
                spin=spin,
-               limits_file=limits_file)
+               limits_file=limits_file,
+               unblind_edge=unblind_edge)
 
 
 if __name__ == "__main__":
@@ -391,7 +413,9 @@ if __name__ == "__main__":
          output_dir=args.output_dir,
          year=args.year,
          spin=args.spin,
-         limits_file=args.limits_file)
+         limits_file=args.limits_file,
+         unblind_edge=args.unblind_edge
+         )
 
 
 
