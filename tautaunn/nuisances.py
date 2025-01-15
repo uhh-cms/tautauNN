@@ -359,6 +359,27 @@ class RateEffect:
         negate = self.category.startswith("!")
         return fnmatch(category, self.category.lstrip("!")) != negate
 
+    def is_symmetric(self) -> bool:
+        return "/" not in self.effect
+
+    def get_up_effect(self) -> float:
+        if self.is_symmetric():
+            # in this case just return half the effect for up
+            assert (effect := float(self.effect)) > 1
+            return (effect - 1) / 2
+        else:
+            assert (effect := float(self.effect.split("/")[1])) > 1
+            return effect - 1
+    
+    def get_down_effect(self) -> str:
+        if self.is_symmetric():
+            # in this case just return half the effect for down
+            assert (effect := float(self.effect)) > 1
+            return (1 - effect) / 2
+        else:
+            assert (effect := float(self.effect.split("/")[0])) < 1
+            return 1 - effect  
+
 
 @dataclass
 class RateNuisance:
