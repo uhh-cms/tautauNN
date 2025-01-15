@@ -827,7 +827,8 @@ class PlotDists(Task):
             card_name = Path(card).stem
             data_dir, channel, cat, spin, mass, year = self.get_data_dir(card_name)
             signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not self.control_region else None
-            stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
+            #stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
+            stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(card, data_dir, channel, cat, signal_name, year)
             if self.limits_file is not law.NO_STR:
                 lim = load_reslim(self.limits_file, mass)
                 signal_name = " ".join(
@@ -842,7 +843,8 @@ class PlotDists(Task):
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
-                                stack_error_hist=stack_err,
+                                bkgd_errors_up=bkgd_errors_up,
+                                bkgd_errors_down=bkgd_errors_down,
                                 bin_edges=bin_edges,
                                 year=year,
                                 channel=channel,
@@ -864,7 +866,8 @@ class PlotDists(Task):
                 plot_mc_data_sig(data_hist=data,
                                 signal_hist=sig,
                                 bkgd_stack=stack,
-                                stack_error_hist=stack_err,
+                                bkgd_errors_up=bkgd_errors_up,
+                                bkgd_errors_down=bkgd_errors_down,
                                 bin_edges=bin_edges,
                                 year=year,
                                 channel=channel,
