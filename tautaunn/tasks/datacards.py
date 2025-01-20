@@ -804,37 +804,34 @@ class ControlPlots(MultiSkimTask,):
         # I know i can set the --EvaluateSkims-version to prod7 but setting the version for all
         # of the Training parameters is too annoying. I guess I could change the defaults of the Training task
         # in the future
-        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+        eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
         if "max-" in os.environ["HOSTNAME"]:
             eval_dir = eval_dir.replace("nfs", "data") 
 
-        # prepare skim and eval directories, and samples to use per
-        skim_directories = []
-        eval_directories = []
+        # get all samples
+        sample_names = []
         for skim_name in os.listdir(os.path.join(eval_dir, self.year)):
             sample = cfg.get_sample(f"{self.year}_{skim_name}", silent=True)
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
-            e_dir = os.path.join(eval_dir, self.year, skim_name)
             if os.path.isdir(skim_dir):
-                skim_directories.append(skim_dir)
-                eval_directories.append(e_dir)
+                sample_names.append(sample.name)
+            else:
+                raise ValueError(f"Cannot find skim directory for sample {sample.name} in year {sample.year}")
 
-        eval_directories = sorted(eval_directories)
-        skim_directories = sorted(skim_directories)
-        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
             mass=list(self.masses),
             category=self.categories,
-            skim_directories=skim_directories,
-            eval_directories=eval_directories,
+            sample_names=sorted(sample_names),
+            skim_directory=cfg.skim_dirs[self.year],
+            eval_directory=os.path.join(eval_dir, self.year),
             output_directory=self.output().first_target.dirname,
             n_bins=self.n_bins,
             output_pattern=self.card_pattern,
