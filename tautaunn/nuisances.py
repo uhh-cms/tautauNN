@@ -360,7 +360,7 @@ class RateEffect:
         return fnmatch(category, self.category.lstrip("!")) != negate
 
     def get_up_effect(self) -> float:
-        if "/" in up_effect:
+        if "/" in self.effect:
             up_effect = float(self.effect.split("/")[1])
         else:
             up_effect = float(self.effect)
@@ -368,7 +368,7 @@ class RateEffect:
 
     def get_down_effect(self) -> float:
         if "/" in self.effect:
-            down_effect = float(up_effect.split("/")[0])
+            down_effect = float(self.effect.split("/")[0])
         else:
             down_effect = 2 - float(self.effect)
         return 1 - down_effect
