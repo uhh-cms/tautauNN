@@ -737,7 +737,7 @@ class PlotDists(Task):
 
 
     def get_card_dir(self, card):
-        if any([s in card for s in ("first", "noak8", "notres2b")]): 
+        if any([s in card for s in ("first", "noak8", "notres2b")]):
             if "cr_" in card:
                 _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
             else:
@@ -751,7 +751,7 @@ class PlotDists(Task):
 
 
     def get_data_dir(self, card):
-        if any([s in card for s in ("first", "noak8", "notres2b")]): 
+        if any([s in card for s in ("first", "noak8", "notres2b")]):
             if "cr_" in card:
                 _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
                 data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{region}_{sign}_{isolation}"
@@ -819,7 +819,6 @@ class PlotDists(Task):
 
 
     def run(self):
-
         from tautaunn.plot_dists import plot_mc_data_sig, load_hists, load_reslim
 
         fc = self.output()
@@ -829,53 +828,28 @@ class PlotDists(Task):
             signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not self.control_region else None
             #stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
             stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(card, data_dir, channel, cat, signal_name, year)
-            if self.limits_file is not law.NO_STR:
-                lim = load_reslim(self.limits_file, mass)
-                signal_name = " ".join(
-                    signal_name.split("_")[0:5]
-                    ).replace(
-                        "ggf", "ggf;"
-                        ).replace(
-                            "spin ", 's:'
-                            ).replace(
-                                "mass ", "m:"
-                                ) if not self.control_region else None
-                plot_mc_data_sig(data_hist=data,
-                                signal_hist=sig,
-                                bkgd_stack=stack,
-                                bkgd_errors_up=bkgd_errors_up,
-                                bkgd_errors_down=bkgd_errors_down,
-                                bin_edges=bin_edges,
-                                year=year,
-                                channel=channel,
-                                cat=cat,
-                                signal_name=signal_name,
-                                savename=path.path,
-                                limit_value=lim,
-                                unblind_edge= self.unblind_edge if self.unblind_edge > 0.0 else None)
-            else:
-                signal_name = " ".join(
-                    signal_name.split("_")[0:5]
-                    ).replace(
-                        "ggf", "ggf;"
-                        ).replace(
-                            "spin ", 's:'
-                            ).replace(
-                                "mass ", "m:"
-                                ) if not self.control_region else None
-                plot_mc_data_sig(data_hist=data,
-                                signal_hist=sig,
-                                bkgd_stack=stack,
-                                bkgd_errors_up=bkgd_errors_up,
-                                bkgd_errors_down=bkgd_errors_down,
-                                bin_edges=bin_edges,
-                                year=year,
-                                channel=channel,
-                                cat=cat,
-                                signal_name=signal_name,
-                                savename=path.path,
-                                limit_value=None,
-                                unblind_edge=self.unblind_edge if self.unblind_edge > 0.0 else None)
+
+            # define the signal name
+            signal_name = None
+            if not self.control_region:
+                signal_name = " ".join(signal_name.split("_")[0:5])
+                signal_name = signal_name.replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
+
+            plot_mc_data_sig(
+                data_hist=data,
+                signal_hist=sig,
+                bkgd_stack=stack,
+                bkgd_errors_up=bkgd_errors_up,
+                bkgd_errors_down=bkgd_errors_down,
+                bin_edges=bin_edges,
+                year=year,
+                channel=channel,
+                cat=cat,
+                signal_name=signal_name,
+                savename=path.path,
+                limit_value=None if self.limits_file == law.NO_STR else load_reslim(self.limits_file, mass),
+                unblind_edge=self.unblind_edge if self.unblind_edge > 0.0 else None,
+            )
 
 
 _default_categories_cr = ("2017_*tau_resolved1b_noak8_cr_os_iso", "2017_*tau_resolved2b_first_cr_os_iso", "2017_*tau_boosted_notres2b_cr_os_iso")
@@ -927,7 +901,7 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
         default=cfg.masses,
         description="masses to use; default: all",
     )
-    
+
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -975,7 +949,7 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
         #if "max-" in os.environ["HOSTNAME"]:
-            #eval_dir = eval_dir.replace("nfs", "data") 
+            #eval_dir = eval_dir.replace("nfs", "data")
 
         inp = self.input()
         # prepare skim and eval directories, and samples to use per
