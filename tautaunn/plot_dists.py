@@ -113,7 +113,6 @@ def load_hists(filename: str | Path,
         for shape in hists if shape != "nominal" and ("Up" in shape or "Down" in shape)
     ]
 
-
     # wherever the delta is negative, the shift contributes to the "up" part of the errorbar
     bkgd_errors_shape_up = [
         np.abs(np.where(delta < 0, delta, 0)) for delta in bkgd_erros_shapes
@@ -123,7 +122,6 @@ def load_hists(filename: str | Path,
     bkgd_errors_shape_down = [
         np.abs(np.where(delta > 0, delta, 0)) for delta in bkgd_erros_shapes
     ]
-
 
     # rate nuisances
     bkgd_errors_rate_up = []

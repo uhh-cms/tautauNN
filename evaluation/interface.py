@@ -215,7 +215,7 @@ if __name__ == "__main__":
 
     nn0 = NNInterface(
         fold_index=0,
-        model_path="/nfs/dust/cms/user/riegerma/taunn_data/store/ExportEnsemble/prod3/hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FI0_SDx5",  # noqa
+        model_path="/data/dust/user/riegerma/taunn_data/store/ExportEnsemble/prod3/hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FI0_SDx5",  # noqa
     )
 
     predictions = nn0(

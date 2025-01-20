@@ -709,7 +709,7 @@ def main():
     parser.add_argument(
         "--output-path",
         "-o",
-        default=(default_path :=  "/nfs/dust/cms/user/jwulff/taunn_data/store/GetBinning"),
+        default=(default_path :=  "/data/dust/user/jwulff/taunn_data/store/GetBinning"),
         help=f"output directory; default: {default_path}",
     )
     parser.add_argument(
@@ -721,7 +721,7 @@ def main():
     )
     parser.add_argument(
         "--cache-directory",
-        default=(default_cache := "/nfs/dust/cms/user/jwulff/taunn_data/store/GetBinningCache"),
+        default=(default_cache := "/data/dust/user/jwulff/taunn_data/store/GetBinningCache"),
         help=f"cache directory; default: {default_cache}",
     )
     parser.add_argument(
