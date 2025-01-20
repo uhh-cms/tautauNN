@@ -5,6 +5,7 @@ import uproot
 import numpy as np
 import awkward as ak
 import hist
+from typing import Sequence
 
 from collections import defaultdict
 from functools import reduce
@@ -13,7 +14,7 @@ from fnmatch import fnmatch
 from tqdm import tqdm
 
 from tautaunn.nuisances import shape_nuisances, ShapeNuisance
-from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years
+from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years, expand_categories
 
 from tautaunn.cat_selectors import selector, sel_baseline, category_factory
 from tautaunn.config import luminosities, Sample, get_sample
@@ -69,7 +70,7 @@ def load_klub_file(skim_directory: str,
                    is_data: bool = False,
                    treename: str = "HTauTauTree"):
     # define the branches to read here:
-    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns] + ["IdFakeSF_deep_2d"]
+    klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns]
     # all columns that should be loaded and kept later on
     persistent_columns = klub_index_columns + klub_extra_columns + sel_baseline.flat_columns
     # add all columns potentially necessary for selections
@@ -86,9 +87,6 @@ def load_klub_file(skim_directory: str,
         array = ak.with_field(array, 1.0, "full_weight_nominal")
         persistent_columns.append("full_weight_nominal")
     else:
-        # aliases do not work with filter_name for some reason, so swap names manually
-        array = ak.with_field(array, array["IdFakeSF_deep_2d"], "idFakeSF")
-        array = ak.without_field(array, "IdFakeSF_deep_2d")
         # compute the full weight for each shape variation (includes nominal)
         # and complain when non-finite weights were found
         for nuisance in shape_nuisances.values():
@@ -206,13 +204,38 @@ def load_file(
     return array
 
     
-def fill_hists(binnings: dict,
-               skim_directory: str,
+def fill_hists(skim_directory: str,
                eval_directory: str,
                sample_name: str,
                klub_file_name: str,
+               category: str | Sequence[str],
+               n_bins: int | None = None,
+               binnings: dict | None = None,
                sum_weights: float = 1.0, 
                variable_pattern: str = "pdnn_m{mass}_s{spin}_hh"):
+
+
+    # make sure that either n_bins or binnings is given
+    if n_bins is None and binnings is None:
+        raise ValueError("either n_bins or binnings must be given")
+    if n_bins is not None and binnings is not None:
+        raise ValueError("only one of n_bins or binnings must be given")
+
+    cats = expand_categories(category)
+    # get the year and complain if there's multiple
+    years = set([cat.split("_")[0] for cat in cats])
+    if len(years) > 1:
+        raise ValueError(f"multiple years provided with categories: {category}")
+    else:
+        year = years.pop()
+        del years
+
+        
+    if n_bins is not None:
+        binnings = {cat: np.linspace(0, 1, n_bins + 1) for cat in cats}
+        # expand category names to include spin and mass
+        binnings = {f"{cat}__s{spin}__m{mass}": bins for cat, bins in binnings.items()
+                    for spin, mass in itertools.product(_spins, _masses)}
 
     # corresponding eval file name
     eval_file_name = klub_file_name.replace(".root", "_systs.root")
@@ -227,9 +250,8 @@ def fill_hists(binnings: dict,
         for spin, mass in itertools.product(_spins, _masses)
     ]
 
-    # get the year
-    year = skim_directory_to_year(skim_directory) 
-    datacard_year = datacard_years[year]
+
+
     # get the process name
     process = sample_name_to_process(sample_name)
     # in case of signal reduce cols to the ones we need
@@ -251,12 +273,14 @@ def fill_hists(binnings: dict,
                       is_data,
                       sum_weights)
 
-    hists = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-
+    hists = {} 
     print(f"filling histograms for {sample_name} in {year}")
     for key, bin_edges in tqdm(binnings.items()):
-        cat_name, s, m = key.split("__") # cat_name is of the form year_channel_jet-cat_region__s{spin}_m{mass}
-        jet_cat = cat_name.split("_")[2] # jet category like reolved{1,2}b, boosted
+        cat_name, s, m = key.split("__") # key is of the form year_channel_jet-cat_region__s{spin}__m{mass}
+        jet_cat, suffix = cat_name.split("_")[2:4] # year, channel, jet category like reolved{1,2}b, boosted
+        datacard_year = datacard_years[year]
+        region = "_".join(cat_name.split("_")[-2:]) # region like os_iso, ss_iso, os_noniso, ss_noniso
+        assert region == "os_iso", "Can only fill histograms for os_iso region"
         spin, mass = s[1:], m[1:]
         if sample.is_signal and ((int(spin) != sample.spin) or (int(mass) != sample.mass)):
             continue
@@ -267,7 +291,7 @@ def fill_hists(binnings: dict,
             if is_data:
                 h = hist.Hist.new.Variable(bin_edges, name=variable_name).Weight()
                 h.fill(cat_array[variable_name], weight=cat_array["full_weight_nominal"])
-                hists[cat['channel']][jet_cat][region][f"{process}__s{spin}__m{mass}"] = h
+                hists[f"{cat['channel']}_{jet_cat}_{region}_{process}__s{spin}__m{mass}"] = h
             else:
                 # shape nuisances also contains nominal so we can loop over all and this
                 # should get us all branches we need
@@ -288,7 +312,7 @@ def fill_hists(binnings: dict,
 
                         h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
                         h.fill(cat_array[varied_variable_name], weight=cat_array[varied_weight_field])
-                        hists[cat['channel']][jet_cat][region][f"{combine_name}{direction}__s{spin}__m{mass}"] = h
+                        hists[f"{cat['channel']}_{jet_cat}_{suffix}_{region}_{combine_name}{direction}__s{spin}__m{mass}"] = h
     return hists
 
 
@@ -296,11 +320,8 @@ def write_root_file(hists: dict,
                     filepath: str,):
     print(f"writing histograms to {filepath}")
     with uproot.recreate(filepath) as f:
-        for channel, cat_dict in tqdm(hists.items()):
-            for jet_cat, region_dict in cat_dict.items():
-                for region, hist_dict in region_dict.items():
-                    for name, hist in hist_dict.items():
-                        f[f"{channel}/{jet_cat}/{region}/{name}"] = hist
+        for key, hist in hists.items():
+            f[key] = hist
 
 
 def main():
@@ -335,10 +356,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
-
-
- 
-    
-    

@@ -706,162 +706,22 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         write_datacards(**datacard_kwargs)
 
 
-class PlotDists(Task):
 
-    datacards = law.CSVParameter(
-        default=_default_categories,
-        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
-        brace_expand=True,
-    )
+_default_categories_cr = ("{year}_*tau_resolved1b_noak8_cr_os_iso", "{year}_*tau_resolved2b_first_cr_os_iso", "{year}_*tau_boosted_notres2b_cr_os_iso")
 
-    limits_file = luigi.Parameter(
-        default=law.NO_STR,
-        description="path to a limits.npz file; default: ''",
-    )
+def eval_year_to_skim_year(eval_year):
+    # use a regex to match the 2 digits after 20
+    year = re.search(r"20(\d{2})", eval_year).group(1)
+    return f"SKIMS_UL{year}"
 
-    unblind_edge = luigi.FloatParameter(
-        default=0.0,
-        description="unblinding edge; default: 0.0 -> no unblinding",
-    )
-
-    control_region = luigi.BoolParameter(
-        default=False,
-        description="whether to plot the control region; default: False",
-    )
-
-    file_type = luigi.ChoiceParameter(
-        default="png",
-        choices=("png", "pdf"),
-        description="type of the plot files, choices: png, pdf; default: png",
-    )
-
-
-    def get_card_dir(self, card):
-        if any([s in card for s in ("first", "noak8", "notres2b")]):
-            if "cr_" in card:
-                _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
-            else:
-                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
-        else:
-            if "cr_" in card:
-                _, _, year, channel, cat, region, sign, isolation, _, spin, _, mass = card.split("_")
-            else:
-                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
-        return f"{year}/{channel}/{cat}/"
-
-
-    def get_data_dir(self, card):
-        if any([s in card for s in ("first", "noak8", "notres2b")]):
-            if "cr_" in card:
-                _, _, year, channel, cat, cat_suffix, region, sign, isolation, _, spin, _, mass = card.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{region}_{sign}_{isolation}"
-            else:
-                _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
-        else:
-            if "cr_" in card:
-                _, _, year, channel, cat, region, sign, isolation, _, spin, _, mass = card.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{region}_{sign}_{isolation}"
-            else:
-                _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
-                data_dir = f"cat_{year}_{channel}_{cat}_{sign}_{isolation}"
-        return data_dir, channel, cat, spin, mass, year
-
-
-    def get_signal_name_and_dir(self, card):
-        if len(card.split("_")) == 11:
-            _, _, _, channel, cat, sign, isolation, _, spin, _, mass = card.split("_")
-            return f"cat_{year}_{channel}_{cat}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
-        if len(card.split("_")) == 12:
-            _, _, year, channel, cat, cat_suffix, sign, isolation, _, spin, _, mass = card.split("_")
-            return f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}", f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt", year, mass
-
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        assert self.file_type in ("png", "pdf")
-        import re
-        # Regular expression pattern to match the years 2016, 2016APV, 2017, and 2018
-        year_pattern = r"2016(?:APV)?|2017|2018"
-        from glob import glob
-        # glob the datacards
-        self.matched_cards = []
-        for pattern in self.datacards:
-            self.matched_cards.append(glob(pattern.replace("datacard_", "shapes_").replace(".txt", ".root")))
-        self.matched_cards = list(itertools.chain(*self.matched_cards))
-        try:
-            years = set([re.search(year_pattern, card).group() for card in self.matched_cards])
-        except AttributeError as e:
-            raise ValueError(f"Couldn't match any cards with provided pattern {self.datacards}")
-        if len(years) > 1 and self.limits_file != law.NO_STR:
-            print(("\n WARNING: \n"
-                  f"Datacard pattern includes multiple years ({years}) "
-                   "and a limits file was passed (just for one year ?).\n"
-                  f"This might not work as expected."))
-
-
-    def output(self):
-        # prepare the output directory
-        d = self.local_target("", dir=True)
-        # hotfix location in case TN_STORE_DIR is set to Marcel's
-        output_path = d.path
-        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]:
-            new_path = output_path.replace(path_user, os.environ["USER"])
-            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
-            d = self.local_target(new_path, dir=True)
-
-        return law.FileCollection({
-            card: d.child(f"{self.get_card_dir(stem:=Path(card).stem)}/{stem}.{self.file_type}", type="f")
-            for card in self.matched_cards
-        })
-
-
-    def run(self):
-        from tautaunn.plot_dists import plot_mc_data_sig, load_hists, load_reslim
-
-        fc = self.output()
-        for card, path in tqdm(fc.targets.items()):
-            card_name = Path(card).stem
-            data_dir, channel, cat, spin, mass, year = self.get_data_dir(card_name)
-            signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not self.control_region else None
-            #stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
-            stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(card, data_dir, channel, cat, signal_name, year)
-
-            # define the signal name
-            signal_name = None
-            if not self.control_region:
-                signal_name = " ".join(signal_name.split("_")[0:5])
-                signal_name = signal_name.replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
-
-            plot_mc_data_sig(
-                data_hist=data,
-                signal_hist=sig,
-                bkgd_stack=stack,
-                bkgd_errors_up=bkgd_errors_up,
-                bkgd_errors_down=bkgd_errors_down,
-                bin_edges=bin_edges,
-                year=year,
-                channel=channel,
-                cat=cat,
-                signal_name=signal_name,
-                savename=path.path,
-                limit_value=None if self.limits_file == law.NO_STR else load_reslim(self.limits_file, mass),
-                unblind_edge=self.unblind_edge if self.unblind_edge > 0.0 else None,
-            )
-
-
-_default_categories_cr = ("2017_*tau_resolved1b_noak8_cr_os_iso", "2017_*tau_resolved2b_first_cr_os_iso", "2017_*tau_boosted_notres2b_cr_os_iso")
-
-class ControlPlots(MultiSkimTask, EvaluationParameters):
+class ControlPlots(MultiSkimTask,):
 
     default_store = "$TN_STORE_DIR_MARCEL"
 
-    categories = law.CSVParameter(
-        default=_default_categories_cr,
-        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories_cr)}",
-        brace_expand=True,
+    year = luigi.ChoiceParameter(
+        default="2017",
+        choices=("2016", "2016APV", "2017", "2018"),
+        description="year to use; default: 2017",
     )
     qcd_estimation = luigi.BoolParameter(
         default=True,
@@ -908,6 +768,7 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
+        self.categories = [s.format(year=self.year) for s in _default_categories_cr]
 
     @property
     def card_names(self):
@@ -918,14 +779,13 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
                 self.card_pattern.format(category=category, spin=spin, mass=mass)
                 for spin, mass, category in itertools.product(self.spins, self.masses, categories)
             ]
-
         return self._card_names
 
-    def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
+    #def requires(self):
+        #return {
+            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            #for skim_name in self.skim_names
+        #}
 
     def output(self):
         d = self.local_target(dir=True)
@@ -944,27 +804,29 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
         # I know i can set the --EvaluateSkims-version to prod7 but setting the version for all
         # of the Training parameters is too annoying. I guess I could change the defaults of the Training task
         # in the future
-        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                   #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                   #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                   #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        #if "max-" in os.environ["HOSTNAME"]:
-            #eval_dir = eval_dir.replace("nfs", "data")
+        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+                   "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                   "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                   "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "data") 
 
-        inp = self.input()
         # prepare skim and eval directories, and samples to use per
-        skim_directories = defaultdict(list)
-        eval_directories = {}
-        for skim_name in inp:
-            sample = cfg.get_sample(skim_name, silent=True)
+        skim_directories = []
+        eval_directories = []
+        for skim_name in os.listdir(os.path.join(eval_dir, self.year)):
+            sample = cfg.get_sample(f"{self.year}_{skim_name}", silent=True)
             if sample is None:
-                sample_name, skim_year = self.split_skim_name(skim_name)
+                sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
                 sample = cfg.Sample(sample_name, year=skim_year)
-            skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
-            if sample.year not in eval_directories:
-                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-                #eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+            skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
+            e_dir = os.path.join(eval_dir, self.year, skim_name)
+            if os.path.isdir(skim_dir):
+                skim_directories.append(skim_dir)
+                eval_directories.append(e_dir)
 
+        eval_directories = sorted(eval_directories)
+        skim_directories = sorted(skim_directories)
         #
         # define arguments
         datacard_kwargs = dict(
@@ -973,7 +835,7 @@ class ControlPlots(MultiSkimTask, EvaluationParameters):
             category=self.categories,
             skim_directories=skim_directories,
             eval_directories=eval_directories,
-            output_directory=self.output().first_target.absdirname,
+            output_directory=self.output().first_target.dirname,
             n_bins=self.n_bins,
             output_pattern=self.card_pattern,
             variable_pattern=self.variable,

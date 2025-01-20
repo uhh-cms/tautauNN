@@ -42,7 +42,7 @@ def write_datacards(
     spin: int | Sequence[int],
     mass: int | Sequence[int],
     category: str | Sequence[str],
-    skim_directories: dict[tuple[str, str], list[str] | None],
+    skim_directories: dict[str, str],
     eval_directories: dict[str, str],
     output_directory: str,
     n_bins: int = 5,
@@ -59,15 +59,9 @@ def write_datacards(
     _masses = make_list(mass)
     _categories = expand_categories(category)
 
-    # split skim directories and sample names to filter and actual directories, both mapped to years
-    filter_sample_names = {
-        year: sample_names or []
-        for (year, _), sample_names in skim_directories.items()
-    }
-    skim_directories = {
-        year: skim_dir
-        for year, skim_dir in skim_directories
-    }
+    year = _categories[0].split("_")[0]
+    # assert that only one year is given
+    assert all(cat.split("_")[0] == year for cat in _categories) 
 
     # input checks
     for spin in _spins:
@@ -76,36 +70,20 @@ def write_datacards(
         assert mass in masses
     for category in _categories:
         assert category in categories
-    for year in skim_directories:
-        assert year in eval_directories
 
 
-    # get a list of all sample names per skim directory
-    all_sample_names = {
-        year: [
-            dir_name
-            for dir_name in os.listdir(skim_dir)
-            if (
-                os.path.isdir(os.path.join(skim_dir, dir_name)) and
-                dir_is_skim_dir(dir_name)
-            )
-        ]
-        for year, skim_dir in skim_directories.items()
-    }
-
-    # fiter by given sample names
-    all_sample_names = {
-        year: [
-            sample_name
-            for sample_name in sample_names
-            if any(fnmatch(sample_name, pattern) for pattern in filter_sample_names[year] or ["*"])
-        ]
-        for year, sample_names in all_sample_names.items()
-    }
+    # check that all skim directories are valid
+    sample_names = []
+    for sample_name, skim_dir in skim_directories:
+        if not os.path.isdir(skim_dir):
+            raise Exception(f"'{skim_dir}' is not a valid skim directory")
+        sample_names.append(skim_dir.split("/")[-1])
+        
+    assert "_".join(sample_names) == "_".join([s.split("/")[-1] for s in eval_directories])
 
     # get a mapping of process name to sample names
-    sample_map: dict[str, dict[str, list]] = defaultdict(dict)
-    all_matched_sample_names: dict[str, list[str]] = defaultdict(list)
+    sample_map: dict[str, list] = {} 
+    all_matched_sample_names: list[str] = [] 
     for process_name, process_data in processes.items():
         # skip signals that do not match any spin or mass
         if (
@@ -115,19 +93,18 @@ def write_datacards(
             continue
 
         # match sample names
-        for year, _sample_names in all_sample_names.items():
+        for sample_name in sample_names:
             matched_sample_names = []
-            for sample_name in _sample_names:
-                if any(fnmatch(sample_name, pattern) for pattern in process_data["sample_patterns"]):
-                    if sample_name in matched_sample_names:
-                        raise Exception(f"sample '{sample_name}' already matched by a previous process")
-                    all_matched_sample_names[year].append(sample_name)
-                    matched_sample_names.append(sample_name)
-                    continue
+            if any(fnmatch(sample_name, pattern) for pattern in process_data["sample_patterns"]):
+                if sample_name in matched_sample_names:
+                    raise Exception(f"sample '{sample_name}' already matched by a previous process")
+                all_matched_sample_names.append(sample_name)
+                matched_sample_names.append(sample_name)
+                continue
             if not matched_sample_names:
                 print(f"process '{process_name}' has no matched samples, skipping")
                 continue
-            sample_map[year][process_name] = matched_sample_names
+            sample_map[process_name] = matched_sample_names
 
     # ensure that the output directory exists
     output_directory = os.path.expandvars(os.path.expanduser(output_directory))
@@ -141,22 +118,19 @@ def write_datacards(
     ]
 
     # loading data
-    print(f"going to load {sum(map(len, all_matched_sample_names.values()))} samples")
+    print(f"going to load {len(all_matched_sample_names)} samples")
     sample_data = {
-        year: {
             sample_name: load_sample_data(
-                skim_directories[year],
-                eval_directories[year],
+                skim_directories[i],
+                eval_directories[i],
                 year,
                 sample_name,
                 dnn_output_columns,
                 n_parallel=n_parallel_read,
                 cache_directory=cache_directory,
             )
-            for sample_name in sample_names
+            for i, sample_name in enumerate(all_matched_sample_names)
         }
-        for year, sample_names in all_matched_sample_names.items()
-    }
 
     # write each spin, mass and category combination
     datacard_args = []
@@ -193,8 +167,8 @@ def write_datacards(
 
 
 def _write_datacard(
-    sample_map: dict[str, dict[str, list[str]]],
-    sample_data: dict[str, dict[str, ak.Array]],
+    sample_map: dict[str, list[str]],
+    sample_data: dict[str, ak.Array],
     spin: int,
     mass: int,
     category: str,
@@ -212,6 +186,9 @@ def _write_datacard(
     if cat_data["year"] is not None and not any(cat_data["year"] == year for year in sample_data):
         print(f"category {category} is bound to a year but no data was provided for that year")
         return (None, None)
+
+
+    datacard_year = datacard_years[cat_data["year"]]
 
     # check if the requested category is indeed a control region
     if not "_cr" in category:
@@ -260,76 +237,56 @@ def _write_datacard(
     # - remove signal processes from the sample map that do not correspond to spin or mass
     # - remove data processes that are not meant to be included for the channel
     reduced_sample_map = defaultdict(dict)
-    for year, _map in sample_map.items():
-        if cat_data["year"] not in (None, year):
+    for process_name, sample_names in sample_map.items():
+        # skip all signals
+        if (
+            processes[process_name].get("signal", False)
+        ):
             continue
-        for process_name, sample_names in _map.items():
-            # skip all signals
-            if (
-                processes[process_name].get("signal", False)
-            ):
-                continue
-            # skip some data
-            if (
-                processes[process_name].get("data", False) and
-                cat_data["channel"] not in processes[process_name]["channels"]
-            ):
-                continue
-            reduced_sample_map[year][process_name] = sample_names
+        # skip some data
+        if (
+            processes[process_name].get("data", False) and
+            cat_data["channel"] not in processes[process_name]["channels"]
+        ):
+            continue
+        reduced_sample_map[process_name] = sample_names
     sample_map = reduced_sample_map
 
-    # drop years from sample_data if not needed
-    sample_data = {
-        year: data
-        for year, data in sample_data.items()
-        if year in sample_map
-    }
-
     # reversed map to assign processes to samples
-    sample_processes = defaultdict(dict)
-    for year, _map in sample_map.items():
-        for process_name, sample_names in _map.items():
-            sample_processes[year].update({sample_name: process_name for sample_name in sample_names})
+    sample_processes = {val: key for key, val in sample_map.items()}
 
     # apply qcd estimation category selections
     if qcd_estimation:
         qcd_data = {
             region_name: {
-                year: {
-                    sample_name: data[sample_name][categories[qcd_category]["selection"](data[sample_name], year=year)]
-                    for sample_name, process_name in sample_processes[year].items()
+                    sample_name: sample_data[sample_name][categories[qcd_category]["selection"](sample_data[sample_name], year=year)]
+                    for sample_name, process_name in sample_processes.items()
                     # skip signal
                     if not processes[process_name].get("signal", False)
-                }
-                for year, data in sample_data.items()
             }
             for region_name, qcd_category in qcd_categories.items()
         }
 
     # apply the category selection to sample data
     sample_data = {
-        year: {
-            sample_name: data[sample_name][cat_data["selection"](data[sample_name], year=year)]
+            sample_name: sample_data[sample_name][cat_data["selection"](sample_data[sample_name], year=year)]
             for sample_name, process_name in sample_processes[year].items()
-        }
-        for year, data in sample_data.items()
     }
 
     # complain when nan's were found
-    for year, data in sample_data.items():
-        for sample_name, _data in data.items():
-            for field in _data.fields:
-                # skip fields other than the shape variables
-                if not field.startswith(variable_name):
-                    continue
-                n_nonfinite = np.sum(~np.isfinite(_data[field]))
-                if n_nonfinite:
-                    print(
-                        f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
-                        f"selection are non-finite in variable {field}",
-                    )
+    for sample_name, _data in sample_data.items():
+        for field in _data.fields:
+            # skip fields other than the shape variables
+            if not field.startswith(variable_name):
+                continue
+            n_nonfinite = np.sum(~np.isfinite(_data[field]))
+            if n_nonfinite:
+                print(
+                    f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
+                    f"selection are non-finite in variable {field}",
+                )
 
-    #
+#
     # write shapes
     #
 
@@ -338,16 +295,12 @@ def _write_datacard(
 
     # transpose the sample_map so that we have a "process -> year -> sample_names" mapping
     process_map = defaultdict(dict)
-    for year, _map in sample_map.items():
-        for process_name, sample_names in _map.items():
-            process_map[process_name][year] = sample_names
+    for process_name, sample_names in sample_map.items():
+        process_map[process_name][year] = sample_names
 
     # histogram structures
-    # mapping (year, process) -> (nuisance, direction) -> hist
-    hists: dict[tuple[str, str], dict[tuple[str, str], hist.Hist]] = defaultdict(dict)
-
-    # keep track per year if at least one variation lead to a valid qcd estimation
-    any_qcd_valid = {year: False for year in sample_map.keys()}
+    # mapping process -> (nuisance, direction) -> hist
+    hists: dict[str, dict[tuple[str, str], hist.Hist]] = defaultdict(dict)
 
     # outer loop over variations
     for nuisance in shape_nuisances.values():
@@ -376,14 +329,12 @@ def _write_datacard(
                 _hist_name, _process_name = hist_name, process_name
                 if processes[process_name].get("data", False):
                     _hist_name = _process_name = "data_obs"
-                for year in _map.keys():
-                    datacard_year = datacard_years[year]
-                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
-                    h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
-                    hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)] = h
+                full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
+                h = hist.Hist.new.Variable(bin_edges, name=full_hist_name).Weight()
+                hists[_process_name][(nuisance.get_combine_name(year=datacard_year), direction)] = h
 
             # fill histograms
-            for process_name, _map in process_map.items():
+            for process_name, sample_names in process_map.items():
                 if not nuisance.applies_to_process(process_name):
                     continue
 
@@ -397,21 +348,19 @@ def _write_datacard(
                     _hist_name = _process_name = "data_obs"
 
                 # fill the histogram
-                for year, sample_names in _map.items():
-                    datacard_year = datacard_years[year]
-                    full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
-                    h = hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)]
-                    scale = 1 if is_data else luminosities[year]
-                    if processes[process_name].get("signal", False):
-                        scale *= br_hh_bbtt
-                    for sample_name in sample_names:
-                        weight = 1
-                        if not is_data:
-                            weight = sample_data[year][sample_name][varied_weight_field] * scale
-                        h.fill(**{
-                            full_hist_name: sample_data[year][sample_name][varied_variable_name],
-                            "weight": weight,
-                        })
+                full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
+                h = hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)]
+                scale = 1 if is_data else luminosities[year]
+                if processes[process_name].get("signal", False):
+                    scale *= br_hh_bbtt
+                for sample_name in sample_names:
+                    weight = 1
+                    if not is_data:
+                        weight = sample_data[sample_name][varied_weight_field] * scale
+                    h.fill(**{
+                        full_hist_name: sample_data[year][sample_name][varied_variable_name],
+                        "weight": weight,
+                    })
 
                     # add epsilon values at positions where bin contents are not positive
                     nom = h.view().value
@@ -577,81 +526,3 @@ def _write_datacard(
 
 def _write_datacard_mp(args: tuple[Any]) -> tuple[str, str]:
     return _write_datacard(*args)
-
-
-default_categories = ["2017_*tau_resolved1b_noak8_cr_os_iso", "2017_*tau_resolved2b_first_cr_os_iso"]
-
-def main(output_dir: str,
-         spins: list[int] = cfg.spins,
-         masses: list[int] = cfg.masses,
-         categories: list[str] = default_categories,
-         ):
-
-    eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-    if "max-" in os.environ["HOSTNAME"]:
-        eval_dir = eval_dir.replace("nfs", "data") 
-
-    def split_skim_name(skim_name: str) -> tuple[str, str, str, cfg.Sample]:
-        m = re.match(rf"^({'|'.join(cfg.skim_dirs.keys())})_(.+)$", skim_name)
-        if not m:
-            raise ValueError(f"invalid skim name format '{skim_name}'")
-        skim_year = m.group(1)
-        sample_name = m.group(2)
-        return sample_name, skim_year
-
-    # get the year from the categories
-    years = set([cat.split("_")[0] for cat in categories])
-    if len(years) != 1:
-        raise ValueError("categories must all be from the same year")
-    year = years.pop()
-    
-    skim_directories = defaultdict(list)
-    eval_directories = {}
-    for skim_name in os.listdir(f"{eval_dir}/{year}"): 
-        sample = cfg.get_sample(f"{year}_{skim_name}", silent=True)
-        if sample is None:
-            sample_name, skim_year = split_skim_name(f"{year}_{skim_name}")
-            sample = cfg.Sample(sample_name, year=skim_year)
-        skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
-        if sample.year not in eval_directories:
-            #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-            eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
-
-    datacard_kwargs = dict(
-        spin=list(cfg.spins),
-        mass=list(cfg.masses),
-        category=default_categories,
-        skim_directories=skim_directories,
-        eval_directories=eval_directories,
-        output_directory=output_dir,
-        n_bins=5,
-        variable_pattern="pdnn_m{mass}_s{spin}_hh",
-        qcd_estimation=True,
-        n_parallel_read=10,
-        n_parallel_write=10,
-        cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
-        skip_existing=True,
-    )
-
-    # create the cards
-    write_datacards(**datacard_kwargs)
-
-
-if __name__ == "__main__":
-
-    import argparse
-
-    def make_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument("output_dir", type=str)
-        parser.add_argument("--categories", type=str, nargs="+", default=default_categories)
-        return parser
-
-    parser = make_parser()
-    args = parser.parse_args() 
-    main(args.output_dir,
-         categories=args.categories,
-         )

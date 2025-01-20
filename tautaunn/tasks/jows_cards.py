@@ -193,6 +193,10 @@ class GetSumW(Task):
         choices=("2016", "2016APV", "2017", "2018"),
         description="year to use; default: 2017",
     )
+    n_workers = luigi.IntParameter(
+        default=4,
+        description="number of workers to use for parallel processing; default: 4",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -216,7 +220,10 @@ class GetSumW(Task):
         sum_weights = get_sumw(
             skim_directory=skim_directory,
             output_directory=output_directory,
+            num_workers=self.n_workers,
         )
+        # sort sum_weights by sample name
+        sum_weights = dict(sorted(sum_weights.items()))
         filename = os.path.join(output_directory, "sum_weights.json")
         with open(filename, "w") as file:
             json.dump(sum_weights, file)
@@ -226,10 +233,10 @@ class FillHistsWorkflow(SkimWorkflow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-        #self.chunk_size = 10
+        self.chunk_size = 2
         
 
-class FillHists(FillHistsWorkflow, EvaluationParameters):
+class FillHists(FillHistsWorkflow):
     categories = law.CSVParameter(
         default=_default_categories,
         description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
@@ -237,7 +244,7 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
     )
     binning = luigi.ChoiceParameter(
         default="flatsguarded",
-        choices=("flatsguarded", "flats_systs", "flats"),
+        choices=("flatsguarded", "flats_systs", "flats", "equald"),
         description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
     )
     n_bins = luigi.IntParameter(
@@ -273,7 +280,7 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
     def requires(self):
         #evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
         get_sumw_requirement = GetSumW.req(self, year=self.skim_year)
-        if self.binning_file == law.NO_STR:
+        if self.binning_file == law.NO_STR and self.binning != "equald":
             get_binning_requirement = GetBinning.req(self,
                                                      year=self.skim_year,
                                                      spins=self.spins,
@@ -291,26 +298,35 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
         
 
     def output(self):
-        return self.local_target(f"output_{self.branch_data}_hists.root")
+        if self.chunk_size > 1:
+            return law.FileCollection({branch: self.local_target(f"output_{branch}_hists.root") for branch in self.branch_data})
+        else:
+            return self.local_target(f"output_{self.branch_data}_hists.root")
 
 
     def run(self):
         from tautaunn.fill_hists import fill_hists, write_root_file
         inp = self.input()
+        output = self.output()
         if isinstance(inp, tuple):
             assert inp[0].exists(), f"sum_weights file {inp[0]} does not exist"
             assert inp[1].exists(), f"binnings file {inp[1]} does not exist"
         else:
             assert inp.exists(), f"sum_weights file {inp} does not exist"
-            if self.binning_file == law.NO_STR:
+            if self.binning_file == law.NO_STR and self.binning != "equald":
                 raise ValueError("binning file is not provided")
 
-        binnings_file = inp[1].path if isinstance(inp, tuple) else self.binning_file
+        if self.binning != "equald":
+            binnings_file = inp[1].path if isinstance(inp, tuple) else self.binning_file
+            with open(binnings_file, "r") as file:
+                # json file now also includes a string that is the stopping reason
+                binnings = json.load(file)
+            binnings = {key: val[0] for key, val in binnings.items()}
+        else:
+            print(f"\nusing equal-distance binning with {self.n_bins} bins\n")
+            binnings = None
+
         sum_weights_file = inp[0].path if isinstance(inp, tuple) else inp.path
-        with open(binnings_file, "r") as file:
-            # json file now also includes a string that is the stopping reason
-            binnings = json.load(file)
-        binnings = {key: val[0] for key, val in binnings.items()}
         with open(sum_weights_file, "r") as file:
             sum_weights = json.load(file)
         
@@ -319,28 +335,37 @@ class FillHists(FillHistsWorkflow, EvaluationParameters):
             sum_w = 1.0
         else:
             sum_w = sum_weights[self.sample_name]
+
         # hardcode eval dir 
-        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-        #            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-        #            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-        #            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod3_syst")
-        #eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
-        
         eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        hists = fill_hists(binnings=binnings,
-                           skim_directory=self.skim_dir,
-                           eval_directory=os.path.join(eval_dir, self.skim_year),
-                           sample_name=self.sample_name,
-                           klub_file_name=f"output_{self.branch_data}.root",
-                           sum_weights=sum_w,)
-        write_root_file(hists=hists,
-                        filepath=self.output().path)
+        
+        print(f"chunk size: {self.chunk_size}", f"branch data: {self.branch_data}")
+        if self.chunk_size > 1:
+            for branch in self.branch_data:
+                hists = fill_hists(skim_directory=self.skim_dir,
+                                   eval_directory=os.path.join(eval_dir, self.skim_year),
+                                   sample_name=self.sample_name,
+                                   klub_file_name=f"output_{branch}.root",
+                                   category=self.categories,
+                                   binnings=binnings,
+                                   n_bins=self.n_bins,
+                                   sum_weights=sum_w,)
+                write_root_file(hists=hists,
+                                filepath=output[branch].path)
+        else:
+            hists = fill_hists(skim_directory=self.skim_dir,
+                            eval_directory=os.path.join(eval_dir, self.skim_year),
+                            sample_name=self.sample_name,
+                            klub_file_name=f"output_{self.branch_data}.root",
+                            category=self.categories,
+                            binnings=binnings,
+                            n_bins=self.n_bins,
+                            sum_weights=sum_w,)
+            write_root_file(hists=hists,
+                            filepath=output.path)
         
 
 class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
@@ -400,8 +425,9 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
         super().__init__(*args, **kwargs)
 
 
-    def requires(self):
-        return FillHistsWrapper.req(self)
+    #def requires(self):
+        ##return FillHistsWrapper.req(self)
+        #pass
     
 
     def output(self):
