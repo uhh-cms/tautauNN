@@ -108,15 +108,22 @@ def load_hists(filename: str | Path,
 
     nominal_stack = Stack.from_dict(hists["nominal"])
     # shape nuisances 
-    bkgd_errors_shape_up = [
-        np.abs(sum(nominal_stack).values() - sum(Stack.from_dict(hists[f"{shape}"])).values())
-        for shape in hists if shape != "nominal" and "Up" in shape
+    bkgd_erros_shapes = [
+        sum(nominal_stack).values() - sum(Stack.from_dict(hists[f"{shape}"])).values()
+        for shape in hists if shape != "nominal" and ("Up" in shape or "Down" in shape)
     ]
 
-    bkgd_errors_shape_down = [
-        np.abs(sum(nominal_stack).values() - sum(Stack.from_dict(hists[f"{shape}"])).values())
-        for shape in hists if shape != "nominal" and "Down" in shape
+
+    # wherever the delta is negative, the shift contributes to the "up" part of the errorbar
+    bkgd_errors_shape_up = [
+        np.abs(np.where(delta < 0, delta, 0)) for delta in bkgd_erros_shapes
     ]
+
+    # vice versa
+    bkgd_errors_shape_down = [
+        np.abs(np.where(delta > 0, delta, 0)) for delta in bkgd_erros_shapes
+    ]
+
 
     # rate nuisances
     bkgd_errors_rate_up = []
