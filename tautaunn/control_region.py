@@ -13,7 +13,7 @@ import hist
 import os
 from fnmatch import fnmatch
 import tqdm
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import time
 import itertools
 import re
@@ -36,6 +36,76 @@ from tautaunn.write_datacards_stack import categories, spins, masses, datacard_y
 from tautaunn.write_datacards_stack import expand_categories, make_list, dir_is_skim_dir, ShapeNuisance
 from tautaunn.write_datacards_stack import br_hh_bbtt
 import tautaunn.config as cfg
+
+from pathlib import Path
+import matplotlib.pyplot as plt
+from functools import reduce
+from operator import add
+from hist import Hist, Stack
+import mplhep as hep
+hep.style.use("CMS")
+
+
+def loose_year(str) -> str:
+    return re.sub(r"_2016APV|_2016|_2017|_2018", "", str)
+
+
+def reduce_stack(stack: Stack,) -> Stack:
+    main_bkgds = ['TT', 'ST', 'DY', 'W', 'QCD']
+    bkgd_dict  = {loose_year(h.name): h for h in stack if any(loose_year(h.name) == s for s in main_bkgds)}
+    others = reduce(add, (h for h in stack if loose_year(h.name) not in bkgd_dict))
+    bkgd_dict["Others"] = others
+    bkgd_dict = {k: v[0] for k, v in bkgd_dict.items()}
+    # impose a fixed order of "Others", "QCD", "W", "ST", "DY", "TT"
+    sorted_bkgd_dict = OrderedDict()
+    for name in ["Others", "QCD", "W", "ST", "DY", "TT"]:
+        if name in bkgd_dict:
+            sorted_bkgd_dict[name] = bkgd_dict[name]
+    return Stack.from_dict(sorted_bkgd_dict)
+
+
+def plot_mc_data_sig(data_hist: Hist,
+                     bkgd_stack: Stack,
+                     year: str,
+                     channel: str,
+                     cat: str,
+                     savename: str | Path | None = None
+                     ) -> None:
+
+    color_map = {
+        "DY": "#7a21dd",
+        "TT": "#9c9ca1",
+        "ST": "#e42536",
+        "W": "#964a8b",
+        "QCD": "#f89c20",
+        "Others":"#5790fc",
+    }
+    lumi = {"2016APV": "19.5", "2016": "16.8", "2017": "41.5", "2018": "59.7"}[year]
+
+    fig, ax1 = plt.subplots(1, 1,
+                            figsize=(10, 12))
+    hep.cms.text(" Preliminary", fontsize=20, ax=ax1)
+    mu, tau = '\u03BC','\u03C4'
+    chn_map = {"etau": r"$bbe$"+tau, "tautau":r"$bb$"+tau+tau, "mutau": r"$bb$"+mu+tau}
+    hep.cms.lumitext(r"{} $fb^{{-1}}$ (13 TeV)".format(lumi), fontsize=20, ax = ax1)
+    ax1.text(0.05, .91, f"{chn_map[channel]}\n{cat}", fontsize=15,transform=ax1.transAxes)
+    
+    bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
+    data_hist.plot(ax=ax1, color='black', label="Data", histtype='errorbar')
+        
+    lgd = ax1.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
+                    frameon=True, facecolor='white', edgecolor='black')
+    lgd.get_frame().set_boxstyle("Square", pad=0.0)
+    ax1.set_yscale("log")
+    max_y = sum(bkgd_stack).values().max()
+    ax1.set_xlabel("")
+    ax1.set_ylabel("Events")
+    if not savename is None:
+        if not Path(savename).parent.exists():
+            os.makedirs(Path(savename).parent)
+        plt.savefig(savename, bbox_inches='tight', pad_inches=0.05)
+        plt.close()
+
 
 
 def write_datacards(
@@ -220,6 +290,9 @@ def _write_datacard(
             for region_name in ["os_noniso", "ss_iso", "ss_noniso", "os_iso"]
         }
 
+    # reversed map to assign processes to samples
+    sample_processes = {str(val): key for key, values in sample_map.items() for val in values}
+
     # reduce the sample_map in three steps:
     # - when the category is bound to a year, drop other years
     # - remove signal processes from the sample map that do not correspond to spin or mass
@@ -238,10 +311,8 @@ def _write_datacard(
         ):
             continue
         reduced_sample_map[process_name] = sample_names
-    sample_map = reduced_sample_map
 
-    # reversed map to assign processes to samples
-    sample_processes = {val: key for key, val in sample_map.items()}
+    sample_map = reduced_sample_map
 
     # apply qcd estimation category selections
     if qcd_estimation:
@@ -337,7 +408,7 @@ def _write_datacard(
 
                 # fill the histogram
                 full_hist_name = ShapeNuisance.create_full_name(_hist_name, year=datacard_year)
-                h = hists[(year, _process_name)][(nuisance.get_combine_name(year=datacard_year), direction)]
+                h = hists[_process_name][(nuisance.get_combine_name(year=datacard_year), direction)]
                 scale = 1 if is_data else luminosities[year]
                 if processes[process_name].get("signal", False):
                     scale *= br_hh_bbtt
@@ -358,7 +429,7 @@ def _write_datacard(
 
             # actual qcd estimation
             if qcd_estimation:
-                # mapping year -> region -> hist
+                # mapping region -> hist
                 qcd_hists: dict[str, tuple[hist.Hist, hist.Hist]] = defaultdict(dict)
                 # create data-minus-background histograms in the 4 regions
                 for region_name, _qcd_data in qcd_data.items():
@@ -366,7 +437,12 @@ def _write_datacard(
                     # create a histogram that is filled with both data and negative background
                     full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
                     h_data = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}_data").Weight()
-                    h_mc = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}_mc").Weight()
+                    # h_mc = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}_mc").Weight()
+                    mc_hists = {"TT": hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight(),
+                                "ST": hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight(),
+                                "DY": hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight(),
+                                "W": hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight(),
+                                "Others": hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()}
                     for sample_name, _data in _qcd_data.items():
                         process_name = sample_processes[sample_name]
                         if not nuisance.applies_to_process(process_name):
@@ -383,22 +459,28 @@ def _write_datacard(
                                 f"{full_hist_name}_data": _data[variable_name],
                                 "weight": 1,
                             })
-                        else:
+                        elif process_name in [key for key in mc_hists.keys() if key != "Others"]: 
                             scale = luminosities[year]
-                            h_mc.fill(**{
-                                f"{full_hist_name}_mc": _data[varied_variable_name],
+                            mc_hists[process_name].fill(**{
+                                f"{full_hist_name}": _data[varied_variable_name],
                                 "weight": _data[varied_weight_field] * scale,
                             })
+                        else:
+                            scale = luminosities[year]
+                            mc_hists["Others"].fill(**{
+                                f"{full_hist_name}": _data[varied_variable_name],
+                                "weight": _data[varied_weight_field] * scale,
+                            })
+
+                    mc_stack = Stack.from_dict(mc_hists)
                     # subtract the mc from the data
                     # h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
                     # h_qcd.view().value[...] = h_data.view().value - h_mc.view().value
                     # h_qcd.view().variance[...] = h_mc.view().variance
                     # qcd_hists[year][region_name] = h_qcd
-                    qcd_hists[region_name] = (h_data, h_mc)
-
-            # ABCD method per year
-            # TODO: consider using averaging between the two options where the shape is coming from
-            for region_name, region_hists in qcd_hists.items():
+                    qcd_hists[region_name] = (h_data, mc_stack)
+                # ABCD method per year
+                # TODO: consider using averaging between the two options where the shape is coming from
                 datacard_year = datacard_years[year]
                 full_hist_name = ShapeNuisance.create_full_name(hist_name, year=datacard_year)
                 h_qcd = hist.Hist.new.Variable(bin_edges, name=f"{full_hist_name}").Weight()
@@ -406,20 +488,20 @@ def _write_datacard(
                 B, C, D = "ss_iso", "os_noniso", "ss_noniso"
                 # test
                 # B, C, D = "os_noniso", "ss_iso", "ss_noniso"
-                h_data_b, h_mc_b = region_hists[B]
-                h_data_c, h_mc_c = region_hists[C]
-                h_data_d, h_mc_d = region_hists[D]
+                h_data_b, h_mc_b = qcd_hists[B]
+                h_data_c, h_mc_c = qcd_hists[C]
+                h_data_d, h_mc_d = qcd_hists[D]
                 # compute transfer factor and separate mc and data uncertainties
                 int_data_c = Number(h_data_c.sum().value, {"data": h_data_c.sum().variance**0.5})
                 int_data_d = Number(h_data_d.sum().value, {"data": h_data_d.sum().variance**0.5})
-                int_mc_c = Number(h_mc_c.sum().value, {"mc": h_mc_c.sum().variance**0.5})
-                int_mc_d = Number(h_mc_d.sum().value, {"mc": h_mc_d.sum().variance**0.5})
+                int_mc_c = Number(sum(h_mc_c).sum().value, {"mc": sum(h_mc_c).sum().variance**0.5})
+                int_mc_d = Number(sum(h_mc_d).sum().value, {"mc": sum(h_mc_d).sum().variance**0.5})
                 # deem the qcd estimation invalid if either difference is negative
-                qcd_invalid = (int_mc_c > int_data_c) or (int_mc_d > int_data_d)
+                qcd_invalid = (int_mc_c > int_data_c) or (int_mc_d > int_data_d) or (int_data_d == int_mc_d)
                 if not qcd_invalid:
                     # compute the QCD shape with error propagation
                     values_data_b = Number(h_data_b.view().value, {"data": h_data_b.view().variance**0.5})
-                    values_mc_b = Number(h_mc_b.view().value, {"mc": h_mc_b.view().variance**0.5})
+                    values_mc_b = Number(sum(h_mc_b).view().value, {"mc": sum(h_mc_b).view().variance**0.5})
                     tf = (int_data_c - int_mc_c) / (int_data_d - int_mc_d)
                     qcd = (values_data_b - values_mc_b) * tf
                     # inject values
@@ -433,15 +515,28 @@ def _write_datacard(
                 # keep the variance proportion that reaches into positive values
                 hvar[zero_mask] = (np.maximum(0, hvar[zero_mask]**0.5 + hval[zero_mask]))**2
                 hval[zero_mask] = 1.0e-5
-                # drop qcd shapes in years where no valid estimation was found
-                if qcd_invalid: 
-                    print(
-                        f"  completely dropping QCD shape in ({category},{year},{spin},{mass}) as no valid shape could be "
-                        "created for any nuisance",
-                    )
-                else:
-                    # store it
-                    hists["QCD"][(nuisance.get_combine_name(year=datacard_year), direction)] = h_qcd
+                hists["QCD"][(nuisance.get_combine_name(year=datacard_year), direction)] = h_qcd
+                if nuisance.is_nominal and qcd_invalid:
+                    print(f"QCD estimation invalid for {year} in category {category}")
+                    # plot the data and mc in the qcd regions
+                    plot_mc_data_sig(h_data_b,
+                                     h_mc_b,
+                                     year,
+                                     cat_data["channel"],
+                                     category,
+                                     f"./qcd_plots/SS_iso_{year}_{category}_s{spin}_m{mass}.png")
+                    plot_mc_data_sig(h_data_c,
+                                        h_mc_c,
+                                        year,
+                                        cat_data["channel"],
+                                        category,
+                                        f"./qcd_plots/OS_noniso_{year}_{category}_s{spin}_m{mass}.png")
+                    plot_mc_data_sig(h_data_d,
+                                        h_mc_d,
+                                        year,
+                                        cat_data["channel"],
+                                        category,
+                                        f"./qcd_plots/SS_noniso_{year}_{category}_s{spin}_m{mass}.png")
 
 
     # gather rates from nominal histograms
