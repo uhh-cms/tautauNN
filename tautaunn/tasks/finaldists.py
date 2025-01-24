@@ -3,7 +3,7 @@ import luigi
 import law
 import os
 import itertools
-import tqdm
+from tqdm import tqdm
 
 from pathlib import Path
 
@@ -14,8 +14,7 @@ from tautaunn.tasks.datacards import WriteDatacards, _default_categories
 
 class PlotDists(Task):
     datacards = law.CSVParameter(
-        default=_default_categories,
-        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        description=f"comma-separated patterns to match datacard location",
         brace_expand=True,
     )
 
@@ -25,8 +24,8 @@ class PlotDists(Task):
     )
 
     unblind_edge = luigi.FloatParameter(
-        default=0.0,
-        description="unblinding edge; default: 0.0 -> no unblinding",
+        default=0.8,
+        description="unblinding edge; default: 0.8 -> unblind all bins with edge < 0.8", 
     )
 
     control_region = luigi.BoolParameter(
@@ -111,7 +110,7 @@ class PlotDists(Task):
         d = self.local_target("", dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
-        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user")+1)]
         if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
