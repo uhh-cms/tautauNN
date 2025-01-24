@@ -434,12 +434,11 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
 
 
 #_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
-_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
+#_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
+_default_categories = ("{year}_*tau_resolved1b_noak8_os_iso", "{year}_*tau_resolved2b_first_os_iso", "{year}_*tau_boosted_notres2b_os_iso")
 
 
 class GetEfficiencies(MultiSkimTask, EvaluationParameters):
-
-    default_store = "$TN_STORE_DIR_MARCEL"
 
     categories = law.CSVParameter(
         default=_default_categories,
@@ -522,7 +521,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
         # hardcode the eval directories for now
-        eval_dir = ("/nfs/dust/cms/user/riegerma/taunn_data/store/EvaluateSkims/"
+        eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
@@ -561,8 +560,11 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
 
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
-    default_store = "$TN_STORE_DIR_MARCEL"
-
+    year = luigi.ChoiceParameter(
+        default="2017",
+        choices=("2016", "2016APV", "2017", "2018"),
+        description="year to use; default: 2017",
+    )
     categories = law.CSVParameter(
         default=_default_categories,
         description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
@@ -611,13 +613,18 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
+        self.skim_names = f"{self.year}_*"
+        # manually add skim names to kwargs
+        kwargs["skim_names"] = self.skim_names
+        super().__init__(*args, **kwargs)
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
         if self.binning_file != law.NO_STR:
             self.binning = "custom"
             print(f"using custom binning from file '{self.binning_file}'")
+
+        self.categories = [c.format(year=self.year) for c in self.categories]
 
 
     @property
@@ -632,11 +639,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    def requires(self):
-        return {
-            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            for skim_name in self.skim_names
-        }
+    #def requires(self):
+        #return {
+            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            #for skim_name in self.skim_names
+        #}
 
     def store_parts(self):
         parts = super().store_parts()
@@ -650,6 +657,14 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             dirname += f"_{self.output_suffix.lstrip('_')}"
         d = self.local_target(dirname, dir=True)
 
+        # hotfix location in case TN_STORE_DIR is set to Marcel's
+        output_path = d.path
+        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user")+1)]
+        if path_user != os.environ["USER"]: 
+            new_path = output_path.replace(path_user, os.environ["USER"])
+            print(f"replacing {path_user} with {os.environ['USER']} in output path.")
+            d = self.local_target(new_path, dir=True)
+
         return law.SiblingFileCollection({
             name: {
                 "datacard": d.child(f"datacard_{name}.txt", type="f"),
@@ -661,21 +676,32 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def run(self):
         # load the datacard creating function
         from tautaunn.write_datacards_stack import write_datacards
+        # hardcode eval dir
+        eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
+            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
 
         # prepare inputs
-        inp = self.input()
+        #inp = self.input()
 
         # prepare skim and eval directories, and samples to use per
+        if "max-" in os.environ["HOSTNAME"]:
+            eval_dir = eval_dir.replace("nfs", "data") 
+
         skim_directories = defaultdict(list)
         eval_directories = {}
-        for skim_name in inp:
+        #for skim_name in inp:
+        print(self.skim_names)
+        for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(skim_name)
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+                #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
 
         #
         # define arguments
@@ -716,8 +742,6 @@ def eval_year_to_skim_year(eval_year):
 
 class ControlPlots(MultiSkimTask,):
 
-    default_store = "$TN_STORE_DIR_MARCEL"
-
     year = luigi.ChoiceParameter(
         default="2017",
         choices=("2016", "2016APV", "2017", "2018"),
@@ -753,13 +777,17 @@ class ControlPlots(MultiSkimTask,):
         significant=False,
         description="whether to rewrite existing datacards; default: False",
     )
-    spins = luigi.ListParameter(
-        default=cfg.spins,
-        description="spins to use; default: ['0', '2']",
+    spins = law.CSVParameter(
+        cls=luigi.IntParameter,
+        default=tuple(cfg.spins),
+        description=f"spins to evaluate; default: {','.join(map(str, cfg.spins))}",
+        brace_expand=True,
     )
-    masses = luigi.ListParameter(
-        default=cfg.masses,
-        description="masses to use; default: all",
+    masses = law.CSVParameter(
+        cls=luigi.IntParameter,
+        default=tuple(cfg.masses),
+        description=f"masses to evaluate; default: {','.join(map(str, cfg.masses))}",
+        brace_expand=True,
     )
 
 
