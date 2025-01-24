@@ -37,9 +37,9 @@ action() {
     #
 
     local host_matched="false"
-    if [[ "$( hostname )" =*.desy.de ]]; then
+    if [[ "$( hostname )" = *.desy.de ]]; then
         local on_maxwell="$( [[ "$( hostname )" = max-*.desy.de ]] && echo "true" || echo "false" )"
-        local env_suffix="$( ${on_maxwell} && echo "_maxwell" || echo "_naf" )"
+        local env_suffix="$( ${on_maxwell} && echo "maxwell" || echo "naf" )"
         export TN_DATA_DIR="/data/dust/user/${user_name}/taunn_data"
         export TN_SOFTWARE_DIR="${TN_DATA_DIR}/software_${env_suffix}"
         export TN_REG_MODEL_DIR="/data/dust/user/riegerma/taunn_data/reg_models"
