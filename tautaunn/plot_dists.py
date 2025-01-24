@@ -88,7 +88,9 @@ def load_hists(filename: str | Path,
         objects = f[dirname].classnames()
         nominal_bkgd_names = [o.strip(";1") for o in objects
                             if not any(s in o for s in ["Up", "Down"])
-                            and ((signal_name not in o) and ("data_obs" not in o))]
+                            and ("data_obs" not in o)]
+        if not (signal_name is None):
+            nominal_bkgd_names = [o for o in objects if signal_name not in o]
         shift_names = list(set([o.split("__")[1].replace("Up;1", "")
                             for o in objects
                             if "Up" in o and not any(s in o for s in ["ggf_", "vbf_" 'data_obs'])]))
@@ -97,14 +99,21 @@ def load_hists(filename: str | Path,
         sig = histo_equalwidth(f[dirname][signal_name].to_hist())[0] if signal_name is not None else None
         data = histo_equalwidth(f[dirname]['data_obs'].to_hist())[0]
         hists = {"nominal": {bkgd: f[dirname][f"{bkgd}"].to_hist() for bkgd in nominal_bkgd_names}}
-        hists.update({
-            f"{shift}{direction}": {
-                bkgd: f[dirname][f"{bkgd}__{shift}{direction}"].to_hist()
-                for bkgd in nominal_bkgd_names
-            }
-            for shift in shift_names 
-            for direction in ["Up", "Down"]
-        })
+        for shift in shift_names:
+            for direction in ["Up", "Down"]:
+                for bkgd in nominal_bkgd_names:
+                    try: 
+                        h_ = f[dirname][f"{bkgd}__{shift}{direction}"].to_hist()
+                    except uproot.exceptions.KeyInFileError:
+                        # use an empty hist with the same binning
+                        print(f"Warning: {bkgd}__{shift}{direction} not found in {filename}")
+                        print(f"Replacing with an empty hist")
+                        h_ = f[dirname][f"TT_{year}__{shift}{direction}"].to_hist()
+                        hval = h_.values()
+                        hvar = h_.variances()
+                        hval[..., :] = 1e-5
+                        hvar[..., :] = 1e-5
+                    hists.setdefault(f"{shift}{direction}", {})[bkgd] = h_
 
     nominal_stack = Stack.from_dict(hists["nominal"])
     # shape nuisances 
@@ -157,27 +166,6 @@ def load_reslim(file: str | Path,
     masses = limits['data']['mhh']
     exp_lim = limits['data']['limit']#*1000
     return exp_lim[np.where(masses==int(mass))][0]
-
-
-def plot_single_dist(mc_stack: Stack,
-                     title: str,
-                     savename: str | Path,
-                     sig: Hist | None = None,
-                     lim: float | None = None) -> None:
-    mc_stack.plot(stack=True, histtype='fill')
-    if sig is not None: 
-        if lim is not None:
-            sig = sig/sig.sum().value
-            sig = sig*lim
-            sig.plot1d(label=f'sig. norm. to limit {lim:.1f} fb', color='black')
-        sig.plot1d(label=f'sig.', color='black')
-    plt.yscale('log')
-    lgd = plt.legend(bbox_to_anchor=(1.06, 1.02))
-    plt.ylabel("N")
-    plt.xlabel("DNN out")
-    plt.title(title)
-    plt.savefig(savename, bbox_extra_artists=(lgd,), bbox_inches='tight', pad_inches=0.2)
-    plt.close()
 
 
 def plot_asym_errorband(mc: Stack,
