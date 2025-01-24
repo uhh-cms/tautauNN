@@ -264,18 +264,30 @@ def load_klub_file(
         for nuisance in shape_nuisances.values():
             if not nuisance.is_nominal and not nuisance.weights:
                 continue
-            for direction in nuisance.get_directions():
-                weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
-                array = ak.with_field(
-                    array,
-                    reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns)),
-                    weight_name,
-                )
+            if nuisance.weight_variations:
+                def create_weights():
+                    orig_weight = nuisance.weight_variations[0]
+                    for variation in nuisance.weight_variations[1]:
+                        weight_name = f"full_weight_{variation}"
+                        weight = reduce(mul, (
+                            array[variation if c == orig_weight else orig_weight]
+                            for c in klub_weight_columns
+                        ))
+                        yield weight_name, weight
+            else:
+                def create_weights():
+                    for direction in nuisance.get_directions():
+                        weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
+                        weight = reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns))
+                        yield weight_name, weight
+
+            for weight_name, weight in create_weights():
+                array = ak.with_field(array, weight, weight_name)
                 mask = ~np.isfinite(array[weight_name])
                 if np.any(mask):
                     print(
                         f"found {sum(mask)} ({100.0 * sum(mask) / len(mask):.2f}% of {len(mask)}) "
-                        f"non-finite weight values in sample {sample_name}, file {file_name}, variation {direction}",
+                        f"non-finite weight values in sample {sample_name}, file {file_name}, weight {weight_name}",
                     )
                     array = array[~mask]
                 persistent_columns.append(weight_name)
@@ -292,6 +304,16 @@ def load_klub_file(
             ("nominal", 0),
             ("PUReweight_up", 4),
             ("PUReweight_down", 5),
+            *[
+                # skipping weight 0
+                (f"MC_QCDscale{i + 1}", 6 + i)
+                for i in range(6)
+            ],
+            *[
+                # skipping weight 0
+                (f"MC_pdf{i + 1}", 13 + i)
+                for i in range(100)
+            ],
         ]
     }
 
@@ -1011,6 +1033,8 @@ def _write_datacard(
             dy_shifts = OrderedDict()
             all_bkgds = {}
             for nuisance in shape_nuisances.values():
+                if nuisance.weight_variations:
+                    continue
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
                     hh_values, hh_weights = get_values_and_weights(signal_process_name, nuisance, direction, br_hh_bbtt)
@@ -1075,6 +1099,14 @@ def _write_datacard(
         if not nuisance.is_nominal and not nuisance.applies_to_channel(cat_data["channel"]):
             continue
 
+        # PDF TODO: pdf handling:
+        # per year (summing over samples) and process, build all 100 variations per process, then boil down to 2 and
+        # store them here (do envelope per sample)
+        # pdf_shapes = {process_name: {(year, sample_name): {"up": up_hist, "down": down_hist}}}
+        if nuisance.weight_variations:
+            from IPython import embed; embed(header="build weight_varied_shapes")
+            weight_varied_shapes = {}
+
         # loop over up/down variations (or just "" for nominal)
         for direction in nuisance.get_directions():
             hist_name = (
@@ -1082,8 +1114,10 @@ def _write_datacard(
                 if nuisance.is_nominal
                 else f"{variable_name}_{nuisance.name}{direction}"
             )
-            varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
-            varied_weight_field = nuisance.get_varied_full_weight(direction)
+            # build varied variable and weight fields when needed
+            if not nuisance.weight_variations:
+                varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
+                varied_weight_field = nuisance.get_varied_full_weight(direction)
 
             # define histograms
             for process_name, _map in process_map.items():
@@ -1122,13 +1156,18 @@ def _write_datacard(
                     if processes[process_name].get("signal", False):
                         scale *= br_hh_bbtt
                     for sample_name in sample_names:
-                        weight = 1
-                        if not is_data:
-                            weight = sample_data[year][sample_name][varied_weight_field] * scale
-                        h.fill(**{
-                            full_hist_name: sample_data[year][sample_name][varied_variable_name],
-                            "weight": weight,
-                        })
+                        if nuisance.weight_variations and not is_data:
+                            # PDF TODO: do math
+                            varied_h = weight_varied_shapes[process_name][(year, sample_name)][direction]
+                            from IPython import embed; embed(header="update hist values with varied ones")
+                        else:
+                            weight = 1
+                            if not is_data:
+                                weight = sample_data[year][sample_name][varied_weight_field] * scale
+                            h.fill(**{
+                                full_hist_name: sample_data[year][sample_name][varied_variable_name],
+                                "weight": weight,
+                            })
 
                     # add epsilon values at positions where bin contents are not positive
                     nom = h.view().value

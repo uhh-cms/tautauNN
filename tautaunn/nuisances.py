@@ -11,6 +11,7 @@ class ShapeNuisance:
     combine_name: str = ""
     processes: list[str] = field(default_factory=lambda: ["*"])
     weights: dict[str, tuple[str, str]] = field(default_factory=dict)  # original name mapped to (up, down) variations
+    weight_variations: tuple[str, list[str]] = ()  # names of weight variations for nuisances like PDF, mapped to replaced weight
     discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
     channels: set[str] = field(default_factory=set)
     skip: bool = False
@@ -45,6 +46,7 @@ class ShapeNuisance:
         return [""] if self.is_nominal else ["up", "down"]
 
     def get_varied_weight(self, nominal_weight: str, direction: str) -> str:
+        assert self.name != "pdf_shape"  # TODO: remove when physics is solved
         assert direction in ("", "up", "down")
         if direction:
             for nom, (up, down) in self.weights.items():
@@ -53,6 +55,7 @@ class ShapeNuisance:
         return nominal_weight
 
     def get_varied_full_weight(self, direction: str) -> str:
+        assert self.name != "pdf_shape"  # TODO: remove when physics is solved
         assert direction in ("", "up", "down")
         # use the default weight field in case the nuisance is nominal or has no dedicated weight variations
         if not direction or not self.weights:
@@ -61,6 +64,7 @@ class ShapeNuisance:
         return f"full_weight_{self.name}_{direction}"
 
     def get_varied_discriminator(self, nominal_discriminator: str, direction: str) -> str:
+        assert self.name != "pdf_shape"  # TODO: remove when physics is solved
         assert direction in ("", "up", "down")
         suffix = ""
         if direction and (suffix := self.discriminator_suffix[direction == "down"]):
@@ -306,6 +310,11 @@ ShapeNuisance.new(
     name="l1_prefiring",
     combine_name="CMS_l1_prefiring_{year}",
     weights={"L1pref_weight": ("L1pref_weight_up", "L1pref_weight_down")},
+)
+ShapeNuisance.new(
+    name="pdf_shape",
+    combine_name="pdf_shape",
+    weight_variations={"MC_weight": [f"MC_pdf{i}" for i in range(1, 101)]},
 )
 
 jes_names = {
