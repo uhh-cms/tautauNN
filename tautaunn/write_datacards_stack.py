@@ -46,7 +46,6 @@ from tautaunn.config import masses, spins, klub_index_columns, luminosities, klu
 from tautaunn.config import br_hh_bbtt, channels, datacard_years, processes
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline
-from tautaunn.control_region import plot_mc_data_sig
 from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
 
 

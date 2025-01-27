@@ -30,12 +30,10 @@ from multiprocessing.dummy import Pool as ThreadPool
 from scinum import Number
 
 # data loading same as for write_datacards.py
-from tautaunn.write_datacards_stack import load_dnn_file, load_klub_file, load_file, load_file_mp
-from tautaunn.write_datacards_stack import get_cache_path, sample_name_to_skim_dir, processes, load_sample_data
-from tautaunn.write_datacards_stack import categories, spins, masses, datacard_years, luminosities, categories, shape_nuisances
-from tautaunn.write_datacards_stack import expand_categories, make_list, dir_is_skim_dir, ShapeNuisance
+from tautaunn.write_datacards_stack import categories, spins, masses, datacard_years, luminosities, shape_nuisances
+from tautaunn.write_datacards_stack import expand_categories, make_list, load_sample_data, ShapeNuisance
 from tautaunn.write_datacards_stack import br_hh_bbtt
-import tautaunn.config as cfg
+from tautaunn.config import processes
 
 from pathlib import Path
 import matplotlib.pyplot as plt

@@ -15,16 +15,24 @@ import numpy as np
 import tensorflow as tf
 import awkward as ak
 
+from subprocess import Popen
+from glob import glob
+from tqdm import tqdm
+from pathlib import Path
+import pickle
+
 
 from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
-from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
-from tautaunn.util import calc_new_columns
-from tautaunn.tf_util import get_device
+from tautaunn.tasks.training import MultiFoldParameters
 import tautaunn.config as cfg
 from tautaunn.config import processes
+#
+from tautaunn.write_datacards import get_cache_path, expand_categories, write_datacards
+from tautaunn.get_binning import get_binnings
+from tautaunn.get_sumw import get_sumw
+from tautaunn.cache_data import load_data
+from tautaunn.fill_hists import fill_hists, write_root_file
 
-from tautaunn.tasks.datacards import EvaluateSkims
-from tautaunn.write_datacards_stack import get_cache_path, expand_categories
 
 
 class EvaluationParameters(MultiFoldParameters):
@@ -142,7 +150,6 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
 
 
     def run(self):
-        from tautaunn.get_binning import get_binnings
         
         # prepare inputs
         # inp = self.input()
@@ -208,7 +215,6 @@ class GetSumW(Task):
         return d.child("sum_weights.json", type="f")
 
     def run(self):
-        from tautaunn.get_sumw import get_sumw
 
         # prepare inputs
         inp = self.input()
@@ -277,7 +283,6 @@ class CacheData(Task):
     
     def output(self):
         # get the hash
-        from pathlib import Path
         cashe_path = get_cache_path(
             os.environ["TN_DATACARD_CACHE_DIR"],
             os.environ[f"TN_SKIMS_{self.year}"],
@@ -294,7 +299,6 @@ class CacheData(Task):
             for mass in self.masses for spin in self.spins})
 
     def run(self):
-        from tautaunn.cache_data import load_data
 
         # cast arguments to lists
         _categories = expand_categories(self.categories)
@@ -362,7 +366,6 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
         
 
         print(f"expecting the following hash")
-        from pathlib import Path
         h = get_cache_path(
             os.environ["TN_DATACARD_CACHE_DIR"],
             os.environ[f"TN_SKIMS_{self.year}"],
@@ -400,8 +403,6 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
     
     
     def run(self):
-        from tautaunn.write_datacards import write_datacards
-        import pickle
         # load the sample_data
         paths_dict = self.input()
         spin, mass = self.branch_data.split("_")
@@ -493,7 +494,6 @@ class FillHists(FillHistsWorkflow):
 
 
     def run(self):
-        from tautaunn.fill_hists import fill_hists, write_root_file
         inp = self.input()
         output = self.output()
         if isinstance(inp, tuple):
@@ -665,9 +665,6 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
 
     def run(self):
 
-        from subprocess import Popen
-        from glob import glob
-        from tqdm import tqdm
 
         def merge_sample(destination,
                          skim_files,

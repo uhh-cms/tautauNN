@@ -14,10 +14,11 @@ from fnmatch import fnmatch
 from tqdm import tqdm
 
 from tautaunn.nuisances import shape_nuisances, ShapeNuisance
-from tautaunn.write_datacards_stack import klub_weight_columns, klub_index_columns, klub_extra_columns, processes, datacard_years, expand_categories
+from tautaunn.write_datacards_stack import expand_categories
 
 from tautaunn.cat_selectors import selector, sel_baseline, category_factory
-from tautaunn.config import luminosities, Sample, get_sample
+from tautaunn.config import luminosities, Sample, get_sample, processes
+from tautaunn.config import klub_weight_columns, klub_index_columns, klub_extra_columns, datacard_years
 
 
 _spins = [0,2]

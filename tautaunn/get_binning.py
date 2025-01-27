@@ -29,11 +29,10 @@ from tqdm import tqdm
 from multiprocessing import Pool as ProcessPool
 from multiprocessing.dummy import Pool as ThreadPool
 
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, btag_wps, pnet_wps
+from tautaunn.config import masses, spins, klub_index_columns, luminosities, processes
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.cat_selectors import category_factory
 from tautaunn.nuisances import shape_nuisances
-from tautaunn.write_datacards_stack import processes
 from tautaunn.cat_selectors import selector, sel_baseline
 from tautaunn.binning_algorithms import flatsguarded, flats_systs
 

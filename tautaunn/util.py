@@ -12,7 +12,7 @@ import pickle
 import inspect
 import fnmatch
 import itertools
-from multiprocessing import Pool
+from multiprocessing import Pool as ProcessPool
 from typing import Any
 
 import numpy as np
@@ -77,7 +77,7 @@ def load_sample_root(data_dir, sample, features, selections, max_events=-1, cach
         n_files_seen = 0
         pool_args = [(sample, file_name, features, selections) for file_name in file_names]
         t0 = time.perf_counter()
-        with Pool(n_threads) as pool:
+        with ProcessPool(n_threads) as pool:
             for result in pool.imap(_load_root_file_impl_mp, pool_args):
                 n_files_seen += 1
                 if isinstance(result, str):

@@ -18,6 +18,7 @@ import os
 import re
 import tempfile
 import shutil
+import hashlib
 from collections import OrderedDict, defaultdict
 import itertools
 from fnmatch import fnmatch
@@ -33,15 +34,19 @@ import awkward as ak
 import uproot
 import hist
 from scinum import Number
+from pathlib import Path
+import matplotlib.pyplot as plt
+import mplhep as hep
+from hist import Hist, Stack
 
 import tautaunn.config as cfg
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import channels, processes, masses, spins, klub_index_columns, luminosities, datacard_years, br_hh_bbtt
+from tautaunn.config import channels, processes, masses, spins, luminosities, datacard_years, br_hh_bbtt
 from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline 
 from tautaunn.binning_algorithms import flats, flats_systs, flatsguarded
-from tautaunn.control_region import plot_mc_data_sig
+hep.style.use(hep.style.CMS)
 
 
 categories = {}
@@ -134,6 +139,82 @@ def align_rates_and_parameters(
 
     return lines[:n_rate_lines], lines[n_rate_lines:]
 
+
+def get_cache_path(
+    cache_directory: str,
+    skim_directory: str,
+    eval_directory: str,
+    year: str,
+    sample_name: str,
+    dnn_output_columns: list[str],
+) -> str | None:
+    if not cache_directory:
+        return None
+
+    if not os.path.exists(cache_directory):
+        os.makedirs(cache_directory)
+
+    # get a list of all columns potentially needed by all selectors
+    klub_columns = sorted(set(sum([
+        cat["selection"].flat_columns
+        for cat in categories.values()
+    ], [])))
+
+    # create a hash
+    # TODO: remove trailing path sep and resolve links to abs location
+    h = [
+        transform_data_dir_cache(skim_directory),  # .rstrip(os.sep)
+        transform_data_dir_cache(eval_directory),  # .rstrip(os.sep)
+        sel_baseline.str_repr.strip(),
+        klub_columns,
+        sorted(dnn_output_columns),
+    ]
+    h = hashlib.sha256(str(h).encode("utf-8")).hexdigest()[:10]
+
+    return os.path.join(cache_directory, f"{year}_{sample_name}_{h}.pkl")
+
+
+def plot_mc_data_sig(data_hist: Hist,
+                     bkgd_stack: Stack,
+                     year: str,
+                     channel: str,
+                     cat: str,
+                     savename: str | Path | None = None
+                     ) -> None:
+
+    color_map = {
+        "DY": "#7a21dd",
+        "TT": "#9c9ca1",
+        "ST": "#e42536",
+        "W": "#964a8b",
+        "QCD": "#f89c20",
+        "Others":"#5790fc",
+    }
+    lumi = {"2016APV": "19.5", "2016": "16.8", "2017": "41.5", "2018": "59.7"}[year]
+
+    fig, ax1 = plt.subplots(1, 1,
+                            figsize=(10, 12))
+    hep.cms.text(" Preliminary", fontsize=20, ax=ax1)
+    mu, tau = '\u03BC','\u03C4'
+    chn_map = {"etau": r"$bbe$"+tau, "tautau":r"$bb$"+tau+tau, "mutau": r"$bb$"+mu+tau}
+    hep.cms.lumitext(r"{} $fb^{{-1}}$ (13 TeV)".format(lumi), fontsize=20, ax = ax1)
+    ax1.text(0.05, .91, f"{chn_map[channel]}\n{cat}", fontsize=15,transform=ax1.transAxes)
+    
+    bkgd_stack.plot(stack=True, ax=ax1, color=[color_map[i.name] for i in bkgd_stack], histtype='fill')
+    data_hist.plot(ax=ax1, color='black', label="Data", histtype='errorbar')
+        
+    lgd = ax1.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
+                    frameon=True, facecolor='white', edgecolor='black')
+    lgd.get_frame().set_boxstyle("Square", pad=0.0)
+    ax1.set_yscale("log")
+    max_y = sum(bkgd_stack).values().max()
+    ax1.set_xlabel("")
+    ax1.set_ylabel("Events")
+    if not savename is None:
+        if not Path(savename).parent.exists():
+            os.makedirs(Path(savename).parent)
+        plt.savefig(savename, bbox_inches='tight', pad_inches=0.05)
+        plt.close()
 
 
 def write_datacard(

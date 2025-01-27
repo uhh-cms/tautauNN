@@ -10,7 +10,7 @@ from pathlib import Path
 
 import uproot
 
-from tautaunn.write_datacards_stack import processes
+from tautaunn.config import processes
 
 
 def make_parser():

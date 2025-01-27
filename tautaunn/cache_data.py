@@ -22,10 +22,9 @@ import uproot
 
 from pathlib import Path
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import klub_index_columns, klub_weight_columns
+from tautaunn.config import klub_index_columns, klub_weight_columns, processes
 from tautaunn.nuisances import shape_nuisances
 from tautaunn.cat_selectors import sel_baseline, category_factory
-from tautaunn.write_datacards_stack import processes, expand_categories
 import tautaunn.config as cfg
 
 radgrav = {0: "Rad", 2: "Grav"}
