@@ -21,9 +21,10 @@ from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
 import tautaunn.config as cfg
+from tautaunn.config import processes
 
 from tautaunn.tasks.datacards import EvaluateSkims
-from tautaunn.write_datacards_stack import processes
+from tautaunn.write_datacards_stack import get_cache_path, expand_categories
 
 
 class EvaluationParameters(MultiFoldParameters):
@@ -228,6 +229,193 @@ class GetSumW(Task):
         with open(filename, "w") as file:
             json.dump(sum_weights, file)
 
+class CacheData(Task):
+
+    year = luigi.ChoiceParameter(
+        default="2017",
+        choices=("2016", "2016APV", "2017", "2018"),
+        description="year to use; default: 2017",
+    )
+    spins = law.CSVParameter(
+        cls=luigi.IntParameter,
+        default=tuple(cfg.spins),
+        description=f"spins to evaluate; default: {','.join(map(str, cfg.spins))}",
+        brace_expand=True,
+    )
+    masses = law.CSVParameter(
+        cls=luigi.FloatParameter,
+        default=tuple(cfg.masses),
+        description=f"masses to evaluate; default: {','.join(map(str, cfg.masses))}",
+        brace_expand=True,
+    )
+    categories = law.CSVParameter(
+        default=_default_categories,
+        description=f"comma-separated patterns of categories to produce; default: {','.join(_default_categories)}",
+        brace_expand=True,
+    )
+    variable_pattern = luigi.Parameter(
+        default="pdnn_m{mass}_s{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
+    )
+    parallel_read = luigi.IntParameter(
+        default=4,
+        description="number of parallel processes to use for reading; default: 4",
+    )
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        
+    def requires(self):
+        pass
+   
+    
+    def output(self):
+        # get the hash
+        from pathlib import Path
+        cashe_path = get_cache_path(
+            os.environ["TN_DATACARD_CACHE_DIR"],
+            os.environ[f"TN_SKIMS_{self.year}"],
+            os.path.join(self.eval_dir, self.year),
+            self.year,
+            "TT_SemiLep", 
+            [self.variable_pattern.format(mass=mass, spin=spin)
+             for mass in self.masses for spin in self.spins], 
+        )
+        h = Path(cashe_path).stem.split("_")[-1]
+        # create an output FileCollection (each hypothesis gets its own file)
+        return law.FileCollection({f"{self.year}_mass{mass}_spin{spin}":
+            self.local_target(f"{self.year}_mass{mass}_spin{spin}_{h}.pkl")
+            for mass in self.masses for spin in self.spins})
+
+    def run(self):
+        from tautaunn.cache_data import load_data
+
+        # cast arguments to lists
+        _categories = expand_categories(self.categories)
+
+        
+        year = _categories[0].split("_")[0]
+        # assert that only one year is given
+        assert all(cat.split("_")[0] == year for cat in _categories) 
+        # get all the sample names
+        sample_names = []
+        for skim_name in os.listdir(os.path.join(self.eval_dir, self.year)):
+            sample = cfg.get_sample(f"{self.year}_{skim_name}", silent=True)
+            if sample is None:
+                sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
+                sample = cfg.Sample(sample_name, year=skim_year)
+            skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
+            if os.path.isdir(skim_dir):
+                sample_names.append(sample.name)
+            else:
+                raise ValueError(f"Cannot find skim directory for sample {sample.name} in year {sample.year}")
+
+        paths_dict = load_data(year=self.year,
+                               sample_names=sample_names,
+                               skim_directory=os.environ[f"TN_SKIMS_{self.year}"],
+                               eval_directory=os.path.join(self.eval_dir, self.year),
+                               output_directory=self.output().first_target.absdirname,
+                               cache_directory=os.environ["TN_DATACARD_CACHE_DIR"],
+                               variable_pattern=self.variable_pattern,
+                               n_parallel_read=self.parallel_read,
+                               )
+        return paths_dict
+        
+                         
+class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
+    year = luigi.ChoiceParameter(
+        default="2017",
+        choices=("2016", "2016APV", "2017", "2018"),
+        description="year to use; default: 2017",
+    )
+    spins = law.CSVParameter(
+        cls=luigi.IntParameter,
+        default=tuple(cfg.spins),
+        description=f"spins to evaluate; default: {','.join(map(str, cfg.spins))}",
+        brace_expand=True,
+    )
+    masses = law.CSVParameter(
+        cls=luigi.FloatParameter,
+        default=tuple(cfg.masses),
+        description=f"masses to evaluate; default: {','.join(map(str, cfg.masses))}",
+        brace_expand=True,
+    )
+    variable_pattern = luigi.Parameter(
+        default="pdnn_m{mass}_s{spin}_hh",
+        description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
+        "default: 'pdnn_m{mass}_s{spin}_hh'",
+    )
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.categories = _default_categories.format(year=self.year)
+        self.eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
+                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
+        
+
+        print(f"expecting the following hash")
+        from pathlib import Path
+        h = get_cache_path(
+            os.environ["TN_DATACARD_CACHE_DIR"],
+            os.environ[f"TN_SKIMS_{self.year}"],
+            os.path.join(self.eval_dir, self.year),
+            self.year,
+            "TT_SemiLep",
+            [self.variable_pattern.format(mass=mass, spin=spin)
+                for mass in self.masses for spin in self.spins],
+        )
+        print(Path(h).stem.split("_")[-1])
+
+    def requires(self):
+        return CacheData.req(self,
+                             year=self.year,
+                             spins=self.spins,
+                             masses=self.masses,
+                             categories=self.categories,
+                             variable_pattern=self.variable_pattern)
+    
+    def output(self):
+        categories = expand_categories(self.categories)
+        # produces a filecollection for each channelxcategory combination consisting of datacard and shape files
+        targets = {f"{cat}_datacard":
+                   self.local_target(f"datacard_cat_{cat}_s{s}_m{m}.txt")
+                   for m in self.masses for s in self.spins for cat in categories}
+        targets.update({f"{cat}_shapes":
+                        self.local_target(f"shapes_cat_{cat}_s{s}_m{m}.root")
+                        for m in self.masses for s in self.spins for cat in categories})
+        return law.SiblingFileCollection(targets)
+
+    
+    def create_branch_map(self):
+        categories = expand_categories(self.categories)
+        return [f"{cat}_{s}_{m}" for m in self.masses for s in self.spins for cat in categories] 
+    
+    
+    def run(self):
+        from tautaunn.write_datacards import write_datacards
+        import pickle
+        # load the sample_data
+        paths_dict = self.input()
+        spin, mass = self.branch_data.split("_")
+        with open(paths_dict[f"m{mass}_s{spin}"], "rb") as file:
+            sample_data = pickle.load(file)
+        # get the categories
+        write_datacards(sample_data=sample_data,
+                        spin=spin,
+                        mass=mass,
+                        category=self.categories,
+                        output_directory=self.output().first_target.absdirname,
+        )
+        
+        
 
 class FillHistsWorkflow(SkimWorkflow):
     def __init__(self, *args, **kwargs):

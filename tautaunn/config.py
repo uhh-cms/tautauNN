@@ -5,11 +5,149 @@ from __future__ import annotations
 import os
 import functools
 from dataclasses import dataclass
+from collections import OrderedDict
 from typing import Any, ClassVar
 
 import numpy as np
 
 from tautaunn.util import phi_mpi_to_pi, top_info, boson_info, match, calc_mass, calc_energy, calc_mt, hh
+
+masses = [
+    250, 260, 270, 280, 300, 320, 350, 400, 450, 500, 550, 600, 650,
+    700, 750, 800, 850, 900, 1000, 1250, 1500, 1750, 2000, 2500, 3000,
+]
+
+spins = [0, 2]
+
+br_hh_bbtt = 0.073056256
+
+channels = {
+    "mutau": 0,
+    "etau": 1,
+    "tautau": 2,
+}
+klub_extra_columns = [
+    # "DNNoutSM_kl_1",
+]
+# "years" in all structures above actually mean "era", so define "datacard year" as the actual year of an era
+# for datacard purposes, as, for instance, eras "2016APV" and "2016" are both considered as datacard year "2016"
+datacard_years = {
+    "2016APV": "2016",
+    "2016": "2016",
+    "2017": "2017",
+    "2018": "2018",
+}
+# TODO: JER
+
+processes = OrderedDict({
+    "TT": {
+        "id": 1,
+        "sample_patterns": ["TT_*"],
+    },
+    "ST": {
+        "id": 2,
+        "sample_patterns": ["ST_*"],
+    },
+    "DY": {
+        "id": 3,
+        "sample_patterns": ["DY_*"],
+    },
+    "W": {
+        "id": 4,
+        "sample_patterns": ["WJets_*"],
+    },
+    "EWK": {
+        "id": 5,
+        "sample_patterns": ["EWK*"],
+    },
+    "WW": {
+        "id": 6,
+        "sample_patterns": ["WW"],
+    },
+    "WZ": {
+        "id": 7,
+        "sample_patterns": ["WZ"],
+    },
+    "ZZ": {
+        "id": 8,
+        "sample_patterns": ["ZZ"],
+    },
+    "VVV": {
+        "id": 9,
+        "sample_patterns": ["WWW", "WWZ", "WZZ", "ZZZ"],
+    },
+    "TTV": {
+        "id": 10,
+        "sample_patterns": ["TTWJets*", "TTZTo*"],
+    },
+    "TTVV": {
+        "id": 11,
+        "sample_patterns": ["TTWW", "TTWZ", "TTZZ"],
+    },
+    "ggH_htt": {
+        "id": 12,
+        "sample_patterns": ["GluGluHToTauTau"],
+    },
+    "qqH_htt": {
+        "id": 13,
+        "sample_patterns": ["VBFHToTauTau"],
+    },
+    "ZH_htt": {
+        "id": 14,
+        "sample_patterns": ["ZHToTauTau"],
+    },
+    "WH_htt": {
+        "id": 15,
+        "sample_patterns": ["WminusHToTauTau", "WplusHToTauTau"],
+    },
+    "ttH_hbb": {
+        "id": 16,
+        "sample_patterns": ["ttHTobb"],
+    },
+    "ttH_htt": {
+        "id": 17,
+        "sample_patterns": ["ttHToTauTau"],
+    },
+    # "ggHH_hbbhtt": {
+    #     "id": 18,
+    #     "sample_patterns": ["GGHH_SM"],
+    # },
+    "QCD": {
+        "id": 19,
+        "sample_patterns": [],
+    },
+    **{
+        f"ggf_spin_{spin}_mass_{mass}_hbbhtt": {
+            "id": 0,
+            "sample_patterns": [f"{resonance}{mass}"],
+            "spin": spin,
+            "mass": mass,
+            "signal": True,
+        }
+        for mass in masses
+        for spin, resonance in zip(spins, ["Rad", "Grav"])
+    },
+    "data_mu": {
+        "sample_patterns": ["Muon*"],
+        "data": True,
+        "channels": ["mutau"],
+    },
+    "data_egamma": {
+        "sample_patterns": ["EGamma*"],
+        "data": True,
+        "channels": ["etau"],
+    },
+    "data_tau": {
+        "sample_patterns": ["Tau*"],
+        "data": True,
+        "channels": ["mutau", "etau", "tautau"],
+    },
+    "data_met": {
+        "sample_patterns": ["MET*"],
+        "data": True,
+        "channels": ["mutau", "etau", "tautau"],
+    },
+})
 
 
 @dataclass
@@ -90,12 +228,6 @@ pnet_wps = {
     "2018": 0.9172,
 }
 
-masses = [
-    250, 260, 270, 280, 300, 320, 350, 400, 450, 500, 550, 600, 650,
-    700, 750, 800, 850, 900, 1000, 1250, 1500, 1750, 2000, 2500, 3000,
-]
-
-spins = [0, 2]
 
 category_indices = {
     "mutau_res1b": 1,
