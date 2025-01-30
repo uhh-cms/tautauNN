@@ -27,7 +27,7 @@ from tautaunn.nuisances import shape_nuisances
 from tautaunn.cat_selectors import sel_baseline, category_factory
 import tautaunn.config as cfg
 
-radgrav = {0: "Rad", 2: "Grav"}
+radgrav = {"0": "Rad", "2": "Grav"}
 
 categories = {}
 for channel in ["mutau", "etau", "tautau"]:
@@ -391,7 +391,7 @@ def load_data(
             existing_files = [f for f in existing_files if fnmatch(f, f"*_{h}.pkl")]
             # check for each hypothesis if the file already exists
             for hypothesis_name in [f"m{mass}_s{spin}" for spin, mass in itertools.product(_spins, _masses)]: 
-                if any(fnmatch(f, f"{hypothesis_name}_{h}.pkl") for f in existing_files):
+                if any(fnmatch(f, f"{year}_{hypothesis_name}_{h}.pkl") for f in existing_files):
                     print(f"skipping hypothesis {hypothesis_name}, file already exists")
                     del hypothesis_cols[hypothesis_name]
 
@@ -413,8 +413,9 @@ def load_data(
 
     toc = time.time()
     print(f"loading took {toc - tic:.2f} s")
+
     # split this data into the the individual hypotheses
-    all_cols = sample_data[all_matched_sample_names[0]].fields
+    all_cols = sample_data["ZZZ"].fields
     # get the columns that are not the dnn output columns
     non_dnn_cols = [c for c in all_cols if "dnn" not in c and "full_weight" not in c]
     # get the weight columns
@@ -426,19 +427,24 @@ def load_data(
                              processes[sample_processes[s]].get("data", False) or
                              not processes[sample_processes[s]].get("signal", False)]
     tic = time.time()
-    for hypothesis_name, cols in tqdm(hypothesis_cols.items(), desc="Storing hypotheses"):
-        tqdm.write(f"Storing {hypothesis_name}")
-        spin, mass = hypothesis_name.split("_")
-        spin, mass = spin[1:], mass[1:]
-        hypothesis_data = {
-            sample_name: sample_data[sample_name][non_dnn_cols + weight_cols + cols]
-            for sample_name in bkgd_and_data_samples + [f"{radgrav[spin]}{mass}"]
-        }
-        with open(os.path.join(output_directory, f"{hypothesis_name}_{h}.pkl"), "wb") as f:
+    for hypothesis_name, cols in (pbar:=tqdm(hypothesis_cols.items(), desc="Storing hypotheses")):
+        pbar.set_description(f"Storing {hypothesis_name}")
+        hypothesis_data = {}
+        for sample_name in bkgd_and_data_samples:
+            mass, spin = hypothesis_name.split("_")
+            mass, spin = mass[1:], spin[1:]
+            # check if the sample is data
+            is_data = processes[sample_processes[sample_name]].get("data", False)
+            if is_data:
+                columns = non_dnn_cols + [c for c in cols if not "up" in c and not "down" in c]
+                hypothesis_data[sample_name] = sample_data[sample_name][columns]
+            else:
+                hypothesis_data[sample_name] = sample_data[sample_name][non_dnn_cols + weight_cols + cols]
+        with open(os.path.join(output_directory, f"{year}_{hypothesis_name}_{h}.pkl"), "wb") as f:
             pickle.dump(hypothesis_data, f)
 
     toc = time.time()
     print(f"storing took {toc - tic:.2f} s")
-    return [(hypothesis_name, f"{hypothesis_name}_{h}.pkl", [mass, spin]) for hypothesis_name in hypothesis_cols.keys()]
+    return [(hypothesis_name, f"{year}_{hypothesis_name}_{h}.pkl", [mass, spin]) for hypothesis_name in hypothesis_cols.keys()]
     
     

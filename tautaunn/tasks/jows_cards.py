@@ -294,8 +294,8 @@ class CacheData(Task):
         )
         h = Path(cashe_path).stem.split("_")[-1]
         # create an output FileCollection (each hypothesis gets its own file)
-        return law.FileCollection({f"{self.year}_mass{mass}_spin{spin}":
-            self.local_target(f"{self.year}_mass{mass}_spin{spin}_{h}.pkl")
+        return law.FileCollection({f"{self.year}_m{mass}_s{spin}":
+            self.local_target(f"{self.year}_m{mass}_s{spin}_{h}.pkl")
             for mass in self.masses for spin in self.spins})
 
     def run(self):
@@ -355,35 +355,44 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
         description="variable to use; template values 'mass' and 'spin' are replaced automatically; "
         "default: 'pdnn_m{mass}_s{spin}_hh'",
     )
+    n_bins = luigi.IntParameter(
+        default=10,
+        description="number of bins to use; default: 10",
+    )
+    binning = luigi.ChoiceParameter(
+        default="flats_systs",
+        choices=("flatsguarded", "flats_systs", "flats", "equald"),
+        description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
+    )
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.categories = _default_categories.format(year=self.year)
+        self.categories = [cat.format(year=self.year) for cat in _default_categories]
         self.eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                     "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
         
-
-        print(f"expecting the following hash")
-        h = get_cache_path(
-            os.environ["TN_DATACARD_CACHE_DIR"],
-            os.environ[f"TN_SKIMS_{self.year}"],
-            os.path.join(self.eval_dir, self.year),
-            self.year,
-            "TT_SemiLep",
-            [self.variable_pattern.format(mass=mass, spin=spin)
-                for mass in self.masses for spin in self.spins],
-        )
-        print(Path(h).stem.split("_")[-1])
+        #print(f"expecting the following hash")
+        #h = get_cache_path(
+            #os.environ["TN_DATACARD_CACHE_DIR"],
+            #os.environ[f"TN_SKIMS_{self.year}"],
+            #os.path.join(self.eval_dir, self.year),
+            #self.year,
+            #"TT_SemiLep",
+            #[self.variable_pattern.format(mass=mass, spin=spin)
+                #for mass in self.masses for spin in self.spins],
+        #)
+        #print(Path(h).stem.split("_")[-1])
 
     def requires(self):
-        return CacheData.req(self,
+        reqs = CacheData.req(self,
                              year=self.year,
                              spins=self.spins,
                              masses=self.masses,
                              categories=self.categories,
                              variable_pattern=self.variable_pattern)
+        return reqs
     
     def output(self):
         categories = expand_categories(self.categories)
@@ -399,14 +408,15 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
     
     def create_branch_map(self):
         categories = expand_categories(self.categories)
-        return [f"{cat}_{s}_{m}" for m in self.masses for s in self.spins for cat in categories] 
+        return [f"{s}_{m}" for m in self.masses for s in self.spins]
     
     
     def run(self):
         # load the sample_data
         paths_dict = self.input()
         spin, mass = self.branch_data.split("_")
-        with open(paths_dict[f"m{mass}_s{spin}"], "rb") as file:
+        spin, mass = int(spin), int(mass)
+        with open(paths_dict[f"{self.year}_m{mass}_s{spin}"].abspath, "rb") as file:
             sample_data = pickle.load(file)
         # get the categories
         write_datacards(sample_data=sample_data,
@@ -414,6 +424,7 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
                         mass=mass,
                         category=self.categories,
                         output_directory=self.output().first_target.absdirname,
+                        binning=[self.n_bins, 0.0, 1.0, self.binning],
         )
         
         

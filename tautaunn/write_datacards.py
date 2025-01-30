@@ -231,19 +231,15 @@ def write_datacard(
 ) -> tuple[str | None, str | None, list[float] | None]:
     cat_data = categories[category]
 
-    if isinstance(binning, list):
-        binning_algo = "custom"
-        print(f"using custom binning for category {category}")
+    # input checks
+    assert len(binning) in [3, 4]
+    if len(binning) == 3:
+        x_min, x_max, binning_algo = binning
+        n_bins = cat_data["n_bins"]
     else:
-        # input checks
-        assert len(binning) in [3, 4]
-        if len(binning) == 3:
-            x_min, x_max, binning_algo = binning
-            n_bins = cat_data["n_bins"]
-        else:
-            n_bins, x_min, x_max, binning_algo = binning
-        assert x_max > x_min
-        assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "non_res_like"}
+        n_bins, x_min, x_max, binning_algo = binning
+    assert x_max > x_min
+    assert binning_algo in {"equal", "flats", "flatsguarded", "flats_systs", "non_res_like"}
 
     # check if there is data provided for this category if it is bound to a year
     assert cat_data["year"] in list(luminosities.keys()) + [None]

@@ -280,6 +280,9 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                              x_min=0.):
         if bin_edges[-1] == x_min:
             bin_edges = bin_edges[:-1] 
+            if len(bin_edges) == 1:
+                bin_edges.append(x_min)
+                return bin_edges
         bin_edges_arr = np.asarray(bin_edges)
         if np.sum(bin_edges_arr<0.8) >= 3:
             bin_edges.append(x_min)

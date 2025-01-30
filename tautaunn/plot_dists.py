@@ -347,6 +347,7 @@ def make_plots(input_dir: str | Path,
         dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not control_region else None
         stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(filename, dirname, channel, cat, signal_name, year)
+        unblind_edge = unblind_edge if not control_region else None
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
