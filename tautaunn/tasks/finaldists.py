@@ -23,8 +23,8 @@ class PlotDists(Task):
         description="path to a limits.npz file; default: ''",
     )
 
-    unblind_edge = luigi.FloatParameter(
-        default=0.8,
+    unblind = luigi.BoolParameter(
+        default=False,
         description="unblinding edge; default: 0.8 -> unblind all bins with edge < 0.8", 
     )
 
@@ -139,7 +139,7 @@ class PlotDists(Task):
                 signal_name = " ".join(signal_name.split("_")[0:5])
                 signal_name = signal_name.replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
             else:
-                self.unblind_edge = None
+                self.unblind = True
             plot_mc_data_sig(
                 data_hist=data,
                 signal_hist=sig,
@@ -153,5 +153,5 @@ class PlotDists(Task):
                 signal_name=signal_name,
                 savename=path.path,
                 limit_value=None if self.limits_file == law.NO_STR else load_reslim(self.limits_file, mass),
-                unblind_edge=self.unblind_edge,
+                unblind=self.unblind,
             )

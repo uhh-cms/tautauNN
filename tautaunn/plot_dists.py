@@ -321,7 +321,7 @@ def make_plots(input_dir: str | Path,
                year: str,
                spin: str,
                limits_file: str | Path | None = None,
-               unblind_edge: float | None = 0.8,
+               unblind: bool = False, 
                control_region: bool = False) -> None:
     if output_dir == "":
         output_dir = f"./{Path(input_dir).parent.stem}"
@@ -341,7 +341,7 @@ def make_plots(input_dir: str | Path,
         dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not control_region else None
         stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(filename, dirname, channel, cat, signal_name, year)
-        unblind_edge = unblind_edge if not control_region else None
+        unblind = unblind if not control_region else True 
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
@@ -357,7 +357,7 @@ def make_plots(input_dir: str | Path,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
                              limit_value=lim,
-                             unblind_edge=unblind_edge,)
+                             unblind=unblind,)
         else: 
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
             plot_mc_data_sig(data_hist=data,
@@ -372,7 +372,7 @@ def make_plots(input_dir: str | Path,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
                              limit_value=None,
-                             unblind_edge=unblind_edge)
+                             unblind=unblind)
 
 
 def main(input_dir: str | Path,
