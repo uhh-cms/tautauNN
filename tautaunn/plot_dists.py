@@ -207,7 +207,7 @@ def plot_mc_data_sig(data_hist: Hist,
                      savename: str | Path | None = None,
                      signal_name: str | None = None,
                      limit_value = None,
-                     unblind_edge: float | None = 0.8,
+                     unblind: bool = False,
                      ) -> None:
 
     if not signal_name is None:
@@ -222,19 +222,13 @@ def plot_mc_data_sig(data_hist: Hist,
             signal_hist *= limit_value * br_hh_bbtt
     # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # unblind all bins up to 0.8 
-    if unblind_edge is not None:
-        if len(bin_edges) > 2:
-            mask = bin_edges[1:] < unblind_edge
-            if all(~mask):
-                # unblind just the first bin
-                mask = np.zeros_like(data_hist.values(), dtype=bool)
-                mask[0] = True
-        else:
-            # don't unblind
-            mask = np.zeros_like(data_hist.values(), dtype=bool)
+    if unblind: 
+        # unblind everywhere, where s/sqrt(b) <  
+        s_sqrt_b = signal_hist.values()/np.sqrt(sum(bkgd_stack).values())
+        mask = s_sqrt_b < 0.05
     else:
-        # unblind all bins
-        mask = np.ones_like(data_hist.values(), dtype=bool)
+        # don't unblind
+        mask = np.zeros_like(data_hist.values(), dtype=bool)
     # blind data
     data_hist.values()[~mask] = np.nan
     data_hist.variances()[~mask] = np.nan
