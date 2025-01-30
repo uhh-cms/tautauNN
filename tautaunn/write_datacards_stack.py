@@ -423,10 +423,9 @@ def get_cache_path(
     ], [])))
 
     # create a hash
-    # TODO: remove trailing path sep and resolve links to abs location
     h = [
-        transform_data_dir_cache(skim_directory),  # .rstrip(os.sep)
-        transform_data_dir_cache(eval_directory),  # .rstrip(os.sep)
+        transform_data_dir_cache(skim_directory).rstrip(os.sep),
+        transform_data_dir_cache(eval_directory).rstrip(os.sep),
         sel_baseline.str_repr.strip(),
         klub_columns,
         klub_extra_columns,
