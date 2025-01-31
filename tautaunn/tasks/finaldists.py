@@ -133,13 +133,9 @@ class PlotDists(Task):
             signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not self.control_region else None
             #stack, stack_err, sig, data, bin_edges = load_hists(card, data_dir, signal_name, year)
             stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(card, data_dir, channel, cat, signal_name, year)
-            # define the signal name
-            signal_name = None
             if not self.control_region:
                 signal_name = " ".join(signal_name.split("_")[0:5])
                 signal_name = signal_name.replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
-            else:
-                self.unblind = True
             plot_mc_data_sig(
                 data_hist=data,
                 signal_hist=sig,
@@ -154,4 +150,5 @@ class PlotDists(Task):
                 savename=path.path,
                 limit_value=None if self.limits_file == law.NO_STR else load_reslim(self.limits_file, mass),
                 unblind=self.unblind,
+                control_region=self.control_region,
             )

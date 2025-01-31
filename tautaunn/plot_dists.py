@@ -86,11 +86,11 @@ def load_hists(filename: str | Path,
 
     with uproot.open(filename) as f:
         objects = f[dirname].classnames()
-        nominal_bkgd_names = [o.strip(";1") for o in objects
-                            if not any(s in o for s in ["Up", "Down"])
-                            and ("data_obs" not in o)]
+        nominal_bkgd_names = [o.replace(";1", "") for o in objects if not
+                              any(s in o for s in ["Up", "Down"])
+                              and ("data_obs" not in o)]
         if not (signal_name is None):
-            nominal_bkgd_names = [o for o in objects if signal_name not in o]
+            nominal_bkgd_names = [o for o in nominal_bkgd_names if signal_name not in o]
         shift_names = list(set([o.split("__")[1].replace("Up;1", "")
                             for o in objects
                             if "Up" in o and not any(s in o for s in ["ggf_", "vbf_" 'data_obs'])]))
@@ -208,6 +208,7 @@ def plot_mc_data_sig(data_hist: Hist,
                      signal_name: str | None = None,
                      limit_value = None,
                      unblind: bool = False,
+                     control_region: bool = False
                      ) -> None:
 
     if not signal_name is None:
@@ -222,13 +223,28 @@ def plot_mc_data_sig(data_hist: Hist,
             signal_hist *= limit_value * br_hh_bbtt
     # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
     # unblind all bins up to 0.8 
-    if unblind: 
-        # unblind everywhere, where s/sqrt(b) <  
-        s_sqrt_b = signal_hist.values()/np.sqrt(sum(bkgd_stack).values())
-        mask = s_sqrt_b < 0.05
-    else:
-        # don't unblind
-        mask = np.zeros_like(data_hist.values(), dtype=bool)
+    if unblind:
+        if len(bin_edges) > 2:
+            mask = bin_edges[1:] < 0.8
+            if all(~mask):
+                # unblind just the first bin
+                mask = np.zeros_like(data_hist.values(), dtype=bool)
+                mask[0] = True
+        else:
+            # don't unblind
+            mask = np.zeros_like(data_hist.values(), dtype=bool)
+    if control_region:
+        mask = np.ones_like(data_hist.values(), dtype=bool)
+
+    ######## using the s/sqrt(b) < 0.005 criterion doesn't work well
+    #else:
+        #if unblind: 
+            ## unblind everywhere, where s/sqrt(b) <  
+            #s_sqrt_b = signal_hist.values()/np.sqrt(sum(bkgd_stack).values())
+            #mask = s_sqrt_b < 0.005
+        #else:
+            ## don't unblind
+            #mask = np.zeros_like(data_hist.values(), dtype=bool)
     # blind data
     data_hist.values()[~mask] = np.nan
     data_hist.variances()[~mask] = np.nan
@@ -267,12 +283,13 @@ def plot_mc_data_sig(data_hist: Hist,
     if not signal_hist is None:
         signal_hist.plot(color='black', ax=ax1, label=label if signal_name is not None else None) #signal_name)
     
-    if any(mask):
-        idx = np.where(mask)[0][-1] + 1
-        x = data_hist.axes[0].edges[idx]
-        y = sum(bkgd_stack).values()[idx-1]*2 
-        ax1.vlines(x, 0, y,
-                color='red', linestyle='--', label=f"unblinding edge")
+    if unblind:
+        if any(mask):
+            idx = np.where(mask)[0][-1] + 1
+            x = data_hist.axes[0].edges[idx]
+            y = sum(bkgd_stack).values()[idx-1]*2 
+            ax1.vlines(x, 0, y,
+                    color='red', linestyle='--', label=f"unblinding edge")
         
     lgd = ax1.legend( fontsize = 12,bbox_to_anchor = (0.99, 0.99), loc="upper right", ncols=2,
                     frameon=True, facecolor='white', edgecolor='black')
@@ -341,7 +358,6 @@ def make_plots(input_dir: str | Path,
         dirname = f"cat_{year}_{channel}_{cat}_{cat_suffix}_{sign}_{isolation}"
         signal_name = f"ggf_spin_{spin}_mass_{mass}_{year}_hbbhtt" if not control_region else None
         stack, bkgd_errors_up, bkgd_errors_down, sig, data, bin_edges = load_hists(filename, dirname, channel, cat, signal_name, year)
-        unblind = unblind if not control_region else True 
         if limits_file is not None:
             lim = load_reslim(limits_file, mass)
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
@@ -357,7 +373,8 @@ def make_plots(input_dir: str | Path,
                              signal_name=signal_name,
                              savename=f"{output_dir}/{year}/{channel}/{cat}/{filename.stem}.pdf",
                              limit_value=lim,
-                             unblind=unblind,)
+                             unblind=unblind,
+                             control_region=control_region)
         else: 
             signal_name = " ".join(signal_name.split("_")[0:5]).replace("ggf", "ggf;").replace("spin ", 's:').replace("mass ", "m:")
             plot_mc_data_sig(data_hist=data,
