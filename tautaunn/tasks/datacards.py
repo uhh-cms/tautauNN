@@ -44,6 +44,11 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
 
+    extra_skim_systs = luigi.BoolParameter(
+        default=False,
+        description="evaluate only the nominal shape for events falling in categories (e.g. JER skims); default: False",
+    )
+
     default_store = "$TN_STORE_DIR_MARCEL"
 
     def __init__(self, *args, **kwargs):
@@ -95,7 +100,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     def output(self):
         targets = {"nominal": self.local_target(f"output_{self.branch_data}_nominal.root")}
-        if not self.nominal_only:
+        if not self.nominal_only and not self.extra_skim_systs:
             targets["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
         return law.SiblingFileCollection(targets)
 
@@ -380,7 +385,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
             # loop through output trees
             for key, out_tree in out_trees.items():
                 if key == "nominal":
-                    cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                    if self.extra_skim_systs:
+                        category_mask = sel_cats(arr, self.sample.year)
+                        self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
+                        if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
+                            out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr[category_mask], dyn_names, cfg, fold_index)
+                    else:
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
                     # evaluate the data
                     with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
                         predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
