@@ -611,12 +611,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
-
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.skim_names = f"{self.year}_*"
-        # manually add skim names to kwargs
-        kwargs["skim_names"] = self.skim_names
         super().__init__(*args, **kwargs)
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
@@ -640,11 +635,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    #def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
+    def requires(self):
+        return {
+            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
 
     def store_parts(self):
         parts = super().store_parts()
@@ -661,7 +656,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
         path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
+        if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
             d = self.local_target(new_path, dir=True)
@@ -677,23 +672,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def run(self):
         # load the datacard creating function
         from tautaunn.write_datacards_stack import write_datacards
-        # hardcode eval dir
-        eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
-            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
 
         # prepare inputs
-        #inp = self.input()
-
-        # prepare skim and eval directories, and samples to use per
-        if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "data") 
+        inp = self.input()
 
         skim_directories = defaultdict(list)
         eval_directories = {}
-        #for skim_name in inp:
-        print(self.skim_names)
         for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
@@ -701,8 +685,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
 
         #
         # define arguments
@@ -733,7 +716,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         write_datacards(**datacard_kwargs)
 
 
-
 _default_categories_cr = ("{year}_*tau_resolved1b_noak8_cr_os_iso", "{year}_*tau_resolved2b_first_cr_os_iso", "{year}_*tau_boosted_notres2b_cr_os_iso")
 
 def eval_year_to_skim_year(eval_year):
@@ -741,7 +723,8 @@ def eval_year_to_skim_year(eval_year):
     year = re.search(r"20(\d{2})", eval_year).group(1)
     return f"SKIMS_UL{year}"
 
-class ControlPlots(MultiSkimTask,):
+
+class ControlPlots(MultiSkimTask):
 
     year = luigi.ChoiceParameter(
         default="2017",
