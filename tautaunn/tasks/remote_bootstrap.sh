@@ -7,7 +7,7 @@ bootstrap_htcondor() {
 
     # load the repo bundle
     (
-        echo -e "\nfetching repository bundle ..."
+        echo -e "\nfetching repository bundle {{tn_repo_bundle}} ..."
         mkdir -p "${TN_DIR}" &&
         cd "${TN_DIR}" &&
         cp "{{tn_repo_bundle}}" "repo.tgz" &&

@@ -558,6 +558,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         # create the cards
         write_datacards(**datacard_kwargs)
 
+
 class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     year = luigi.ChoiceParameter(
@@ -837,7 +838,7 @@ class ControlPlots(MultiSkimTask,):
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
         if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "data") 
+            eval_dir = eval_dir.replace("nfs", "data")
 
         # get all samples
         sample_names = []

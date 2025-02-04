@@ -105,6 +105,11 @@ def load_klub_file(
     # all weight column patterns
     klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns]
 
+    # add varied weights
+    for nuisance in shape_nuisances.values():
+        if nuisance.weight_variations:
+            klub_weight_column_patterns.extend(sum(nuisance.weight_variations.values(), []))
+
     # all columns that should be loaded and kept later on
     persistent_columns = klub_index_columns + sel_baseline.flat_columns
     # add all columns potentially necessary for selections
@@ -128,20 +133,32 @@ def load_klub_file(
         # compute the full weight for each shape variation (includes nominal)
         # and complain when non-finite weights were found
         for nuisance in shape_nuisances.values():
-            if not nuisance.is_nominal and not nuisance.weights:
+            if not nuisance.is_nominal and not nuisance.weights and not nuisance.weight_variations:
                 continue
-            for direction in nuisance.get_directions():
-                weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
-                array = ak.with_field(
-                    array,
-                    reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns)),
-                    weight_name,
-                )
+            if nuisance.weight_variations:
+                def create_weights():
+                    for orig_weight, varied_weights in nuisance.weight_variations.items():
+                        for varied_weight in varied_weights:
+                            weight_name = f"full_weight_{varied_weight}"
+                            weight = reduce(mul, (
+                                array[varied_weight if c == orig_weight else c]
+                                for c in klub_weight_columns
+                            ))
+                            yield weight_name, weight
+            else:
+                def create_weights():
+                    for direction in nuisance.get_directions():
+                        weight_name = f"full_weight_{nuisance.name + (direction and '_' + direction)}"
+                        weight = reduce(mul, (array[nuisance.get_varied_weight(c, direction)] for c in klub_weight_columns))
+                        yield weight_name, weight
+
+            for weight_name, weight in create_weights():
+                array = ak.with_field(array, weight, weight_name)
                 mask = ~np.isfinite(array[weight_name])
                 if np.any(mask):
                     print(
                         f"found {sum(mask)} ({100.0 * sum(mask) / len(mask):.2f}% of {len(mask)}) "
-                        f"non-finite weight values in sample {sample_name}, file {file_name}, variation {direction}",
+                        f"non-finite weight values in sample {sample_name}, file {file_name}, weight {weight_name}",
                     )
                     array = array[~mask]
                 persistent_columns.append(weight_name)
@@ -152,12 +169,27 @@ def load_klub_file(
             array = ak.without_field(array, field)
 
     # also get the sum of generated weights, for nominal and pu variations
+    n_qcd_offset, n_qcd = 6, 7
+    n_pdf_offset, n_pdf = n_qcd_offset + n_qcd, 101
+    n_as_offset, n_as = n_pdf_offset + n_pdf, 2
     sum_gen_mc_weights = {
         key: len(array) if is_data else float(f["h_eff"].values()[hist_idx])
         for key, hist_idx in [
             ("nominal", 0),
             ("PUReweight_up", 4),
             ("PUReweight_down", 5),
+            *[
+                (f"MC_QCDscale{i}", n_qcd_offset + i)
+                for i in range(n_qcd)
+            ],
+            *[
+                (f"MC_pdf{i}", n_pdf_offset + i)
+                for i in range(n_pdf)
+            ],
+            *[
+                (f"MC_astrong{i}", n_as_offset + i)
+                for i in range(n_as)
+            ],
         ]
     }
 
@@ -267,10 +299,9 @@ def get_cache_path(
     ], [])))
 
     # create a hash
-    # TODO: remove trailing path sep and resolve links to abs location
     h = [
-        transform_data_dir_cache(skim_directory),  # .rstrip(os.sep)
-        transform_data_dir_cache(eval_directory),  # .rstrip(os.sep)
+        transform_data_dir_cache(skim_directory).rstrip(os.sep),
+        transform_data_dir_cache(eval_directory).rstrip(os.sep),
         sel_baseline.str_repr.strip(),
         klub_columns,
         sorted(dnn_output_columns),
@@ -755,6 +786,7 @@ def _write_datacard(
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
+        stop_reason = ""
     elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like',):
         # get the signal values and weights
         signal_process_names = {
@@ -876,6 +908,8 @@ def _write_datacard(
             dy_shifts = OrderedDict()
             all_bkgds = {}
             for nuisance in shape_nuisances.values():
+                if nuisance.weight_variations:
+                    continue
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
                     hh_values, hh_weights = get_values_and_weights(signal_process_name, nuisance, direction, br_hh_bbtt)
@@ -940,6 +974,73 @@ def _write_datacard(
         if not nuisance.is_nominal and not nuisance.applies_to_channel(cat_data["channel"]):
             continue
 
+        # pdf+alpha_s handling
+        # per year and sample, build all 100 variations per process, then construct bin-wise pdf uncertainties,
+        # combine with alpah s variation and store them in numpy arrays for later use during actual histogramming
+        pdf_bin_uncertainties: dict[tuple[int, str], np.ndarray] = {}
+        # qcd scale handling
+        # per year and sample, build the envelope of the qcd scale variations per bin and store them in numpy arrays
+        qcd_bin_uncertainties: dict[tuple[int, str], tuple[np.ndarray, np.ndarray]] = {}
+        if nuisance.weight_variations:
+            assert len(nuisance.weight_variations) == 1
+            for process_name, _map in process_map.items():
+                # skip data
+                if processes[process_name].get("data", False):
+                    continue
+                scale = luminosities[year]
+                if processes[process_name].get("signal", False):
+                    scale *= br_hh_bbtt
+                for year, sample_names in _map.items():
+                    for sample_name in sample_names:
+                        nom_weight = list(nuisance.weight_variations.keys())[0]
+                        if nuisance.name == "pdf_shape":
+                            pdf_hists = []
+                            for varied_weight in nuisance.weight_variations[nom_weight]:
+                                # build the histograms
+                                h = hist.Hist.new.Variable(bin_edges, name=varied_weight).Weight()
+                                # fill them
+                                h.fill(**{
+                                    varied_weight: sample_data[year][sample_name][variable_name],
+                                    "weight": sample_data[year][sample_name][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                })
+                                # store them
+                                pdf_hists.append(h)
+                            assert len(pdf_hists) == 103
+                            # do the hessian set envelope
+                            ref_shape = pdf_hists[0].view().value
+                            hess_shapes = np.concatenate([h.view().value[None, :] for h in pdf_hists[1:101]], axis=0)
+                            pdf_unc = ((hess_shapes - ref_shape)**2).sum(axis=0)**0.5
+                            # alpha s treatment
+                            as_unc = 0.5 * (pdf_hists[102].view().value - pdf_hists[101].view().value)
+                            # combine them
+                            uncs = (pdf_unc**2 + as_unc**2)**0.5
+                            # store the uncertainty as a numpy array
+                            pdf_bin_uncertainties[(year, sample_name)] = uncs
+                        elif nuisance.name == "qcd_scale_shape":
+                            qcd_hists = []
+                            for varied_weight in nuisance.weight_variations[nom_weight]:
+                                # build the histograms
+                                h = hist.Hist.new.Variable(bin_edges, name=varied_weight).Weight()
+                                # fill them
+                                h.fill(**{
+                                    varied_weight: sample_data[year][sample_name][variable_name],
+                                    "weight": sample_data[year][sample_name][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                })
+                                # store them
+                                qcd_hists.append(h)
+                            # do the envelope
+                            ref_shape = qcd_hists[0].view().value
+                            varied_shapes = np.concatenate([h.view().value[None, :] for h in qcd_hists[1:]], axis=0)
+                            up_shape = varied_shapes.max(axis=0) / ref_shape
+                            down_shape = varied_shapes.min(axis=0) / ref_shape
+                            # fix division by zero
+                            up_shape[~np.isfinite(up_shape)] = 1.0
+                            down_shape[~np.isfinite(down_shape)] = 1.0
+                            # store multiplicative, bin-wise factors
+                            qcd_bin_uncertainties[(year, sample_name)] = up_shape, down_shape
+                        else:
+                            raise NotImplementedError(f"varied shape production not implemented for {nuisance.name}")
+
         # loop over up/down variations (or just "" for nominal)
         for direction in nuisance.get_directions():
             hist_name = (
@@ -947,8 +1048,10 @@ def _write_datacard(
                 if nuisance.is_nominal
                 else f"{variable_name}_{nuisance.name}{direction}"
             )
-            varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
-            varied_weight_field = nuisance.get_varied_full_weight(direction)
+            # build varied variable and weight fields when needed
+            if not nuisance.weight_variations:
+                varied_variable_name = nuisance.get_varied_discriminator(variable_name, direction)
+                varied_weight_field = nuisance.get_varied_full_weight(direction)
 
             # define histograms
             for process_name, _map in process_map.items():
@@ -987,13 +1090,25 @@ def _write_datacard(
                     if processes[process_name].get("signal", False):
                         scale *= br_hh_bbtt
                     for sample_name in sample_names:
-                        weight = 1
-                        if not is_data:
-                            weight = sample_data[year][sample_name][varied_weight_field] * scale
-                        h.fill(**{
-                            full_hist_name: sample_data[year][sample_name][varied_variable_name],
-                            "weight": weight,
-                        })
+                        if nuisance.weight_variations and not is_data:
+                            if nuisance.name == "pdf_shape":
+                                uncs = pdf_bin_uncertainties[(year, sample_name)] * ((direction == "up") * 2 - 1)
+                                nom_values = hists[(year, _process_name)][("nominal", "")].view().value
+                                h.view().value[...] = nom_values + uncs
+                            elif nuisance.name == "qcd_scale_shape":
+                                factors = qcd_bin_uncertainties[(year, sample_name)][direction == "down"]
+                                nom_values = hists[(year, _process_name)][("nominal", "")].view().value
+                                h.view().value[...] = nom_values * factors
+                            else:
+                                raise NotImplementedError(f"varied shape production not implemented for {nuisance.name}")
+                        else:
+                            weight = 1
+                            if not is_data:
+                                weight = sample_data[year][sample_name][varied_weight_field] * scale
+                            h.fill(**{
+                                full_hist_name: sample_data[year][sample_name][varied_variable_name],
+                                "weight": weight,
+                            })
 
                     # add epsilon values at positions where bin contents are not positive
                     nom = h.view().value

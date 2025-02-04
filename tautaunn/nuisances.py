@@ -11,6 +11,7 @@ class ShapeNuisance:
     combine_name: str = ""
     processes: list[str] = field(default_factory=lambda: ["*"])
     weights: dict[str, tuple[str, str]] = field(default_factory=dict)  # original name mapped to (up, down) variations
+    weight_variations: tuple[str, list[str]] = ()  # names of weight variations for nuisances like PDF, mapped to replaced weight
     discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
     channels: set[str] = field(default_factory=set)
     skip: bool = False
@@ -45,6 +46,7 @@ class ShapeNuisance:
         return [""] if self.is_nominal else ["up", "down"]
 
     def get_varied_weight(self, nominal_weight: str, direction: str) -> str:
+        assert self.name not in ("pdf_shape", "qcd_scale_shape")
         assert direction in ("", "up", "down")
         if direction:
             for nom, (up, down) in self.weights.items():
@@ -53,14 +55,20 @@ class ShapeNuisance:
         return nominal_weight
 
     def get_varied_full_weight(self, direction: str) -> str:
-        assert direction in ("", "up", "down")
+        # when this nuisance has dedicated weight variations, the direction resembles the varied weight name
+        if self.weight_variations:
+            return f"full_weight_{direction}"
+        assert self.name not in ("pdf_shape", "qcd_scale_shape")
+
         # use the default weight field in case the nuisance is nominal or has no dedicated weight variations
+        assert direction in ("", "up", "down")
         if not direction or not self.weights:
             return "full_weight_nominal"
         # compose the full weight field name
         return f"full_weight_{self.name}_{direction}"
 
     def get_varied_discriminator(self, nominal_discriminator: str, direction: str) -> str:
+        assert self.name not in ("pdf_shape", "qcd_scale_shape")
         assert direction in ("", "up", "down")
         suffix = ""
         if direction and (suffix := self.discriminator_suffix[direction == "down"]):
@@ -109,12 +117,12 @@ ShapeNuisance.new(
 )
 ShapeNuisance.new(
     name="btag_cferr1",
-    combine_name="CMS_btag_cfeff1_{year}",
+    combine_name="CMS_btag_cferr1_{year}",
     weights={"bTagweightReshape": ("bTagweightReshape_cferr1_up", "bTagweightReshape_cferr1_down")},
 )
 ShapeNuisance.new(
     name="btag_cferr2",
-    combine_name="CMS_btag_cfeff2_{year}",
+    combine_name="CMS_btag_cferr2_{year}",
     weights={"bTagweightReshape": ("bTagweightReshape_cferr2_up", "bTagweightReshape_cferr2_down")},
 )
 
@@ -306,6 +314,16 @@ ShapeNuisance.new(
     name="l1_prefiring",
     combine_name="CMS_l1_prefiring_{year}",
     weights={"L1pref_weight": ("L1pref_weight_up", "L1pref_weight_down")},
+)
+ShapeNuisance.new(
+    name="pdf_shape",
+    combine_name="pdf_shape",
+    weight_variations={"MC_weight": [f"MC_pdf{i}" for i in range(101)] + [f"MC_astrong{i}" for i in range(2)]},
+)
+ShapeNuisance.new(
+    name="qcd_scale_shape",
+    combine_name="QCDscale_shape",
+    weight_variations={"MC_weight": [f"MC_QCDscale{i}" for i in range(7)]},
 )
 
 jes_names = {
