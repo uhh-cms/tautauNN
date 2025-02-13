@@ -195,6 +195,18 @@ def get_all_skim_names() -> dict[str, list[str]]:
     }
 
 
+@functools.cache
+def get_skim_names(skim_dir: str) -> dict[str, list[str]]:
+    # note: VBF signals are skipped!
+    skim_dir = os.path.expandvars(os.path.expanduser(skim_dir))
+    return [
+        d for d in os.listdir(skim_dir)
+        if (
+            os.path.isdir(os.path.join(skim_dir, d))
+        )
+    ]
+
+
 luminosities = {
     "2016APV": 19_500.0,
     "2016": 16_800.0,
@@ -292,7 +304,7 @@ class Sample:
     @property
     def year_flag(self) -> int:
         return self.YEAR_FLAGS[self.year]
-    
+
     @property
     def is_signal(self) -> bool:
         return self.name.startswith(("Rad", "Grav"))

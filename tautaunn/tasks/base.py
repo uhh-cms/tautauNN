@@ -66,6 +66,23 @@ class Task(law.Task):
         sample_name = m.group(2)
         return sample_name, skim_year
 
+    @classmethod
+    def split_skim_dir(cls, skim_dir: str) -> tuple[str, str]:
+        if skim_dir.count(":") == 0:
+            skim_year = skim_dir
+            skim_dir = cfg.skim_dirs[skim_year]
+        elif skim_dir.count(":") == 1:
+            skim_year, skim_dir = skim_dir.split(":")
+        else:
+            raise ValueError(f"invalid skim_dir format '{skim_dir}'")
+        assert (skim_year in cfg.skim_dirs.keys())
+        assert (os.path.isdir(skim_dir))
+        return skim_year, skim_dir
+
+    @classmethod
+    def join_skim_dir(cls, skim_year: str, skim_dir: str) -> str:
+        return f"{skim_year}:{skim_dir}"
+
     def store_parts(self) -> law.util.InsertableDict:
         parts = law.util.InsertableDict()
 
@@ -348,12 +365,38 @@ class SkimTask(Task):
         description="the name and year of a skim in the format '<YEAR>_<SAMPLE>'; no default",
     )
 
+    skim_dir = luigi.Parameter(
+        default=law.NO_STR,
+        description="skim directory in the format 'YEAR', 'YEAR:DIRECTORY' or 'DIRECTORY'; in the "
+        "latter case, the validation with the skim_name is skipped; default: directory "
+        "corresponding to that of the skim_name"
+    )
+
+    @classmethod
+    def resolve_param_values(cls, params: dict) -> dict:
+        if (skim_dir := params.get("skim_dir")) is not None and (skim_name := params.get("skim_name")):
+            # set default skim_dir when not set
+            sample_name, skim_year = cls.split_skim_name(skim_name)
+            if skim_dir in ("", law.NO_STR):
+                skim_dir = skim_year
+            # check that skim years match
+            if not os.path.isdir(skim_dir):
+                _skim_year, skim_dir = cls.split_skim_dir(skim_dir)
+                if skim_year != _skim_year:
+                    raise ValueError(
+                        f"skim year passed in skim_dir '{_skim_year}' does not match that in skim_name '{skim_year}'",
+                    )
+            # check format and split
+            params["skim_dir"] = cls.join_skim_dir(skim_year, skim_dir)
+
+        return params
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # get the skim directory and the sample name from the skim_name
         self.sample_name, self.skim_year = self.split_skim_name(self.skim_name)
-        self.skim_dir = cfg.skim_dirs[self.skim_year]
+        self.abs_skim_dir = os.path.abspath(self.split_skim_dir(self.skim_dir)[1])
 
         # check if the sample is already registered in the config,
         # and if not, it is likely a background sample, so create it
@@ -368,7 +411,7 @@ class SkimTask(Task):
         return parts
 
     def get_skim_file(self, num):
-        return law.LocalFileTarget(os.path.join(self.skim_dir, self.sample.directory_name, f"output_{num}.root"))
+        return law.LocalFileTarget(os.path.join(self.abs_skim_dir, self.sample.directory_name, f"output_{num}.root"))
 
 
 class MultiSkimTask(Task):
@@ -378,18 +421,30 @@ class MultiSkimTask(Task):
         description="skim name pattern(s); default: 201*_*",
         brace_expand=True,
     )
+    skim_dirs = law.CSVParameter(
+        default=tuple(cfg.skim_dirs.keys()),
+        description="comma-separated skim directories, each one in the format 'YEAR' or "
+        f"'YEAR:DIRECTORY'; default: {','.join(cfg.skim_dirs.keys())}",
+    )
 
     @classmethod
     def resolve_param_values(cls, params: dict) -> dict:
         params = super().resolve_param_values(params)
 
-        # resolve skim_names based on directories existing on disk
-        resolved_skim_names = []
-        for year, sample_names in cfg.get_all_skim_names().items():
-            for sample_name in sample_names:
-                if law.util.multi_match((skim_name := f"{year}_{sample_name}"), params["skim_names"]):
-                    resolved_skim_names.append(skim_name)
-        params["skim_names"] = tuple(resolved_skim_names)
+        # resolve skim_dirs
+        if (skim_dirs := params.get("skim_dirs")):
+            params["skim_dirs"] = tuple(
+                SkimTask.join_skim_dir(*SkimTask.split_skim_dir(value))
+                for value in skim_dirs
+            )
+
+            # resolve skim_names based on directories existing on disk
+            resolved_skim_names = []
+            for skim_year, skim_dir in map(SkimTask.split_skim_dir, params["skim_dirs"]):
+                for sample_name in cfg.get_skim_names(skim_dir):
+                    if law.util.multi_match((skim_name := f"{skim_year}_{sample_name}"), params["skim_names"]):
+                        resolved_skim_names.append(skim_name)
+            params["skim_names"] = tuple(resolved_skim_names)
 
         return params
 
@@ -398,7 +453,7 @@ class MultiSkimTask(Task):
 
         # get all corresponding sample objects, creating new ones if they do not exist yet
         self.samples = [
-            cfg.get_sample(skim_name, silent=True) or cfg.Sample(*SkimTask.split_skim_name(skim_name))
+            cfg.get_sample(skim_name, silent=True) or cfg.Sample(*self.split_skim_name(skim_name))
             for skim_name in self.skim_names
         ]
 
@@ -459,14 +514,14 @@ class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow)
     def skim_nums(self):
         nums = sorted(
             int(os.path.basename(path)[7:-5])
-            for path in glob.glob(os.path.join(self.skim_dir, self.sample.directory_name, "output_*.root"))
+            for path in glob.glob(os.path.join(self.abs_skim_dir, self.sample.directory_name, "output_*.root"))
         )
         # filter out broken files
         broken = self.broken_files.get(self.sample.skim_name, [])
         nums = [num for num in nums if num not in broken]
         # complain if no skim files are found
         if not nums:
-            raise Exception(f"no skim files found in '{os.path.join(self.skim_dir, self.sample.directory_name)}'")
+            raise Exception(f"no skim files found in '{os.path.join(self.abs_skim_dir, self.sample.directory_name)}'")
         return nums
 
     def create_branch_map(self):

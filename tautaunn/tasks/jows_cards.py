@@ -34,7 +34,6 @@ from tautaunn.cache_data import load_data
 from tautaunn.fill_hists import fill_hists, write_root_file
 
 
-
 class EvaluationParameters(MultiFoldParameters):
 
     spins = law.CSVParameter(
@@ -51,12 +50,12 @@ class EvaluationParameters(MultiFoldParameters):
     )
 
 
-#_default_categories = ("{year}_*tau_resolved?b_os_iso", "{year}_*tau_boosted_os_iso")
+# _default_categories = ("{year}_*tau_resolved?b_os_iso", "{year}_*tau_boosted_os_iso")
 _default_categories = ("{year}_*tau_resolved1b_noak8_os_iso", "{year}_*tau_resolved2b_first_os_iso", "{year}_*tau_boosted_notres2b_os_iso")
 
 
 class GetBinning(MultiSkimTask, EvaluationParameters):
-    
+
     year = luigi.ChoiceParameter(
         default="2017",
         choices=("2016", "2016APV", "2017", "2018"),
@@ -110,14 +109,13 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
 
         self.categories = [c.format(year=self.year) for c in _default_categories]
 
-            
     def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
+        # return {
+        # skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+        # for skim_name in self.skim_names
+        # }
         return
-    
+
     def output(self):
         # prepare the output directory
         dirname = f"{self.year}/{self.binning}{self.n_bins}"
@@ -126,41 +124,40 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
         d = self.local_target(dirname, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         pathlist = d.path.split("/")
-        path_user = pathlist[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
+        path_user = pathlist[int(pathlist.index("user") + 1)]
+        if path_user != os.environ["USER"]:
             new_path = d.path.replace(path_user, os.environ["USER"])
             print(f"changing output path from {d.path} to {new_path}")
             d = self.local_target(new_path, dir=True)
-        
+
         if self.spins == tuple(cfg.spins):
             spins_suffix = "all"
         elif len(self.spins) == 1:
             spins_suffix = f"{int(self.spins[0])}"
         else:
             spins_suffix = "-".join(map(str, (self.spins[0], self.spins[-1])))
-        
+
         if self.masses == tuple(cfg.masses):
             masses_suffix = "all"
         elif len(self.masses) == 1:
             masses_suffix = f"{int(self.masses[0])}"
         else:
-            masses_suffix = "-".join(map(str,(int(self.masses[0]), int(self.masses[-1]))))
-            
+            masses_suffix = "-".join(map(str, (int(self.masses[0]), int(self.masses[-1]))))
+
         return d.child(f"bin_edges_y{self.year}_s{spins_suffix}_m{masses_suffix}.json", type="f")
 
-
     def run(self):
-        
+
         # prepare inputs
         # inp = self.input()
-        
+
         # prepare skim and eval directories
-        skim_directory = os.environ[f"TN_SKIMS_{self.year}"] 
+        skim_directory = os.environ[f"TN_SKIMS_{self.year}"]
         # new evals
-        #eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
-                    #"hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-                    #"ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-                    #"fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
+        # eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
+        # "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
+        # "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
+        # "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod4_syst")
 
         # even newer evals
         eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
@@ -169,7 +166,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
 
         if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "gpfs") 
+            eval_dir = eval_dir.replace("nfs", "gpfs")
         eval_directory = os.path.join(eval_dir, self.year)
         # define arguments
         binning_kwargs = dict(
@@ -195,7 +192,7 @@ class GetBinning(MultiSkimTask, EvaluationParameters):
 
 
 class GetSumW(Task):
-    
+
     year = luigi.ChoiceParameter(
         default="2017",
         choices=("2016", "2016APV", "2017", "2018"),
@@ -235,6 +232,7 @@ class GetSumW(Task):
         with open(filename, "w") as file:
             json.dump(sum_weights, file)
 
+
 class CacheData(Task):
 
     year = luigi.ChoiceParameter(
@@ -269,18 +267,16 @@ class CacheData(Task):
         description="number of parallel processes to use for reading; default: 4",
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                     "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        
+
     def requires(self):
         pass
-   
-    
+
     def output(self):
         # get the hash
         cashe_path = get_cache_path(
@@ -288,9 +284,9 @@ class CacheData(Task):
             os.environ[f"TN_SKIMS_{self.year}"],
             os.path.join(self.eval_dir, self.year),
             self.year,
-            "TT_SemiLep", 
+            "TT_SemiLep",
             [self.variable_pattern.format(mass=mass, spin=spin)
-             for mass in self.masses for spin in self.spins], 
+             for mass in self.masses for spin in self.spins],
         )
         h = Path(cashe_path).stem.split("_")[-1]
         # create an output FileCollection (each hypothesis gets its own file)
@@ -303,10 +299,9 @@ class CacheData(Task):
         # cast arguments to lists
         _categories = expand_categories(self.categories)
 
-        
         year = _categories[0].split("_")[0]
         # assert that only one year is given
-        assert all(cat.split("_")[0] == year for cat in _categories) 
+        assert all(cat.split("_")[0] == year for cat in _categories)
         # get all the sample names
         sample_names = []
         for skim_name in os.listdir(os.path.join(self.eval_dir, self.year)):
@@ -314,7 +309,7 @@ class CacheData(Task):
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
                 sample = cfg.Sample(sample_name, year=skim_year)
-            skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
+            skim_dir = os.path.join(cfg.skim_dirs[sample.year], sample.name)
             if os.path.isdir(skim_dir):
                 sample_names.append(sample.name)
             else:
@@ -330,8 +325,8 @@ class CacheData(Task):
                                n_parallel_read=self.parallel_read,
                                )
         return paths_dict
-        
-                         
+
+
 class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
     year = luigi.ChoiceParameter(
         default="2017",
@@ -364,7 +359,7 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
         choices=("flatsguarded", "flats_systs", "flats", "equald"),
         description="binning to use; choices: flatsguarded (on tt and dy); default: flatsguarded",
     )
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.categories = [cat.format(year=self.year) for cat in _default_categories]
@@ -372,18 +367,18 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
                     "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                     "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                     "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        
-        #print(f"expecting the following hash")
-        #h = get_cache_path(
-            #os.environ["TN_DATACARD_CACHE_DIR"],
-            #os.environ[f"TN_SKIMS_{self.year}"],
-            #os.path.join(self.eval_dir, self.year),
-            #self.year,
-            #"TT_SemiLep",
-            #[self.variable_pattern.format(mass=mass, spin=spin)
-                #for mass in self.masses for spin in self.spins],
-        #)
-        #print(Path(h).stem.split("_")[-1])
+
+        # print(f"expecting the following hash")
+        # h = get_cache_path(
+        # os.environ["TN_DATACARD_CACHE_DIR"],
+        # os.environ[f"TN_SKIMS_{self.year}"],
+        # os.path.join(self.eval_dir, self.year),
+        # self.year,
+        # "TT_SemiLep",
+        # [self.variable_pattern.format(mass=mass, spin=spin)
+        # for mass in self.masses for spin in self.spins],
+        # )
+        # print(Path(h).stem.split("_")[-1])
 
     def requires(self):
         reqs = CacheData.req(self,
@@ -393,7 +388,7 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
                              categories=self.categories,
                              variable_pattern=self.variable_pattern)
         return reqs
-    
+
     def output(self):
         categories = expand_categories(self.categories)
         # produces a filecollection for each channelxcategory combination consisting of datacard and shape files
@@ -405,12 +400,10 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
                         for m in self.masses for s in self.spins for cat in categories})
         return law.SiblingFileCollection(targets)
 
-    
     def create_branch_map(self):
         categories = expand_categories(self.categories)
         return [f"{s}_{m}" for m in self.masses for s in self.spins]
-    
-    
+
     def run(self):
         # load the sample_data
         paths_dict = self.input()
@@ -425,16 +418,15 @@ class WriteDatacardsJow(HTCondorWorkflow, law.LocalWorkflow):
                         category=self.categories,
                         output_directory=self.output().first_target.absdirname,
                         binning=[self.n_bins, 0.0, 1.0, self.binning],
-        )
-        
-        
+                        )
+
 
 class FillHistsWorkflow(SkimWorkflow):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         self.chunk_size = 2
-        
+
 
 class FillHists(FillHistsWorkflow):
     categories = law.CSVParameter(
@@ -466,7 +458,6 @@ class FillHists(FillHistsWorkflow):
 
         self.sample_name, self.skim_year = self.split_skim_name(self.skim_name)
 
-
     @property
     def priority(self):
         # higher priority value = picked earlier by scheduler
@@ -478,7 +469,7 @@ class FillHists(FillHistsWorkflow):
         return 1
 
     def requires(self):
-        #evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
+        # evaluate_skims_requirement = EvaluateSkims.req(self, skim_name=self.skim_name)
         get_sumw_requirement = GetSumW.req(self, year=self.skim_year)
         if self.binning_file == law.NO_STR and self.binning != "equald":
             get_binning_requirement = GetBinning.req(self,
@@ -492,17 +483,14 @@ class FillHists(FillHistsWorkflow):
         else:
             return get_sumw_requirement
 
-    
     def store_parts(self):
         return super().store_parts()
-        
 
     def output(self):
         if self.chunk_size > 1:
             return law.FileCollection({branch: self.local_target(f"output_{branch}_hists.root") for branch in self.branch_data})
         else:
             return self.local_target(f"output_{self.branch_data}_hists.root")
-
 
     def run(self):
         inp = self.input()
@@ -528,23 +516,23 @@ class FillHists(FillHistsWorkflow):
         sum_weights_file = inp[0].path if isinstance(inp, tuple) else inp.path
         with open(sum_weights_file, "r") as file:
             sum_weights = json.load(file)
-        
+
         sample = cfg.Sample(self.sample_name, year=self.skim_year)
         if sample.is_data:
             sum_w = 1.0
         else:
             sum_w = sum_weights[self.sample_name]
 
-        # hardcode eval dir 
+        # hardcode eval dir
         eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
                    "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
                    "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
                    "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
-        
+
         print(f"chunk size: {self.chunk_size}", f"branch data: {self.branch_data}")
         if self.chunk_size > 1:
             for branch in self.branch_data:
-                hists = fill_hists(skim_directory=self.skim_dir,
+                hists = fill_hists(skim_directory=self.abs_skim_dir,
                                    eval_directory=os.path.join(eval_dir, self.skim_year),
                                    sample_name=self.sample_name,
                                    klub_file_name=f"output_{branch}.root",
@@ -555,7 +543,7 @@ class FillHists(FillHistsWorkflow):
                 write_root_file(hists=hists,
                                 filepath=output[branch].path)
         else:
-            hists = fill_hists(skim_directory=self.skim_dir,
+            hists = fill_hists(skim_directory=self.abs_skim_dir,
                             eval_directory=os.path.join(eval_dir, self.skim_year),
                             sample_name=self.sample_name,
                             klub_file_name=f"output_{self.branch_data}.root",
@@ -565,7 +553,7 @@ class FillHists(FillHistsWorkflow):
                             sum_weights=sum_w,)
             write_root_file(hists=hists,
                             filepath=output.path)
-        
+
 
 class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
 
@@ -580,18 +568,18 @@ class FillHistsWrapper(MultiSkimTask, law.WrapperTask):
             if any(fnmatch(self.split_skim_name(skim_name)[0], pattern) for pattern in sample_patterns)
         }
 
-                           
+
 class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
-    
+
     """
     class to merge the histograms that were filled in FillHists
 
     ------------
-    
+
     2017_{TT, ST} take around 15 GB of memory
 
     2017_DY takes around 30 GB of memory
-    
+
     not sure how it will look if we stack all years together
     """
 
@@ -623,11 +611,9 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
-
-    #def requires(self):
-        ##return FillHistsWrapper.req(self)
-        #pass
-    
+    # def requires(self):
+        # return FillHistsWrapper.req(self)
+        # pass
 
     def output(self):
         o_dict = {}
@@ -643,7 +629,6 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
                         continue
         return o_dict
 
-
     def create_branch_map(self):
         dy_skims = [skim_name for skim_name in self.skim_names if "DY" in skim_name]
         sample_names = [self.split_skim_name(skim_name)[0] for skim_name in self.skim_names]
@@ -653,12 +638,12 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
                                for sample_name in sample_names)]))
 
         signal_processes = [process for process in requested_processes if processes[process].get("signal", False)]
-        background_processes = [process for process in requested_processes 
+        background_processes = [process for process in requested_processes
                                 if (
-                                    not processes[process].get("data", False)
-                                    and not processes[process].get("signal", False)
-                                    and not process == "QCD"
-                                    and not process == "DY"
+                                    not processes[process].get("data", False) and
+                                    not processes[process].get("signal", False) and
+                                    not process == "QCD" and
+                                    not process == "DY"
                                 )]
         data_processes = [process for process in requested_processes if processes[process].get("data", False)]
 
@@ -666,30 +651,28 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
         if len(background_processes) > 0:
             branch_map.update({i: process for i, process in enumerate(background_processes)})
         if len(data_processes) > 0:
-            branch_map.update({i+len(background_processes): process for i, process in enumerate(data_processes)})
+            branch_map.update({i + len(background_processes): process for i, process in enumerate(data_processes)})
         if len(signal_processes) > 0:
-            branch_map.update({len(background_processes)+len(data_processes): signal_processes})
+            branch_map.update({len(background_processes) + len(data_processes): signal_processes})
         if len(dy_skims) > 0:
-            branch_map.update({i+len(background_processes)+len(data_processes)+len(signal_processes): sample for i, sample in enumerate(dy_skims)})
+            branch_map.update({i + len(background_processes) + len(data_processes) + len(signal_processes): sample for i, sample in enumerate(dy_skims)})
         return branch_map
 
-
     def run(self):
-
 
         def merge_sample(destination,
                          skim_files,
                          num_processes=4):
-                        
+
             if not os.path.exists(os.path.dirname(destination)):
                 os.makedirs(os.path.dirname(destination))
 
             with open(os.devnull, "w") as devnull:
-                process = Popen(["hadd", "-f", "-j", str(num_processes), destination, *skim_files], stdout=devnull) 
+                process = Popen(["hadd", "-f", "-j", str(num_processes), destination, *skim_files], stdout=devnull)
             out, err = process.communicate()
             if process.returncode != 0:
                 raise Exception(err)
-        
+
         inp = self.input()
         output = self.output()
         if isinstance(self.branch_data, list):
@@ -722,15 +705,13 @@ class MergeHists(HTCondorWorkflow, law.LocalWorkflow):
                             self.hadd_parallel)
                 toc = time.time()
                 print(f"merging took {(toc-tic):.2f} seconds")
-            
-        
-        #pbar = tqdm(self.output().items())
-        #for process, output in pbar: 
-            #pbar.set_description(f"merging {process}")
-            #skim_files = []
-            #for skim_name in self.skim_names:
-                #sample_name, skim_year = self.split_skim_name(skim_name)
-                #if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
-                    #skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
-            #merge_sample(output.path, list(itertools.chain.from_iterable(skim_files)))
-        
+
+        # pbar = tqdm(self.output().items())
+        # for process, output in pbar:
+            # pbar.set_description(f"merging {process}")
+            # skim_files = []
+            # for skim_name in self.skim_names:
+                # sample_name, skim_year = self.split_skim_name(skim_name)
+                # if any(fnmatch(sample_name, pattern) for pattern in processes[process]["sample_patterns"]):
+                # skim_files.append(glob(f"{inp[skim_name].collection.dir.path}/output_*_hists.root"))
+            # merge_sample(output.path, list(itertools.chain.from_iterable(skim_files)))
