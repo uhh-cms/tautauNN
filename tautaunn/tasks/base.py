@@ -12,12 +12,14 @@ import law
 
 import tautaunn.config as cfg
 
-
 law.contrib.load("tasks", "htcondor", "slurm", "git", "matplotlib", "root", "tensorflow")
+
 
 _default_htcondor_flavor = law.config.get_expanded("analysis", "htcondor_flavor", "naf")
 _default_slurm_flavor = law.config.get_expanded("analysis", "slurm_flavor", "maxwell")
 _default_slurm_partition = law.config.get_expanded("analysis", "slurm_partition", "allgpu")
+
+logger = law.logger.get_logger(__name__)
 
 
 class Task(law.Task):
@@ -367,7 +369,7 @@ class SkimTask(Task):
 
     skim_dir = luigi.Parameter(
         default=law.NO_STR,
-        description="skim directory in the format 'YEAR', 'YEAR:DIRECTORY' or 'DIRECTORY'; in the "
+        description="skim directory in the format 'YEAR' or 'YEAR:DIRECTORY'; in the "
         "latter case, the validation with the skim_name is skipped; default: directory "
         "corresponding to that of the skim_name"
     )
@@ -417,34 +419,46 @@ class SkimTask(Task):
 class MultiSkimTask(Task):
 
     skim_names = law.CSVParameter(
-        default=("201*_*",),
-        description="skim name pattern(s); default: 201*_*",
+        default=("2017_*",),
+        description="skim name pattern(s); default: 2017_*",
         brace_expand=True,
     )
-    skim_dirs = law.CSVParameter(
-        default=tuple(cfg.skim_dirs.keys()),
-        description="comma-separated skim directories, each one in the format 'YEAR' or "
-        f"'YEAR:DIRECTORY'; default: {','.join(cfg.skim_dirs.keys())}",
-    )
+    skim_dir = SkimTask.skim_dir
 
     @classmethod
     def resolve_param_values(cls, params: dict) -> dict:
         params = super().resolve_param_values(params)
 
-        # resolve skim_dirs
-        if (skim_dirs := params.get("skim_dirs")):
-            params["skim_dirs"] = tuple(
-                SkimTask.join_skim_dir(*SkimTask.split_skim_dir(value))
-                for value in skim_dirs
+        # get the skim names
+        skim_names = params.get("skim_names") or []
+
+        # extract skim dir from first skim name when empty
+        if (skim_dir := params.get("skim_dir")) in {None, law.NO_STR, ""}:
+            skim_year = cls.split_skim_name(skim_names[0])[1]
+            skim_dir = cfg.skim_dirs[skim_year]
+        else:
+            skim_year, skim_dir = cls.split_skim_dir(skim_dir)
+
+        # expand skim names
+        resolved_skim_names = []
+        for sample_name in cfg.get_skim_names(skim_dir):
+            if law.util.multi_match((skim_name := f"{skim_year}_{sample_name}"), params["skim_names"]):
+                resolved_skim_names.append(skim_name)
+
+        # complain for requested skim name that did not match any actual skim name
+        wrong_skim_names = []
+        for skim_name in skim_names:
+            if not any(law.util.multi_match(name, skim_name) for name in resolved_skim_names):
+                wrong_skim_names.append(skim_name)
+        if wrong_skim_names:
+            logger.warning_once(
+                f"complain_skim_names_{', '.join(wrong_skim_names)}",
+                f"some skim names could not be resolved to the requested skim directory {skim_dir}: " +
+                ", ".join(wrong_skim_names),
             )
 
-            # resolve skim_names based on directories existing on disk
-            resolved_skim_names = []
-            for skim_year, skim_dir in map(SkimTask.split_skim_dir, params["skim_dirs"]):
-                for sample_name in cfg.get_skim_names(skim_dir):
-                    if law.util.multi_match((skim_name := f"{skim_year}_{sample_name}"), params["skim_names"]):
-                        resolved_skim_names.append(skim_name)
-            params["skim_names"] = tuple(resolved_skim_names)
+        # store resolved names
+        params["skim_names"] = tuple(resolved_skim_names)
 
         return params
 

@@ -445,8 +445,8 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-#_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
-#_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
+# _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+# _default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 _default_categories = ("{year}_*tau_resolved1b_noak8_os_iso", "{year}_*tau_resolved2b_first_os_iso", "{year}_*tau_boosted_notres2b_os_iso")
 
 
@@ -480,13 +480,11 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
-
 
     @property
     def card_names(self):
@@ -500,12 +498,10 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-
     def store_parts(self):
         parts = super().store_parts()
         parts.insert_before("version", "ensemble", self.get_model_name())
         return parts
-
 
     def output(self):
         # prepare the output directory
@@ -515,7 +511,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         d = self.local_target(h, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
-        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user") + 1)]
         if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
@@ -623,7 +619,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.skim_names = f"{self.year}_*"
@@ -639,7 +634,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         self.categories = [c.format(year=self.year) for c in self.categories]
 
-
     @property
     def card_names(self):
         if self._card_names is None:
@@ -652,11 +646,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    #def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
+    # def requires(self):
+        # return {
+        # skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+        # for skim_name in self.skim_names
+        # }
 
     def store_parts(self):
         parts = super().store_parts()
@@ -672,8 +666,8 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
-        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user")+1)]
-        if path_user != os.environ["USER"]: 
+        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user") + 1)]
+        if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
             d = self.local_target(new_path, dir=True)
@@ -696,15 +690,15 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
 
         # prepare inputs
-        #inp = self.input()
+        # inp = self.input()
 
         # prepare skim and eval directories, and samples to use per
         if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "data") 
+            eval_dir = eval_dir.replace("nfs", "data")
 
         skim_directories = defaultdict(list)
         eval_directories = {}
-        #for skim_name in inp:
+        # for skim_name in inp:
         print(self.skim_names)
         for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
@@ -713,7 +707,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                #eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
+                # eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
                 eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
 
         #
@@ -745,13 +739,14 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         write_datacards(**datacard_kwargs)
 
 
-
 _default_categories_cr = ("{year}_*tau_resolved1b_noak8_cr_os_iso", "{year}_*tau_resolved2b_first_cr_os_iso", "{year}_*tau_boosted_notres2b_cr_os_iso")
+
 
 def eval_year_to_skim_year(eval_year):
     # use a regex to match the 2 digits after 20
     year = re.search(r"20(\d{2})", eval_year).group(1)
     return f"SKIMS_UL{year}"
+
 
 class ControlPlots(MultiSkimTask,):
 
@@ -803,7 +798,6 @@ class ControlPlots(MultiSkimTask,):
         brace_expand=True,
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -822,11 +816,11 @@ class ControlPlots(MultiSkimTask,):
             ]
         return self._card_names
 
-    #def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
+    # def requires(self):
+        # return {
+        # skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+        # for skim_name in self.skim_names
+        # }
 
     def output(self):
         d = self.local_target(dir=True)
@@ -859,7 +853,7 @@ class ControlPlots(MultiSkimTask,):
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
                 sample = cfg.Sample(sample_name, year=skim_year)
-            skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
+            skim_dir = os.path.join(cfg.skim_dirs[sample.year], sample.name)
             if os.path.isdir(skim_dir):
                 sample_names.append(sample.name)
             else:
