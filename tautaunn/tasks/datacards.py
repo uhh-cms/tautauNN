@@ -358,8 +358,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         progress_step = 0
 
         # load the input tree
-        skim_file = self.get_skim_file(self.branch_data)
-        in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
+        skim_file = self.get_skim_file(self.branch_data).load(formatter="uproot")
+        in_tree = skim_file["HTauTauTree"]
 
         # read columns and insert dynamic ones
         arr = in_tree.arrays(
@@ -436,6 +436,12 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         for key, outp in outputs.targets.items():
             with outp.dump(formatter="uproot", mode="recreate") as f:
                 f["hbtres"] = out_trees[key]
+
+        # when skim systs are requested, store sum of weights for normalization separately
+        if self.skim_syst != law.NO_STR:
+            sum_weights = skim_file["h_eff"].values()[0]
+            with outp.dump(formatter="uproot", mode="recreate") as f:
+                f["sum_weights"] = {"sum_weights": np.array([sum_weights], dtype=np.float64)}
 
         print(f"full evaluation took {law.util.human_duration(seconds=time.perf_counter() - t_start)}")
 
