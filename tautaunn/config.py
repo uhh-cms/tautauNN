@@ -750,6 +750,8 @@ klub_category_columns = [
     "isMETtrigger",
     "isSingleTautrigger",
     "fatjet_particleNetMDJetTags_score",
+    "fatjet_particleNetMDJetTags_probXbb",
+    "fatjet_softdropMass",
     "dau1_iso",
     "dau1_eleMVAiso",
     "dau1_deepTauVsJet",

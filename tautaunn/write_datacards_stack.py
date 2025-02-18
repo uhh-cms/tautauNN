@@ -228,6 +228,7 @@ def load_file(
     eval_file_name: str,
     dnn_output_columns: list[str],
     is_data: bool,
+    compare_lengths: bool = True,
 ) -> tuple[ak.Array, float]:
     # load the klub file
     klub_array, sum_gen_mc_weights = load_klub_file(skim_directory, sample_name, klub_file_name, is_data)
@@ -312,10 +313,12 @@ def get_cache_path(
 
 
 def load_sample_data(
+    *,
     skim_directory: str,
     eval_directory: str,
     year: str,
     sample_name: str,
+    skim_systs: list[str] | None = None,
     dnn_output_columns: list[str] | None = None,
     n_parallel: int = 4,
     cache_directory: str = "",
@@ -323,6 +326,7 @@ def load_sample_data(
     print(f"loading sample {sample_name} ({year}) ...")
 
     # load from cache?
+    from IPython import embed; embed(header="before caching that shit")
     cache_path = get_cache_path(
         cache_directory,
         skim_directory,
@@ -330,6 +334,7 @@ def load_sample_data(
         year,
         sample_name,
         dnn_output_columns or [],
+        sorted(skim_systs or []),
     )
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
@@ -355,6 +360,7 @@ def load_sample_data(
                 eval_file_name.replace("_nominal", "").replace("_systs", ""),
                 eval_file_name,
                 dnn_output_columns or [],
+                skim_systs, FIES!
                 is_data,
             )
             for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
@@ -432,6 +438,7 @@ def write_datacards(
     skim_directories: dict[tuple[str, str], list[str] | None],
     eval_directories: dict[str, str],
     output_directory: str,
+    skim_systs: list[str] | None,
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
@@ -475,7 +482,6 @@ def write_datacards(
         print(f"found binning for categories: {cats_in_file}")
         print(f"requested categories {_categories}")
         assert set(_categories) == set(cats_in_file), "categories in binning file do not match the requested categories"
-
 
     # get a list of all sample names per skim directory
     all_sample_names = {
@@ -542,11 +548,12 @@ def write_datacards(
     sample_data = {
         year: {
             sample_name: load_sample_data(
-                skim_directories[year],
-                eval_directories[year],
-                year,
-                sample_name,
-                dnn_output_columns,
+                skim_directory=skim_directories[year],
+                eval_directory=eval_directories[year],
+                year=year,
+                sample_name=sample_name,
+                dnn_output_columns=dnn_output_columns,
+                skim_systs=skim_systs,
                 n_parallel=n_parallel_read,
                 cache_directory=cache_directory,
             )
@@ -576,7 +583,7 @@ def write_datacards(
         for key in binnings:
             bin_edges = sorted(list(set(binnings[key][0]))) if len(binnings[key]) == 2 else sorted(list(set(binnings[key])))
             spin, mass = (int(i[1:]) for i in key.split("__")[1:])
-            #spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
+            # spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
             category = key.split("__")[0]
             datacard_args.append((
                 sample_map,
@@ -620,12 +627,12 @@ def write_datacards(
             spin, mass, category = args[2:5]
             edges = res[2]
             stop_reason = res[-2]
-            #bin_counts = res[-1]
+            # bin_counts = res[-1]
             key = f"{category}__s{spin}__m{mass}"
             # do not overwrite when edges are None (in case the datacard was skipped)
             if key in all_bin_edges and not edges:
                 continue
-            all_bin_edges[key] = edges, stop_reason#, bin_counts
+            all_bin_edges[key] = edges, stop_reason  # , bin_counts
         # write them
         with open(bin_edges_file, "w") as f:
             json.dump(all_bin_edges, f, indent=4)

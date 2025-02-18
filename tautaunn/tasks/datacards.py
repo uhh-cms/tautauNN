@@ -42,9 +42,9 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
 
-    extra_skim_systs = luigi.BoolParameter(
-        default=False,
-        description="evaluate only the nominal shape for events falling in categories (e.g. JER skims); default: False",
+    skim_syst = luigi.Parameter(
+        default=law.NO_STR,
+        description="name of a systematic variation to evaluate in case a different skim_directory is needed; no default",
     )
 
     default_store = "$TN_STORE_DIR_MARCEL"
@@ -97,10 +97,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
-        targets = {"nominal": self.local_target(f"output_{self.branch_data}_nominal.root")}
-        if not self.nominal_only and not self.extra_skim_systs:
-            targets["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
-        return law.SiblingFileCollection(targets)
+        outputs = {}
+        if self.skim_syst == law.NO_STR:
+            outputs["nominal"] = self.local_target(f"output_{self.branch_data}_nominal.root")
+            if not self.nominal_only:
+                outputs["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
+        else:
+            outputs[self.skim_syst] = self.local_target(f"output_{self.branch_data}_{self.skim_syst}.root")
+        return law.SiblingFileCollection(outputs)
 
     @law.decorator.localize(input=False, output=True)
     def run(self):
@@ -382,46 +386,48 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
             # loop through output trees
             for key, out_tree in out_trees.items():
-                if key == "nominal":
-                    if self.extra_skim_systs:
+                if self.skim_syst == law.NO_STR:
+                    if key == "nominal":
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                        # evaluate the data
+                        with self.publish_step(f"evaluating model for {key} on {eval_mask.sum()} events ..."):
+                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
+                    else:  # systs
+                        # reduce array to only events that are in resolved1b, resolved2b or boosted category
                         category_mask = sel_cats(arr, self.sample.year)
                         self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
+
+                        # the initial output tree was created for all events, so reduce it once
                         if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
                             out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr[category_mask], dyn_names, cfg, fold_index)
-                    else:
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
-                    # evaluate the data
-                    with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                        predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
 
-                else:  # systs
-                    # reduce array to only events that are in resolved1b, resolved2b or boosted category
+                        for shape_name in shape_names:
+                            syst_arr = arr[category_mask]
+                            # apply systematic variations via aliases
+                            for dst, src in shape_systs[shape_name].items():
+                                if src in arr.fields:
+                                    syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
+
+                            # get inputs
+                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
+
+                            # evaluate the data
+                            with self.publish_step(
+                                f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
+                            ):
+                                predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
+                                # update progress
+                                publish_progress(progress_step)
+                                progress_step += 1
+                else:
                     category_mask = sel_cats(arr, self.sample.year)
                     self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-
-                    # the initial output tree was created for all events, so reduce it once
                     if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
                         out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
-
-                    for shape_name in shape_names:
-                        syst_arr = arr[category_mask]
-                        # apply systematic variations via aliases
-                        for dst, src in shape_systs[shape_name].items():
-                            if src in arr.fields:
-                                syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-
-                        # get inputs
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
-
-                        # evaluate the data
-                        with self.publish_step(
-                            f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
-                        ):
-                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
-                            # update progress
-                            publish_progress(progress_step)
-                            progress_step += 1
+                    cont_inputs, cat_inputs, eval_mask = calc_inputs(arr[category_mask], dyn_names, cfg, fold_index)
+                    # evaluate the data
+                    with self.publish_step(f"evaluating model for {key} on {eval_mask.sum()} events ..."):
+                        predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
 
         # free memory
         del models
@@ -616,6 +622,10 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         significant=False,
         description="whether to rewrite existing datacards; default: False",
     )
+    skim_systs = law.CSVParameter(
+        default=(),
+        description="name of systematic variations to allow, that require loading data from different skims; no default",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -700,6 +710,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
+            skim_systs=list(self.skim_systs) or None,
             output_pattern=self.card_pattern,
             variable_pattern=self.variable,
             # force using all samples, disabling the feature to select a subset

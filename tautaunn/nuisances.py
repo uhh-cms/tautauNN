@@ -5,6 +5,7 @@ from fnmatch import fnmatch
 
 shape_nuisances = {}
 
+
 @dataclass
 class ShapeNuisance:
     name: str
@@ -14,6 +15,7 @@ class ShapeNuisance:
     weight_variations: tuple[str, list[str]] = ()  # names of weight variations for nuisances like PDF, mapped to replaced weight
     discriminator_suffix: tuple[str, str] = ("", "")  # name suffixes for (up, down) variations
     channels: set[str] = field(default_factory=set)
+    skim_systs: tuple[str] | None = None
     skip: bool = False
 
     @classmethod
@@ -347,6 +349,12 @@ for js in range(1, 12):
         discriminator_suffix=(f"jes_{js}_up", f"jes_{js}_down"),
         weights={"bTagweightReshape": (f"bTagweightReshape_jetup{js}", f"bTagweightReshape_jetdown{js}")},
     )
+
+ShapeNuisance.new(
+    name="jer",
+    combine_name="CMS_res_j_{year}",
+    skim_systs=("JERup", "JERdown"),
+)
 
 
 rate_nuisances = {}
