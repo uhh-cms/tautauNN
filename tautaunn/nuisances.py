@@ -552,7 +552,7 @@ def add_qcd_rate(name: str, year: str, channel: str, category: str, effect_perce
     )
 
 
-# taken from tables 36-39 in AN
+# taken from tables 36-39 in AN, values in %
 add_qcd_rate("stat", "2016APV", "etau", "resolved1b", 8.02)
 add_qcd_rate("stat", "2016APV", "mutau", "resolved1b", 3.96)
 add_qcd_rate("stat", "2016APV", "tautau", "resolved1b", 2.44)

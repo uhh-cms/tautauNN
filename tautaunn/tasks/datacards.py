@@ -14,10 +14,8 @@ import law
 import numpy as np
 import tensorflow as tf
 import awkward as ak
-from pathlib import Path
-from tqdm import tqdm
 
-from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
+from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
@@ -524,7 +522,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         from tautaunn.get_efficiency import write_datacards
 
         # prepare inputs
-        inp = self.input()
+        # inp = self.input()
 
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
@@ -621,10 +619,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.skim_names = f"{self.year}_*"
-        # manually add skim names to kwargs
-        kwargs["skim_names"] = self.skim_names
-        super().__init__(*args, **kwargs)
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
@@ -646,11 +640,11 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-    # def requires(self):
-        # return {
-        # skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-        # for skim_name in self.skim_names
-        # }
+    def requires(self):
+        return {
+            skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+            for skim_name in self.skim_names
+        }
 
     def store_parts(self):
         parts = super().store_parts()
@@ -683,23 +677,12 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
     def run(self):
         # load the datacard creating function
         from tautaunn.write_datacards_stack import write_datacards
-        # hardcode eval dir
-        eval_dir = ("/data/dust/user/riegerma/taunn_data/store/EvaluateSkims/"
-            "hbtres_PSnew_baseline_LSmulti3_SSdefault_FSdefault_daurot_composite-default_extended_pair_"
-            "ED10_LU8x128_CTdense_ACTelu_BNy_LT50_DO0_BS4096_OPadamw_LR1.0e-03_YEARy_SPINy_MASSy_RSv6_"
-            "fi80_lbn_ft_lt20_lr1_LBdefault_daurot_fatjet_composite_FIx5_SDx5/prod7")
 
         # prepare inputs
-        # inp = self.input()
-
-        # prepare skim and eval directories, and samples to use per
-        if "max-" in os.environ["HOSTNAME"]:
-            eval_dir = eval_dir.replace("nfs", "data")
+        inp = self.input()
 
         skim_directories = defaultdict(list)
         eval_directories = {}
-        # for skim_name in inp:
-        print(self.skim_names)
         for skim_name in self.skim_names:
             sample = cfg.get_sample(skim_name, silent=True)
             if sample is None:
@@ -707,10 +690,8 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
                 sample = cfg.Sample(sample_name, year=skim_year)
             skim_directories[(sample.year, cfg.skim_dirs[sample.year])].append(sample.name)
             if sample.year not in eval_directories:
-                # eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
-                eval_directories[sample.year] = os.path.join(eval_dir, sample.year)
+                eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
 
-        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
@@ -748,7 +729,7 @@ def eval_year_to_skim_year(eval_year):
     return f"SKIMS_UL{year}"
 
 
-class ControlPlots(MultiSkimTask,):
+class ControlPlots(MultiSkimTask):
 
     year = luigi.ChoiceParameter(
         default="2017",
