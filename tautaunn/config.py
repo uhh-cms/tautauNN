@@ -292,7 +292,7 @@ class Sample:
     @property
     def year_flag(self) -> int:
         return self.YEAR_FLAGS[self.year]
-    
+
     @property
     def is_signal(self) -> bool:
         return self.name.startswith(("Rad", "Grav"))
@@ -738,6 +738,7 @@ klub_category_columns = [
     "isMETtrigger",
     "isSingleTautrigger",
     "fatjet_particleNetMDJetTags_score",
+    "fatjet_softdropMass",
     "dau1_iso",
     "dau1_eleMVAiso",
     "dau1_deepTauVsJet",
@@ -790,7 +791,7 @@ dynamic_columns = {
     ),
     # actual columns
     "pass_pnet": (
-        pass_pnet_cols := ("year_flag", "fatjet_particleNetMDJetTags_probXbb"),
+        pass_pnet_cols := ("year_flag", "fatjet_particleNetMDJetTags_score"),
         (lambda year_flag, pnet: (
             ((year_flag == 0) & (pnet >= pnet_wps["2016APV"])) |
             ((year_flag == 1) & (pnet >= pnet_wps["2016"])) |

@@ -156,11 +156,11 @@ def category_factory(channel: str) -> dict[str, Callable]:
             (array.isBoosted == 1)
         )
 
-    @selector(needs=["fatjet_particleNetMDJetTags_probXbb"])
+    @selector(needs=["fatjet_particleNetMDJetTags_score"])
     def sel_pnet(array: ak.Array, **kwargs) -> ak.Array:
         year = kwargs["year"]
         return (
-            (array.fatjet_particleNetMDJetTags_probXbb >= pnet_wps[year])
+            (array.fatjet_particleNetMDJetTags_score >= pnet_wps[year])
         )
 
     @selector(needs=[sel_ak8, sel_pnet])
@@ -326,7 +326,6 @@ def category_factory(channel: str) -> dict[str, Callable]:
             cat_boosted(array, **kwargs) &
             ~cat_resolved_2b_first(array, **kwargs)
         )
-
 
     @selector(
         needs=[sel_baseline, sel_channel, sel_ak8, sel_btag_mm, sel_mass_window_res],
