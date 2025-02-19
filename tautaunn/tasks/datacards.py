@@ -14,10 +14,8 @@ import law
 import numpy as np
 import tensorflow as tf
 import awkward as ak
-from pathlib import Path
-from tqdm import tqdm
 
-from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask, HTCondorWorkflow, Task
+from tautaunn.tasks.base import SkimWorkflow, MultiSkimTask
 from tautaunn.tasks.training import MultiFoldParameters, ExportEnsemble
 from tautaunn.util import calc_new_columns
 from tautaunn.tf_util import get_device
@@ -43,6 +41,11 @@ class EvaluationParameters(MultiFoldParameters):
 class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
     nominal_only = luigi.BoolParameter(default=False, description="evaluate only the nominal shape; default: False")
+
+    skim_syst = luigi.Parameter(
+        default=law.NO_STR,
+        description="name of a systematic variation to evaluate in case a different skim_directory is needed; no default",
+    )
 
     default_store = "$TN_STORE_DIR_MARCEL"
 
@@ -94,10 +97,14 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         return parts
 
     def output(self):
-        targets = {"nominal": self.local_target(f"output_{self.branch_data}_nominal.root")}
-        if not self.nominal_only:
-            targets["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
-        return law.SiblingFileCollection(targets)
+        outputs = {}
+        if self.skim_syst == law.NO_STR:
+            outputs["nominal"] = self.local_target(f"output_{self.branch_data}_nominal.root")
+            if not self.nominal_only:
+                outputs["systs"] = self.local_target(f"output_{self.branch_data}_systs.root")
+        else:
+            outputs[self.skim_syst] = self.local_target(f"output_{self.branch_data}_{self.skim_syst}.root")
+        return law.SiblingFileCollection(outputs)
 
     @law.decorator.localize(input=False, output=True)
     def run(self):
@@ -351,8 +358,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         progress_step = 0
 
         # load the input tree
-        skim_file = self.get_skim_file(self.branch_data)
-        in_tree = skim_file.load(formatter="uproot")["HTauTauTree"]
+        skim_file = self.get_skim_file(self.branch_data).load(formatter="uproot")
+        in_tree = skim_file["HTauTauTree"]
 
         # read columns and insert dynamic ones
         arr = in_tree.arrays(
@@ -379,39 +386,48 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
 
             # loop through output trees
             for key, out_tree in out_trees.items():
-                if key == "nominal":
-                    cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
-                    # evaluate the data
-                    with self.publish_step(f"evaluating model for nominal on {eval_mask.sum()} events ..."):
-                        predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
+                if self.skim_syst == law.NO_STR:
+                    if key == "nominal":
+                        cont_inputs, cat_inputs, eval_mask = calc_inputs(arr, dyn_names, cfg, fold_index)
+                        # evaluate the data
+                        with self.publish_step(f"evaluating model for {key} on {eval_mask.sum()} events ..."):
+                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
+                    else:  # systs
+                        # reduce array to only events that are in resolved1b, resolved2b or boosted category
+                        category_mask = sel_cats(arr, self.sample.year)
+                        self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
 
-                else:  # systs
-                    # reduce array to only events that are in resolved1b, resolved2b or boosted category
+                        # the initial output tree was created for all events, so reduce it once
+                        if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
+                            out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
+
+                        for shape_name in shape_names:
+                            syst_arr = arr[category_mask]
+                            # apply systematic variations via aliases
+                            for dst, src in shape_systs[shape_name].items():
+                                if src in arr.fields:
+                                    syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
+
+                            # get inputs
+                            cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
+
+                            # evaluate the data
+                            with self.publish_step(
+                                f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
+                            ):
+                                predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
+                                # update progress
+                                publish_progress(progress_step)
+                                progress_step += 1
+                else:
                     category_mask = sel_cats(arr, self.sample.year)
                     self.publish_message(f"events falling into categories: {ak.mean(category_mask) * 100:.2f}%")
-
-                    # the initial output tree was created for all events, so reduce it once
                     if out_tree["EventNumber"].shape[0] != ak.sum(category_mask):
                         out_tree = out_trees[key] = {c: a[category_mask] for c, a in out_tree.items()}
-
-                    for shape_name in shape_names:
-                        syst_arr = arr[category_mask]
-                        # apply systematic variations via aliases
-                        for dst, src in shape_systs[shape_name].items():
-                            if src in arr.fields:
-                                syst_arr = ak.with_field(syst_arr, syst_arr[src], dst)
-
-                        # get inputs
-                        cont_inputs, cat_inputs, eval_mask = calc_inputs(syst_arr, dyn_names, cfg, fold_index)
-
-                        # evaluate the data
-                        with self.publish_step(
-                            f"evaluating model for shape '{shape_name}' on {eval_mask.sum()} events ...",
-                        ):
-                            predict(model, cont_inputs, cat_inputs, eval_mask, class_names, shape_name, out_tree)
-                            # update progress
-                            publish_progress(progress_step)
-                            progress_step += 1
+                    cont_inputs, cat_inputs, eval_mask = calc_inputs(arr[category_mask], dyn_names, cfg, fold_index)
+                    # evaluate the data
+                    with self.publish_step(f"evaluating model for {key} on {eval_mask.sum()} events ..."):
+                        predict(model, cont_inputs, cat_inputs, eval_mask, class_names, "nominal", out_tree)
 
         # free memory
         del models
@@ -420,6 +436,12 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         for key, outp in outputs.targets.items():
             with outp.dump(formatter="uproot", mode="recreate") as f:
                 f["hbtres"] = out_trees[key]
+
+        # when skim systs are requested, store sum of weights for normalization separately
+        if self.skim_syst != law.NO_STR:
+            sum_weights = skim_file["h_eff"].values()[0]
+            with outp.dump(formatter="uproot", mode="update") as f:
+                f["sum_weights"] = {"sum_weights": np.array([sum_weights], dtype=np.float64)}
 
         print(f"full evaluation took {law.util.human_duration(seconds=time.perf_counter() - t_start)}")
 
@@ -433,8 +455,8 @@ class EvaluateSkimsWrapper(MultiSkimTask, EvaluationParameters, law.WrapperTask)
         }
 
 
-#_default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
-#_default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
+# _default_categories = ("2017_*tau_resolved?b_os_iso", "2017_*tau_boosted_os_iso")
+# _default_categories = ("2017_*tau_resolved1b_noak8_os_iso", "2017_*tau_resolved2b_first_os_iso", "2017_*tau_boosted_notres2b_os_iso")
 _default_categories = ("{year}_*tau_resolved1b_noak8_os_iso", "{year}_*tau_resolved2b_first_os_iso", "{year}_*tau_boosted_notres2b_os_iso")
 
 
@@ -468,13 +490,11 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         description="whether to rewrite existing datacards; default: False",
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
-
 
     @property
     def card_names(self):
@@ -488,12 +508,10 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
 
         return self._card_names
 
-
     def store_parts(self):
         parts = super().store_parts()
         parts.insert_before("version", "ensemble", self.get_model_name())
         return parts
-
 
     def output(self):
         # prepare the output directory
@@ -503,7 +521,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         d = self.local_target(h, dir=True)
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
-        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user")+1)]
+        path_user = (pathlist := d.abs_dirname.split("/"))[int(pathlist.index("user") + 1)]
         if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
@@ -516,7 +534,7 @@ class GetEfficiencies(MultiSkimTask, EvaluationParameters):
         from tautaunn.get_efficiency import write_datacards
 
         # prepare inputs
-        inp = self.input()
+        # inp = self.input()
 
         # prepare skim and eval directories, and samples to use per
         skim_directories = defaultdict(list)
@@ -610,6 +628,10 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
         significant=False,
         description="whether to rewrite existing datacards; default: False",
     )
+    skim_systs = law.CSVParameter(
+        default=(),
+        description="name of systematic variations to allow, that require loading data from different skims; no default",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -621,7 +643,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             print(f"using custom binning from file '{self.binning_file}'")
 
         self.categories = [c.format(year=self.year) for c in self.categories]
-
 
     @property
     def card_names(self):
@@ -655,7 +676,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
         # hotfix location in case TN_STORE_DIR is set to Marcel's
         output_path = d.path
-        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user")+1)]
+        path_user = (pathlist := d.absdirname.split("/"))[int(pathlist.index("user") + 1)]
         if path_user != os.environ["USER"]:
             new_path = output_path.replace(path_user, os.environ["USER"])
             print(f"replacing {path_user} with {os.environ['USER']} in output path.")
@@ -687,7 +708,6 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             if sample.year not in eval_directories:
                 eval_directories[sample.year] = inp[skim_name].collection.dir.parent.path
 
-        #
         # define arguments
         datacard_kwargs = dict(
             spin=list(self.spins),
@@ -696,6 +716,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
             skim_directories=skim_directories,
             eval_directories=eval_directories,
             output_directory=self.output().dir.path,
+            skim_systs=list(self.skim_systs) or None,
             output_pattern=self.card_pattern,
             variable_pattern=self.variable,
             # force using all samples, disabling the feature to select a subset
@@ -717,6 +738,7 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
 
 _default_categories_cr = ("{year}_*tau_resolved1b_noak8_cr_os_iso", "{year}_*tau_resolved2b_first_cr_os_iso", "{year}_*tau_boosted_notres2b_cr_os_iso")
+
 
 def eval_year_to_skim_year(eval_year):
     # use a regex to match the 2 digits after 20
@@ -774,7 +796,6 @@ class ControlPlots(MultiSkimTask):
         brace_expand=True,
     )
 
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -793,11 +814,11 @@ class ControlPlots(MultiSkimTask):
             ]
         return self._card_names
 
-    #def requires(self):
-        #return {
-            #skim_name: EvaluateSkims.req(self, skim_name=skim_name)
-            #for skim_name in self.skim_names
-        #}
+    # def requires(self):
+        # return {
+        # skim_name: EvaluateSkims.req(self, skim_name=skim_name)
+        # for skim_name in self.skim_names
+        # }
 
     def output(self):
         d = self.local_target(dir=True)
@@ -830,7 +851,7 @@ class ControlPlots(MultiSkimTask):
             if sample is None:
                 sample_name, skim_year = self.split_skim_name(f"{self.year}_{skim_name}")
                 sample = cfg.Sample(sample_name, year=skim_year)
-            skim_dir =  os.path.join(cfg.skim_dirs[sample.year], sample.name)
+            skim_dir = os.path.join(cfg.skim_dirs[sample.year], sample.name)
             if os.path.isdir(skim_dir):
                 sample_names.append(sample.name)
             else:

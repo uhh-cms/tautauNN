@@ -24,15 +24,14 @@ import pickle
 import tempfile
 import shutil
 import time
-from functools import reduce, wraps
+from functools import reduce
 from operator import mul
 from collections import OrderedDict, defaultdict
 from fnmatch import fnmatch
 from multiprocessing import Pool as ProcessPool
 from multiprocessing.dummy import Pool as ThreadPool
-from dataclasses import dataclass, field
 from copy import deepcopy
-from typing import Sequence, Any, Callable
+from typing import Sequence, Any
 
 from tqdm import tqdm
 import numpy as np
@@ -44,7 +43,7 @@ from scinum import Number
 from tautaunn.util import transform_data_dir_cache
 from tautaunn.config import masses, spins, klub_index_columns, luminosities, klub_weight_columns
 from tautaunn.config import br_hh_bbtt, channels, datacard_years, processes
-from tautaunn.nuisances import ShapeNuisance, RateNuisance, shape_nuisances, rate_nuisances
+from tautaunn.nuisances import ShapeNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline
 from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
 
@@ -133,7 +132,7 @@ def load_klub_file(
         # compute the full weight for each shape variation (includes nominal)
         # and complain when non-finite weights were found
         for nuisance in shape_nuisances.values():
-            if not nuisance.is_nominal and not nuisance.weights and not nuisance.weight_variations:
+            if not nuisance.is_nominal and not nuisance.weights and not nuisance.weight_variations or nuisance.skim_systs:
                 continue
             if nuisance.weight_variations:
                 def create_weights():
@@ -200,14 +199,14 @@ def load_dnn_file(
     eval_directory: str,
     sample_name: str,
     file_name: str,
-    dnn_output_columns: list[str],
+    read_columns: list[str],
     is_data: bool,
 ) -> ak.Array:
     # prepare expressions
-    expressions = klub_index_columns + dnn_output_columns
+    expressions = klub_index_columns + read_columns
     # extended output columns for variations if not data
     if not is_data:
-        expressions += [f"{c}*" for c in dnn_output_columns]
+        expressions += [f"{c}*" for c in read_columns]
     expressions = list(set(expressions))
 
     # load the array
@@ -274,8 +273,43 @@ def load_file(
     return array, sum_gen_mc_weights
 
 
+def load_syst_file(
+    eval_directory: str,
+    sample_name: str,
+    eval_file_name: str,
+    dnn_output_columns: list[str],
+) -> tuple[ak.Array, float]:
+    # load the dnn output file
+    read_columns = dnn_output_columns + klub_weight_columns + sel_baseline.flat_columns
+    read_columns += sum([
+        cat["selection"].flat_columns
+        for cat in categories.values()
+    ], [])
+    read_columns = list(set(read_columns))
+    dnn_array = load_dnn_file(eval_directory, sample_name, eval_file_name, read_columns, False)
+
+    # drop index columns
+    array = dnn_array
+    for field in klub_index_columns:
+        array = ak.without_field(array, field)
+
+    # load the sum of weights
+    f = uproot.open(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name), eval_file_name))
+    sum_gen_mc_weights = {"nominal": float(f["sum_weights"].arrays().sum_weights[0])}
+
+    # add weight product
+    weight = reduce(mul, (array[c] for c in klub_weight_columns))
+    array = ak.with_field(array, weight, "full_weight_nominal")
+
+    return array, sum_gen_mc_weights
+
+
 def load_file_mp(args: tuple[Any]) -> tuple[ak.Array, float]:
     return load_file(*args)
+
+
+def load_syst_file_mp(args: tuple[Any]) -> tuple[ak.Array, float]:
+    return load_syst_file(*args)
 
 
 def get_cache_path(
@@ -285,6 +319,7 @@ def get_cache_path(
     year: str,
     sample_name: str,
     dnn_output_columns: list[str],
+    skim_systs: list[str],
 ) -> str | None:
     if not cache_directory:
         return None
@@ -305,6 +340,8 @@ def get_cache_path(
         sel_baseline.str_repr.strip(),
         klub_columns,
         sorted(dnn_output_columns),
+        sorted(skim_systs),
+
     ]
     h = hashlib.sha256(str(h).encode("utf-8")).hexdigest()[:10]
 
@@ -312,14 +349,16 @@ def get_cache_path(
 
 
 def load_sample_data(
+    *,
     skim_directory: str,
     eval_directory: str,
     year: str,
     sample_name: str,
+    skim_systs: list[str] | None = None,
     dnn_output_columns: list[str] | None = None,
     n_parallel: int = 4,
     cache_directory: str = "",
-) -> ak.Array:
+) -> dict[str, ak.Array]:
     print(f"loading sample {sample_name} ({year}) ...")
 
     # load from cache?
@@ -330,11 +369,12 @@ def load_sample_data(
         year,
         sample_name,
         dnn_output_columns or [],
+        skim_systs or [],
     )
     if cache_path and os.path.exists(cache_path):
         print("reading from cache")
         with open(cache_path, "rb") as f:
-            array = pickle.load(f)
+            arrays = pickle.load(f)
 
     else:
         # check if this is data
@@ -346,54 +386,81 @@ def load_sample_data(
         else:
             raise Exception(f"could not determine if sample {sample_name} is data")
 
-        # determine file names and build arguments for the parallel load implementation
-        load_args = [
-            (
-                skim_directory,
-                eval_directory,
-                sample_name,
-                eval_file_name.replace("_nominal", "").replace("_systs", ""),
-                eval_file_name,
-                dnn_output_columns or [],
-                is_data,
-            )
-            for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
-            if fnmatch(eval_file_name, "output_*_systs.root")
-        ]
+        # load one array per variations, starting with nominal
+        arrays = {}
+        load_map = {
+            "nominal": {
+                "load_func": load_file_mp,
+                "load_args": [
+                    (
+                        skim_directory,
+                        eval_directory,
+                        sample_name,
+                        eval_file_name.replace("_nominal", "").replace("_systs", ""),
+                        eval_file_name,
+                        dnn_output_columns or [],
+                        is_data,
+                    )
+                    for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
+                    if fnmatch(eval_file_name, "output_*_systs.root")
+                ],
+            },
+        }
+        if skim_systs and not is_data:
+            for skim_syst in skim_systs:
+                load_map[skim_syst] = {
+                    "load_func": load_syst_file_mp,
+                    "load_args": [
+                        (
+                            eval_directory,
+                            sample_name,
+                            eval_file_name,
+                            dnn_output_columns or [],
+                        )
+                        for eval_file_name in os.listdir(os.path.join(eval_directory, sample_name_to_skim_dir(sample_name)))
+                        if fnmatch(eval_file_name, f"output_*_{skim_syst}.root")
+                    ],
+                }
 
-        # run in parallel
-        if n_parallel > 1:
+        for load_key, load_data in load_map.items():
+            load_func = load_data["load_func"]
+            load_args = load_data["load_args"]
+
             # run in parallel
-            with ProcessPool(n_parallel, maxtasksperchild=None) as pool:
-                ret = list(tqdm(pool.imap(load_file_mp, load_args), total=len(load_args)))
-        else:
-            ret = list(tqdm(map(load_file_mp, load_args), total=len(load_args)))
+            if n_parallel > 1:
+                # run in parallel
+                with ProcessPool(n_parallel, maxtasksperchild=None) as pool:
+                    ret = list(tqdm(pool.imap(load_func, load_args), total=len(load_args)))
+            else:
+                ret = list(tqdm(map(load_func, load_args), total=len(load_args)))
 
-        # combine values
-        array = ak.concatenate([arr for arr, _ in ret], axis=0)
-        sum_gen_mc_weights = defaultdict(float)
-        for _, weight_dict in ret:
-            for key, sum_weights in weight_dict.items():
-                sum_gen_mc_weights[key] += sum_weights
-        del ret
-        gc.collect()
+            # combine values
+            array = ak.concatenate([arr for arr, _ in ret], axis=0)
+            sum_gen_mc_weights = defaultdict(float)
+            for _, weight_dict in ret:
+                for key, sum_weights in weight_dict.items():
+                    sum_gen_mc_weights[key] += sum_weights
+            del ret
+            gc.collect()
 
-        # update the full weight
-        for field in array.fields:
-            if field.startswith("full_weight_"):
-                for key, sum_weights in sum_gen_mc_weights.items():
-                    if field.endswith(key):
-                        break
-                else:
-                    sum_weights = sum_gen_mc_weights["nominal"]
-                array = ak.with_field(array, array[field] / sum_weights, field)
+            # update the full weight
+            for field in array.fields:
+                if field.startswith("full_weight_"):
+                    for key, sum_weights in sum_gen_mc_weights.items():
+                        if field.endswith(key):
+                            break
+                    else:
+                        sum_weights = sum_gen_mc_weights["nominal"]
+                    array = ak.with_field(array, array[field] / sum_weights, field)
+
+            arrays[load_key] = array
 
         # add to cache?
         if cache_path:
             print("writing to cache")
             try:
                 with open(cache_path, "wb") as f:
-                    pickle.dump(array, f)
+                    pickle.dump(arrays, f)
             except:
                 try:
                     os.remove(cache_path)
@@ -403,7 +470,7 @@ def load_sample_data(
 
     print("done")
 
-    return array
+    return arrays
 
 
 def expand_categories(category: str | Sequence[str]) -> list[str]:
@@ -432,6 +499,7 @@ def write_datacards(
     skim_directories: dict[tuple[str, str], list[str] | None],
     eval_directories: dict[str, str],
     output_directory: str,
+    skim_systs: list[str] | None,
     output_pattern: str = "cat_{category}_spin_{spin}_mass_{mass}",
     variable_pattern: str = "dnn_spin{spin}_mass{mass}",
     binning: tuple[int, float, float, str] | tuple[float, float, str] = (0.0, 1.0, "flats"),
@@ -475,7 +543,6 @@ def write_datacards(
         print(f"found binning for categories: {cats_in_file}")
         print(f"requested categories {_categories}")
         assert set(_categories) == set(cats_in_file), "categories in binning file do not match the requested categories"
-
 
     # get a list of all sample names per skim directory
     all_sample_names = {
@@ -542,11 +609,12 @@ def write_datacards(
     sample_data = {
         year: {
             sample_name: load_sample_data(
-                skim_directories[year],
-                eval_directories[year],
-                year,
-                sample_name,
-                dnn_output_columns,
+                skim_directory=skim_directories[year],
+                eval_directory=eval_directories[year],
+                year=year,
+                sample_name=sample_name,
+                dnn_output_columns=dnn_output_columns,
+                skim_systs=skim_systs,
                 n_parallel=n_parallel_read,
                 cache_directory=cache_directory,
             )
@@ -568,6 +636,7 @@ def write_datacards(
                 output_directory,
                 output_pattern.format(spin=spin, mass=mass, category=category),
                 variable_pattern.format(spin=spin, mass=mass),
+                skim_systs or [],
                 binning,
                 qcd_estimation,
                 skip_existing,
@@ -576,7 +645,7 @@ def write_datacards(
         for key in binnings:
             bin_edges = sorted(list(set(binnings[key][0]))) if len(binnings[key]) == 2 else sorted(list(set(binnings[key])))
             spin, mass = (int(i[1:]) for i in key.split("__")[1:])
-            #spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
+            # spin, mass = re.search(r"s(\d+)_m(\d+)", key).groups()
             category = key.split("__")[0]
             datacard_args.append((
                 sample_map,
@@ -587,6 +656,7 @@ def write_datacards(
                 output_directory,
                 output_pattern.format(spin=spin, mass=mass, category=category),
                 variable_pattern.format(spin=spin, mass=mass),
+                skim_systs or [],
                 bin_edges,
                 qcd_estimation,
                 skip_existing,
@@ -620,12 +690,12 @@ def write_datacards(
             spin, mass, category = args[2:5]
             edges = res[2]
             stop_reason = res[-2]
-            #bin_counts = res[-1]
+            # bin_counts = res[-1]
             key = f"{category}__s{spin}__m{mass}"
             # do not overwrite when edges are None (in case the datacard was skipped)
             if key in all_bin_edges and not edges:
                 continue
-            all_bin_edges[key] = edges, stop_reason#, bin_counts
+            all_bin_edges[key] = edges, stop_reason  # , bin_counts
         # write them
         with open(bin_edges_file, "w") as f:
             json.dump(all_bin_edges, f, indent=4)
@@ -634,13 +704,14 @@ def write_datacards(
 
 def _write_datacard(
     sample_map: dict[str, dict[str, list[str]]],
-    sample_data: dict[str, dict[str, ak.Array]],
+    sample_data: dict[str, dict[str, dict[str, ak.Array]]],
     spin: int,
     mass: int,
     category: str,
     output_directory: str,
     output_name: str,
     variable_name: str,
+    skim_systs: list[str],
     binning: tuple[int, float, float, str] | tuple[float, float, str] | list[float],
     qcd_estimation: bool,
     skip_existing: bool,
@@ -750,7 +821,7 @@ def _write_datacard(
         qcd_data = {
             region_name: {
                 year: {
-                    sample_name: data[sample_name][categories[qcd_category]["selection"](data[sample_name], year=year)]
+                    sample_name: data[sample_name]["nominal"][categories[qcd_category]["selection"](data[sample_name]["nominal"], year=year)]
                     for sample_name, process_name in sample_processes[year].items()
                     # skip signal
                     if not processes[process_name].get("signal", False)
@@ -763,7 +834,10 @@ def _write_datacard(
     # apply the category selection to sample data
     sample_data = {
         year: {
-            sample_name: data[sample_name][cat_data["selection"](data[sample_name], year=year)]
+            sample_name: {
+                skim_syst: data[sample_name][skim_syst][cat_data["selection"](data[sample_name][skim_syst], year=year)]
+                for skim_syst in data[sample_name]
+            }
             for sample_name, process_name in sample_processes[year].items()
         }
         for year, data in sample_data.items()
@@ -772,22 +846,23 @@ def _write_datacard(
     # complain when nan's were found
     for year, data in sample_data.items():
         for sample_name, _data in data.items():
-            for field in _data.fields:
-                # skip fields other than the shape variables
-                if not field.startswith(variable_name):
-                    continue
-                n_nonfinite = np.sum(~np.isfinite(_data[field]))
-                if n_nonfinite:
-                    print(
-                        f"{n_nonfinite} / {len(_data)} of events in {sample_name} ({year}) after {category} "
-                        f"selection are non-finite in variable {field}",
-                    )
+            for skim_syst, __data in _data.items():
+                for field in __data.fields:
+                    # skip fields other than the shape variables
+                    if not field.startswith(variable_name):
+                        continue
+                    n_nonfinite = np.sum(~np.isfinite(__data[field]))
+                    if n_nonfinite:
+                        print(
+                            f"{n_nonfinite} / {len(__data)} of events in {sample_name} ({year}, {skim_syst}) after "
+                            f"{category} selection are non-finite in variable {field}",
+                        )
 
     # derive bin edges
     if binning_algo == "equal":
         bin_edges = np.linspace(x_min, x_max, n_bins + 1).tolist()
         stop_reason = ""
-    elif binning_algo in ('flats', 'flatsguarded', 'flats_systs', 'non_res_like',):
+    elif binning_algo in ("flats", "flatsguarded", "flats_systs", "non_res_like"):
         # get the signal values and weights
         signal_process_names = {
             year: [
@@ -817,13 +892,13 @@ def _write_datacard(
             def extract(getter):
                 return ak.concatenate(
                     list(itertools.chain.from_iterable(
-                            [getter(year, data, sample_name) for sample_name in sample_map[year][process_name[year]]]
-                            for year, data in sample_data.items()
-                        ))
+                        [getter(year, data, sample_name) for sample_name in sample_map[year][process_name[year]]]
+                        for year, data in sample_data.items()
+                    )),
                 )
 
-            values = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_discriminator(variable_name, direction)])  # noqa
-            weights = extract(lambda year, data, sample_name: data[sample_name][nuisance.get_varied_full_weight(direction)] * luminosities[year] * weight_scale)  # noqa
+            values = extract(lambda year, data, sample_name: data[sample_name]["nominal"][nuisance.get_varied_discriminator(variable_name, direction)])  # noqa
+            weights = extract(lambda year, data, sample_name: data[sample_name]["nominal"][nuisance.get_varied_full_weight(direction)] * luminosities[year] * weight_scale)  # noqa
 
             # complain when values are out of bounds or non-finite
             outlier_mask = (values < x_min) | (values > x_max) | ~np.isfinite(values)
@@ -908,7 +983,7 @@ def _write_datacard(
             dy_shifts = OrderedDict()
             all_bkgds = {}
             for nuisance in shape_nuisances.values():
-                if nuisance.weight_variations:
+                if nuisance.weight_variations or nuisance.skim_systs:
                     continue
                 for direction in nuisance.get_directions():
                     key = f"{nuisance.name}_{direction}" if not nuisance.is_nominal else "nominal"
@@ -970,6 +1045,9 @@ def _write_datacard(
         # skip the nuisance when configured to skip
         if nuisance.skip:
             continue
+        # skip nuisances that need skim_shifts but none were provided
+        if skim_systs and nuisance.skim_systs and any(s not in nuisance.skim_systs for s in skim_systs):
+            continue
         # skip shape nuisances that do not apply to the channel of this category
         if not nuisance.is_nominal and not nuisance.applies_to_channel(cat_data["channel"]):
             continue
@@ -1000,8 +1078,8 @@ def _write_datacard(
                                 h = hist.Hist.new.Variable(bin_edges, name=varied_weight).Weight()
                                 # fill them
                                 h.fill(**{
-                                    varied_weight: sample_data[year][sample_name][variable_name],
-                                    "weight": sample_data[year][sample_name][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                    varied_weight: sample_data[year][sample_name]["nominal"][variable_name],
+                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale,
                                 })
                                 # store them
                                 pdf_hists.append(h)
@@ -1023,8 +1101,8 @@ def _write_datacard(
                                 h = hist.Hist.new.Variable(bin_edges, name=varied_weight).Weight()
                                 # fill them
                                 h.fill(**{
-                                    varied_weight: sample_data[year][sample_name][variable_name],
-                                    "weight": sample_data[year][sample_name][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                    varied_weight: sample_data[year][sample_name]["nominal"][variable_name],
+                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale,
                                 })
                                 # store them
                                 qcd_hists.append(h)
@@ -1102,11 +1180,14 @@ def _write_datacard(
                             else:
                                 raise NotImplementedError(f"varied shape production not implemented for {nuisance.name}")
                         else:
+                            skim_syst = "nominal"
+                            if nuisance.skim_systs:
+                                skim_syst = nuisance.skim_systs[direction == "down"]
                             weight = 1
                             if not is_data:
-                                weight = sample_data[year][sample_name][varied_weight_field] * scale
+                                weight = sample_data[year][sample_name][skim_syst][varied_weight_field] * scale
                             h.fill(**{
-                                full_hist_name: sample_data[year][sample_name][varied_variable_name],
+                                full_hist_name: sample_data[year][sample_name][skim_syst][varied_variable_name],
                                 "weight": weight,
                             })
 
@@ -1403,7 +1484,7 @@ def _write_datacard(
         empty_lines.add("line_parameters")
 
     # mc stats
-    blocks["mc_stats"] = [("*", "autoMCStats", 8)]
+    blocks["mc_stats"] = [("*", "autoMCStats", 10)]
 
     # prettify blocks
     blocks["observations"] = align_lines(list(blocks["observations"]))
