@@ -311,6 +311,8 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         columns_to_read |= set(cfg.klub_index_columns)
         columns_to_read |= set(cfg.klub_category_columns)
         columns_to_read |= set(cfg.klub_weight_columns)
+        if self.skim_syst != law.NO_STR:
+            columns_to_read |= set(cfg.klub_extra_weight_columns)
         # expand dynamic columns, keeping track of those that are needed
         all_dyn_names = set(cfg.dynamic_columns)
         dyn_names = set()
@@ -374,7 +376,7 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         out_trees = {
             key: {
                 c: np.asarray(arr[c])
-                for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns) | set(cfg.klub_weight_columns))
+                for c in list(set(cfg.klub_index_columns) | set(cfg.klub_category_columns) | set(cfg.klub_weight_columns) | (set(cfg.klub_extra_weight_columns) if self.skim_syst != law.NO_STR else set()))
             }
             for key in outputs.targets.keys()
         }

@@ -775,6 +775,10 @@ klub_weight_columns = [
     "bTagweightReshape",
 ]
 
+klub_extra_weight_columns = [
+    "fatjet_particleNetMDJetTags_LP_SF",
+]
+
 reg_plot_columns = [
     "dau1_px", "dau1_py", "dau1_pz", "dau1_e",
     "dau2_px", "dau2_py", "dau2_pz", "dau2_e",
