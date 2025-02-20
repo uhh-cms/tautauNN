@@ -17,6 +17,7 @@ class ShapeNuisance:
     channels: set[str] = field(default_factory=set)
     skim_systs: tuple[str] | None = None
     skip: bool = False
+    affects_full_weight: bool = True
 
     @classmethod
     def new(cls, *args, **kwargs):
@@ -64,7 +65,7 @@ class ShapeNuisance:
 
         # use the default weight field in case the nuisance is nominal or has no dedicated weight variations
         assert direction in ("", "up", "down")
-        if not direction or not self.weights:
+        if not direction or not self.weights or not self.affects_full_weight:
             return "full_weight_nominal"
         # compose the full weight field name
         return f"full_weight_{self.name}_{direction}"
@@ -354,6 +355,13 @@ ShapeNuisance.new(
     name="jer",
     combine_name="CMS_res_j_{year}",
     skim_systs=("JERup", "JERdown"),
+)
+
+ShapeNuisance.new(
+    name="pnet_weight",
+    combine_name="CMS_bbtt_eff_xbb_pnet_{year}",
+    weights={"fatjet_particleNetMDJetTags_LP_SF": ("fatjet_particleNetMDJetTags_LP_SF_up", "fatjet_particleNetMDJetTags_LP_SF_down")},
+    affects_full_weight=False,
 )
 
 

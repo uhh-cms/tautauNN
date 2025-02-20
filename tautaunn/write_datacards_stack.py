@@ -41,8 +41,10 @@ import hist
 from scinum import Number
 
 from tautaunn.util import transform_data_dir_cache
-from tautaunn.config import masses, spins, klub_index_columns, luminosities, klub_weight_columns
-from tautaunn.config import br_hh_bbtt, channels, datacard_years, processes
+from tautaunn.config import (
+    masses, spins, klub_index_columns, luminosities, klub_weight_columns, klub_extra_weight_columns,
+    br_hh_bbtt, channels, datacard_years, processes,
+)
 from tautaunn.nuisances import ShapeNuisance, shape_nuisances, rate_nuisances
 from tautaunn.cat_selectors import category_factory, sel_baseline
 from tautaunn.binning_algorithms import flats_systs, flatsguarded, flats
@@ -91,6 +93,13 @@ for channel in channels:
         }
 
 
+# helper to decide which extra weights apply to which category
+def extra_weight_applies_to_category(extra_weight: str, category: str) -> bool:
+    if extra_weight == "fatjet_particleNetMDJetTags_LP_SF" and "_boosted_" in category:
+        return True
+    return False
+
+
 #
 # functions for loading inputs
 #
@@ -103,6 +112,7 @@ def load_klub_file(
 ) -> tuple[ak.Array, float]:
     # all weight column patterns
     klub_weight_column_patterns = klub_weight_columns + [f"{c}*" for c in klub_weight_columns]
+    klub_weight_column_patterns += klub_extra_weight_columns + [f"{c}*" for c in klub_extra_weight_columns]
 
     # add varied weights
     for nuisance in shape_nuisances.values():
@@ -110,19 +120,24 @@ def load_klub_file(
             klub_weight_column_patterns.extend(sum(nuisance.weight_variations.values(), []))
 
     # all columns that should be loaded and kept later on
-    persistent_columns = klub_index_columns + sel_baseline.flat_columns
+    persistent_columns = set(klub_index_columns + sel_baseline.flat_columns)
     # add all columns potentially necessary for selections
-    persistent_columns += sum([
+    persistent_columns |= set(sum([
         cat["selection"].flat_columns
         for cat in categories.values()
-    ], [])
+    ], []))
 
     # load the array
     f = uproot.open(os.path.join(skim_directory, sample_name_to_skim_dir(sample_name), file_name))
     array = f["HTauTauTree"].arrays(
-        filter_name=list(set(persistent_columns + ([] if is_data else klub_weight_column_patterns))),
+        filter_name=list(persistent_columns | set([] if is_data else klub_weight_column_patterns)),
         cut=sel_baseline.str_repr.strip(),
     )
+
+    # extend persistent columns after knowing which columns were loaded
+    for field in array.fields:
+        if any(fnmatch(field, col + "*") for col in klub_extra_weight_columns):
+            persistent_columns.add(field)
 
     # data / mc specifics
     if is_data:
@@ -160,7 +175,7 @@ def load_klub_file(
                         f"non-finite weight values in sample {sample_name}, file {file_name}, weight {weight_name}",
                     )
                     array = array[~mask]
-                persistent_columns.append(weight_name)
+                persistent_columns.add(weight_name)
 
     # drop weight columns
     for field in array.fields:
@@ -280,7 +295,7 @@ def load_syst_file(
     dnn_output_columns: list[str],
 ) -> tuple[ak.Array, float]:
     # load the dnn output file
-    read_columns = dnn_output_columns + klub_weight_columns + sel_baseline.flat_columns
+    read_columns = dnn_output_columns + klub_weight_columns + klub_extra_weight_columns + sel_baseline.flat_columns
     read_columns += sum([
         cat["selection"].flat_columns
         for cat in categories.values()
@@ -1046,11 +1061,17 @@ def _write_datacard(
         if nuisance.skip:
             continue
         # skip nuisances that need skim_shifts but none were provided
-        if skim_systs and nuisance.skim_systs and any(s not in nuisance.skim_systs for s in skim_systs):
+        if nuisance.skim_systs and any(s not in skim_systs for s in nuisance.skim_systs):
             continue
         # skip shape nuisances that do not apply to the channel of this category
         if not nuisance.is_nominal and not nuisance.applies_to_channel(cat_data["channel"]):
             continue
+
+        # determine names of extra weights that apply
+        extra_weights = [
+            name for name in klub_extra_weight_columns
+            if extra_weight_applies_to_category(name, category)
+        ]
 
         # pdf+alpha_s handling
         # per year and sample, build all 100 variations per process, then construct bin-wise pdf uncertainties,
@@ -1071,6 +1092,15 @@ def _write_datacard(
                 for year, sample_names in _map.items():
                     for sample_name in sample_names:
                         nom_weight = list(nuisance.weight_variations.keys())[0]
+
+                        # build product of extra weights
+                        extra_weight = 1.0
+                        if extra_weights:
+                            extra_weight = reduce(mul, (
+                                np.maximum(sample_data[year][sample_name]["nominal"][name], 0)
+                                for name in extra_weights
+                            ))
+
                         if nuisance.name == "pdf_shape":
                             pdf_hists = []
                             for varied_weight in nuisance.weight_variations[nom_weight]:
@@ -1079,7 +1109,7 @@ def _write_datacard(
                                 # fill them
                                 h.fill(**{
                                     varied_weight: sample_data[year][sample_name]["nominal"][variable_name],
-                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale * extra_weight,
                                 })
                                 # store them
                                 pdf_hists.append(h)
@@ -1102,7 +1132,7 @@ def _write_datacard(
                                 # fill them
                                 h.fill(**{
                                     varied_weight: sample_data[year][sample_name]["nominal"][variable_name],
-                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale,
+                                    "weight": sample_data[year][sample_name]["nominal"][nuisance.get_varied_full_weight(varied_weight)] * scale * extra_weight,
                                 })
                                 # store them
                                 qcd_hists.append(h)
@@ -1121,6 +1151,12 @@ def _write_datacard(
 
         # loop over up/down variations (or just "" for nominal)
         for direction in nuisance.get_directions():
+            extra_weights_varied = [
+                nuisance.get_varied_weight(name, direction)
+                for name in extra_weights
+                if not nuisance.weight_variations
+            ]
+
             hist_name = (
                 variable_name
                 if nuisance.is_nominal
@@ -1186,6 +1222,13 @@ def _write_datacard(
                             weight = 1
                             if not is_data:
                                 weight = sample_data[year][sample_name][skim_syst][varied_weight_field] * scale
+                                # multiply with extra weights, maybe use varied version when nuisance matches
+                                if extra_weights_varied:
+                                    extra_weight = reduce(mul, (
+                                        np.maximum(sample_data[year][sample_name][skim_syst][name], 0)
+                                        for name in extra_weights_varied
+                                    ))
+                                    weight = weight * extra_weight
                             h.fill(**{
                                 full_hist_name: sample_data[year][sample_name][skim_syst][varied_variable_name],
                                 "weight": weight,

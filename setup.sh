@@ -30,6 +30,7 @@ action() {
     local pyv="3.11"
     local user_name="$( whoami )"
     local remote_env="$( [ -z "${TN_REMOTE_ENV}" ] && echo "false" || echo "true" )"
+    local local_env="$( [ ! -z "${TN_REMOTE_ENV}" ] && echo "false" || echo "true" )"
 
 
     #
@@ -96,7 +97,7 @@ action() {
     export TN_LOCAL_SCHEDULER="${TN_LOCAL_SCHEDULER:-true}"
     export TN_SCHEDULER_HOST="${TN_SCHEDULER_HOST:-$( hostname )}"
     export TN_SCHEDULER_PORT="8088"
-    export TN_WORKER_KEEP_ALIVE="${TN_WORKER_KEEP_ALIVE:-"${remote_env}"}"
+    export TN_WORKER_KEEP_ALIVE="${TN_WORKER_KEEP_ALIVE:-${local_env}}"
     export TN_HTCONDOR_FLAVOR="${TN_HTCONDOR_FLAVOR:-naf}"
     export TN_SLURM_FLAVOR="${TN_SLURM_FLAVOR:-maxwell}"
     export TN_SLURM_PARTITION="${TN_SLURM_PARTITION:-allgpu}"
