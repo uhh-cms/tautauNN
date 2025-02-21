@@ -548,3 +548,6 @@ class SkimWorkflow(SkimTask, law.LocalWorkflow, HTCondorWorkflow, SlurmWorkflow)
     def htcondor_destination_info(self, info):
         info["sample"] = self.sample.skim_name
         return info
+
+    def htcondor_output_postfix(self):
+        return f"skimdir{law.util.create_hash(self.skim_dir)}"
