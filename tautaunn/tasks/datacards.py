@@ -438,12 +438,10 @@ class EvaluateSkims(SkimWorkflow, EvaluationParameters):
         for key, outp in outputs.targets.items():
             with outp.dump(formatter="uproot", mode="recreate") as f:
                 f["hbtres"] = out_trees[key]
-
-        # when skim systs are requested, store sum of weights for normalization separately
-        if self.skim_syst != law.NO_STR:
-            sum_weights = skim_file["h_eff"].values()[0]
-            with outp.dump(formatter="uproot", mode="update") as f:
-                f["sum_weights"] = {"sum_weights": np.array([sum_weights], dtype=np.float64)}
+                # when skim systs are requested, store sum of weights for normalization separately
+                if self.skim_syst != law.NO_STR:
+                    sum_weights = skim_file["h_eff"].values()[0]
+                    f["sum_weights"] = {"sum_weights": np.array([sum_weights], dtype=np.float64)}
 
         print(f"full evaluation took {law.util.human_duration(seconds=time.perf_counter() - t_start)}")
 
