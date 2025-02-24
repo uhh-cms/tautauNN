@@ -66,12 +66,57 @@ def check_error_requirement(bkgd_values, bkgd_weights, next_edge, target_val=1.)
     return calc_rel_error(bkgd_weights[mask]) < target_val
 
 
-def get_conditions(dy_vals_weights, tt_vals_weights, next_edge, yield_target=1e-5, error_target=1.):
+def get_conditions(dy_vals_weights, tt_vals_weights, dy_tt_vals_weights, next_edge, yield_target=1e-5, error_target=1.):
     dy_conds = (check_yield_requirement(*dy_vals_weights, next_edge, yield_target)
                 and check_error_requirement(*dy_vals_weights, next_edge, error_target))
     tt_conds = (check_yield_requirement(*tt_vals_weights, next_edge, yield_target)
                 and check_error_requirement(*tt_vals_weights, next_edge, error_target))
-    return dy_conds, tt_conds
+    dy_tt_conds = (check_yield_requirement(*dy_tt_vals_weights, next_edge, yield_target)
+                and check_error_requirement(*dy_tt_vals_weights, next_edge, 0.5))
+    return dy_conds, tt_conds, dy_tt_conds
+
+
+def add_bkgd_driven_bins(bin_edges,
+                         all_bkgds_scores,
+                         all_bkgds_weights,
+                         x_min=0.):
+    # assumes that bin_edges are reverse-sorted
+    if bin_edges[-1] == x_min:
+        bin_edges = bin_edges[:-1] 
+        if len(bin_edges) == 1:
+            bin_edges.append(x_min)
+            return bin_edges
+    bin_edges_arr = np.asarray(bin_edges)
+    if np.sum(bin_edges_arr<0.8) >= 3:
+        bin_edges.append(x_min)
+        return bin_edges
+    else:
+        binmask = np.logical_and(all_bkgds_scores>=bin_edges_arr[-1], all_bkgds_scores<bin_edges_arr[-2])
+        last_yield = np.sum(all_bkgds_weights[binmask])
+        additional_edges = 3 - np.sum(bin_edges_arr<0.8)
+        remaining_scores = all_bkgds_scores[all_bkgds_scores<bin_edges_arr[-1]]
+        remaining_weights = all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]
+        remaining_w_cs = np.cumsum(remaining_weights)
+        #additional_edges = min(additional_edges, int(np.floor(np.log2(remaining_yield // last_yield))))
+        while additional_edges > 0:
+            if np.sum(all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]) < 2*last_yield:
+                break
+            yield_edge = remaining_scores[np.searchsorted(remaining_w_cs, last_yield*2)]
+            error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.05)
+            if error_edge == 1:
+                break
+            next_edge = min([0.75,yield_edge, error_edge])
+            last_yield = np.sum(remaining_weights[remaining_scores>=next_edge])
+            remaining_scores = all_bkgds_scores[all_bkgds_scores<next_edge]
+            remaining_weights = all_bkgds_weights[all_bkgds_scores<next_edge]
+            remaining_w_cs = np.cumsum(remaining_weights)
+            if remaining_w_cs[-1] > 2*last_yield:
+                bin_edges_arr = np.append(bin_edges_arr, next_edge)
+                additional_edges -= 1
+            else:
+                break
+        bin_edges_arr = np.append(bin_edges_arr, x_min)
+        return list(bin_edges_arr)
 
 
 def flat_signal(signal_values: ak.Array,
@@ -274,48 +319,6 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 x_max: float=1.,):
     
 
-    def add_bkgd_driven_bins(bin_edges,
-                             all_bkgds_scores,
-                             all_bkgds_weights,
-                             x_min=0.):
-        if bin_edges[-1] == x_min:
-            bin_edges = bin_edges[:-1] 
-            if len(bin_edges) == 1:
-                bin_edges.append(x_min)
-                return bin_edges
-        bin_edges_arr = np.asarray(bin_edges)
-        if np.sum(bin_edges_arr<0.8) >= 3:
-            bin_edges.append(x_min)
-            return bin_edges
-        else:
-            binmask = np.logical_and(all_bkgds_scores>=bin_edges_arr[-1], all_bkgds_scores<bin_edges_arr[-2])
-            last_yield = np.sum(all_bkgds_weights[binmask])
-            additional_edges = 3 - np.sum(bin_edges_arr<0.8)
-            remaining_scores = all_bkgds_scores[all_bkgds_scores<bin_edges_arr[-1]]
-            remaining_weights = all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]
-            remaining_w_cs = np.cumsum(remaining_weights)
-            #additional_edges = min(additional_edges, int(np.floor(np.log2(remaining_yield // last_yield))))
-            while additional_edges > 0:
-                if np.sum(all_bkgds_weights[all_bkgds_scores<bin_edges_arr[-1]]) < 2*last_yield:
-                    break
-                yield_edge = remaining_scores[np.searchsorted(remaining_w_cs, last_yield*2)]
-                error_edge = error_requirement(remaining_scores, remaining_weights, target_val=0.05)
-                if error_edge == 1:
-                    break
-                next_edge = min([0.75,yield_edge, error_edge])
-                last_yield = np.sum(remaining_weights[remaining_scores>=next_edge])
-                remaining_scores = all_bkgds_scores[all_bkgds_scores<next_edge]
-                remaining_weights = all_bkgds_weights[all_bkgds_scores<next_edge]
-                remaining_w_cs = np.cumsum(remaining_weights)
-                if remaining_w_cs[-1] > 2*last_yield:
-                    bin_edges_arr = np.append(bin_edges_arr, next_edge)
-                    additional_edges -= 1
-                else:
-                    break
-            bin_edges_arr = np.append(bin_edges_arr, x_min)
-            return list(bin_edges_arr)
-        
-
     assert dy_shifts.keys() == tt_shifts.keys() == hh_shifts.keys() 
     assert all([len(dy_shifts[key][0]) == len(dy_shifts[key][1]) for key in dy_shifts.keys()])
     assert all([len(tt_shifts[key][0]) == len(tt_shifts[key][1]) for key in tt_shifts.keys()])
@@ -374,8 +377,8 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
                 failing_shifts = [key for key, conds in shifts_conds.items() if not all(conds)]
                 shift = failing_shifts[0]
                 # advance the edge
-                dy_conds, tt_conds = shifts_conds[shift]
-                if ((not dy_conds) and (not tt_conds)):
+                dy_conds, tt_conds, dy_tt_conds = shifts_conds[shift]
+                if not dy_tt_conds:
                     mask = dy_tt_shifts[shift][0]<next_edge
                     if not any(mask):
                         stop_reason = "no more dy_tt events left (yield/error requirements)"
