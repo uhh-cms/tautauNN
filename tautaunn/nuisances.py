@@ -204,13 +204,13 @@ ShapeNuisance.new(
 )
 ShapeNuisance.new(
     name="id_elereco",
-    combine_name="CMS_eff_e_reco_{year}",
+    combine_name="CMS_eff_e_reco",
     weights={"dauSFs": ("dauSFs_eleReco_up", "dauSFs_eleReco_down")},
     channels={"etau"},
 )
 ShapeNuisance.new(
     name="id_eleid",
-    combine_name="CMS_eff_e_id_{year}",
+    combine_name="CMS_eff_e_id",
     weights={"dauSFs": ("dauSFs_eleID_up", "dauSFs_eleID_down")},
     channels={"etau"},
 )
@@ -263,13 +263,13 @@ ShapeNuisance.new(
 )
 ShapeNuisance.new(
     name="ees",
-    combine_name="CMS_scale_e_{year}",
+    combine_name="CMS_scale_e",
     discriminator_suffix=("ees_up", "ees_down"),
     channels={"etau"},
 )
 ShapeNuisance.new(
     name="eer",
-    combine_name="CMS_res_e_{year}",
+    combine_name="CMS_res_e",
     discriminator_suffix=("eer_up", "eer_down"),
     channels={"etau"},
 )
