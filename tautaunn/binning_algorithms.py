@@ -367,7 +367,7 @@ def flats_systs(hh_shifts: dict[str, Tuple[ak.Array, ak.Array]],
         # now apply the yield requirements
         yield_conds_not_met = True
         while yield_conds_not_met:
-            shifts_conds = {key: get_conditions(dy_shifts[key],tt_shifts[key],
+            shifts_conds = {key: get_conditions(dy_shifts[key],tt_shifts[key], dy_tt_shifts[key],
                                                 next_edge, yield_target, error_target)
                             for key in dy_shifts.keys()}
             if all([all(conds) for conds in shifts_conds.values()]):
