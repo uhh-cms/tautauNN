@@ -50,7 +50,8 @@ action() {
         export TN_SKIMS_2016="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL16"
         # export TN_SKIMS_2017="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17"
         export TN_SKIMS_2017="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL17_uhh_2017_v9_22Jan25"
-        export TN_SKIMS_2018="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL18"
+        # export TN_SKIMS_2018="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL18"
+        export TN_SKIMS_2018="/data/dust/user/kramerto/hbt_resonant_run2/HHSkims/SKIMS_UL18_uhh_2018_v9_03Feb25"
         # naf
         export TN_HTCONDOR_FLAVOR="naf"
         # maxwell

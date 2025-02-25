@@ -371,7 +371,7 @@ class SkimTask(Task):
         default=law.NO_STR,
         description="skim directory in the format 'YEAR' or 'YEAR:DIRECTORY'; in the "
         "latter case, the validation with the skim_name is skipped; default: directory "
-        "corresponding to that of the skim_name"
+        "corresponding to that of the skim_name",
     )
 
     @classmethod

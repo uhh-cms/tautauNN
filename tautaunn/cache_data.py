@@ -10,9 +10,7 @@ from operator import mul
 from collections import defaultdict
 from fnmatch import fnmatch
 from multiprocessing import Pool as ProcessPool
-from multiprocessing.dummy import Pool as ThreadPool
-from copy import deepcopy
-from typing import Sequence, Any, Callable
+from typing import Any
 
 from tqdm import tqdm
 import numpy as np
@@ -61,7 +59,7 @@ def load_klub_file(
 
     # load the array
     with uproot.open(os.path.join(skim_directory, sample_name, file_name)) as f:
-         
+
         array = f["HTauTauTree"].arrays(
             filter_name=list(set(persistent_columns + ([] if is_data else klub_weight_column_patterns))),
             cut=sel_baseline.str_repr.strip(),
@@ -323,7 +321,7 @@ def load_sample_data(
 
 
 def load_data(
-    year: str, 
+    year: str,
     sample_names: list[str],
     skim_directory: list[str],
     eval_directory: list[str],
@@ -333,8 +331,6 @@ def load_data(
     n_parallel_read: int = 4,
     skip_existing: bool = False,
 ) -> list[tuple[str, str, list[float]]]:
-
-    
     _spins = cfg.spins
     _masses = cfg.masses
     # prepare dnn output columns
@@ -348,15 +344,15 @@ def load_data(
         os.environ[f"TN_SKIMS_{year}"],
         os.path.join(eval_directory, year),
         year,
-        "TT_SemiLep", 
+        "TT_SemiLep",
         [variable_pattern.format(mass=mass, spin=spin)
-            for mass in _masses for spin in _spins], 
+            for mass in _masses for spin in _spins],
     )
     h = Path(cashe_path).stem.split("_")[-1]
 
     # get a mapping of process name to sample names
-    sample_map: dict[str, list] = {} 
-    all_matched_sample_names: list[str] = [] 
+    sample_map: dict[str, list] = {}
+    all_matched_sample_names: list[str] = []
     for process_name, process_data in processes.items():
         # skip signals that do not match any spin or mass
         if (
@@ -390,7 +386,7 @@ def load_data(
             existing_files = os.listdir(output_directory)
             existing_files = [f for f in existing_files if fnmatch(f, f"*_{h}.pkl")]
             # check for each hypothesis if the file already exists
-            for hypothesis_name in [f"m{mass}_s{spin}" for spin, mass in itertools.product(_spins, _masses)]: 
+            for hypothesis_name in [f"m{mass}_s{spin}" for spin, mass in itertools.product(_spins, _masses)]:
                 if any(fnmatch(f, f"{year}_{hypothesis_name}_{h}.pkl") for f in existing_files):
                     print(f"skipping hypothesis {hypothesis_name}, file already exists")
                     del hypothesis_cols[hypothesis_name]
@@ -423,7 +419,7 @@ def load_data(
     # get the dnn columns
     hypothesis_cols = {f"m{mass}_s{spin}": [c for c in all_cols if f"pdnn_m{mass}_s{spin}" in c]
                        for spin, mass in itertools.product(_spins, _masses)}
-    bkgd_and_data_samples = [s for s in all_matched_sample_names if 
+    bkgd_and_data_samples = [s for s in all_matched_sample_names if
                              processes[sample_processes[s]].get("data", False) or
                              not processes[sample_processes[s]].get("signal", False)]
     tic = time.time()
@@ -446,5 +442,5 @@ def load_data(
     toc = time.time()
     print(f"storing took {toc - tic:.2f} s")
     return [(hypothesis_name, f"{year}_{hypothesis_name}_{h}.pkl", [mass, spin]) for hypothesis_name in hypothesis_cols.keys()]
-    
-    
+
+

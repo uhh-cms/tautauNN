@@ -37,7 +37,6 @@ datacard_years = {
     "2017": "2017",
     "2018": "2018",
 }
-# TODO: JER
 
 processes = OrderedDict({
     "TT": {
