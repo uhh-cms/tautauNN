@@ -1141,6 +1141,9 @@ def _write_datacard(
                             varied_shapes = np.concatenate([h.view().value[None, :] for h in qcd_hists[1:]], axis=0)
                             up_shape = varied_shapes.max(axis=0) / ref_shape
                             down_shape = varied_shapes.min(axis=0) / ref_shape
+                            # avoid one-sided shapes
+                            up_shape[up_shape < 1] = 1.0
+                            down_shape[down_shape > 1] = 1.0
                             # fix division by zero
                             up_shape[~np.isfinite(up_shape)] = 1.0
                             down_shape[~np.isfinite(down_shape)] = 1.0
