@@ -86,12 +86,11 @@ def load_hists(filename: str | Path,
 
     with uproot.open(filename) as f:
         objects = f[dirname].classnames()
-        nominal_bkgd_names = [o.replace(";1", "") for o in objects if not
-                              any(s in o for s in ["Up", "Down"])
-                              and ("data_obs" not in o)]
+        nominal_bkgd_names = [o for o in objects if "Up" not in o and "Down" not in o and "data_obs" not in o]
+        nominal_bkgd_names = [re.sub(r";\d", "", o) for o in nominal_bkgd_names]
         if not (signal_name is None):
             nominal_bkgd_names = [o for o in nominal_bkgd_names if signal_name not in o]
-        shift_names = list(set([o.split("__")[1].replace("Up;1", "")
+        shift_names = list(set([re.sub(r"Up;\d", "", o.split("__")[1])
                             for o in objects
                             if "Up" in o and not any(s in o for s in ["ggf_", "vbf_" 'data_obs'])]))
         
@@ -221,7 +220,9 @@ def plot_mc_data_sig(data_hist: Hist,
                     f"$\\times$ exp. limit: {limit_value*1000:.1f} [fb]\n"
                     "$\\times$ BR($HH \\rightarrow bb\\tau\\tau$)")
             signal_hist *= limit_value * br_hh_bbtt
-    # mask = (signal_hist.values()/ sum(bkgd_stack).values()) < sb_limit 
+    
+    # default mask is all bins are blinded (False -> blinded)
+    mask = np.zeros_like(data_hist.values(), dtype=bool)
     # unblind all bins up to 0.8 
     if unblind:
         if len(bin_edges) > 2:
@@ -235,6 +236,9 @@ def plot_mc_data_sig(data_hist: Hist,
             mask = np.zeros_like(data_hist.values(), dtype=bool)
     if control_region:
         mask = np.ones_like(data_hist.values(), dtype=bool)
+    # blind data
+    data_hist.values()[~mask] = np.nan
+    data_hist.variances()[~mask] = np.nan
 
     ######## using the s/sqrt(b) < 0.005 criterion doesn't work well
     #else:
@@ -245,9 +249,6 @@ def plot_mc_data_sig(data_hist: Hist,
         #else:
             ## don't unblind
             #mask = np.zeros_like(data_hist.values(), dtype=bool)
-    # blind data
-    data_hist.values()[~mask] = np.nan
-    data_hist.variances()[~mask] = np.nan
     
     color_map = {
         "DY": "#7a21dd",
