@@ -635,6 +635,8 @@ class WriteDatacards(MultiSkimTask, EvaluationParameters):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        kwargs["skim_names"] = f"{self.year}_*" 
+        super().__init__(*args, **kwargs)
         self.card_pattern = "cat_{category}_spin_{spin}_mass_{mass}"
         self._card_names = None
 
