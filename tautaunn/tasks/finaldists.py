@@ -25,6 +25,11 @@ class PlotDists(Task):
 
     unblind = luigi.BoolParameter(
         default=False,
+        description="Unblind the data; default: False", 
+    )
+
+    unblind_edge = luigi.FloatParameter(
+        default=0.8,
         description="unblinding edge; default: 0.8 -> unblind all bins with edge < 0.8", 
     )
 
@@ -150,5 +155,6 @@ class PlotDists(Task):
                 savename=path.path,
                 limit_value=None if self.limits_file == law.NO_STR else load_reslim(self.limits_file, mass),
                 unblind=self.unblind,
+                unblind_edge=self.unblind_edge,
                 control_region=self.control_region,
             )
