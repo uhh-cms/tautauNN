@@ -31,3 +31,5 @@ data
 test*
 models
 tautaunn/check_binning.py
+tautaunn/check_datacards.py
+tautaunn/fix_datacards.py
