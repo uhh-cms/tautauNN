@@ -107,10 +107,10 @@ processes = OrderedDict({
         "id": 17,
         "sample_patterns": ["ttHToTauTau"],
     },
-    # "ggHH_hbbhtt": {
-    #     "id": 18,
-    #     "sample_patterns": ["GGHH_SM"],
-    # },
+    "ggHH_hbbhtt": {
+        "id": 18,
+        "sample_patterns": ["GluGluToHHTo2B2Tau"],
+    },
     "QCD": {
         "id": 19,
         "sample_patterns": [],
