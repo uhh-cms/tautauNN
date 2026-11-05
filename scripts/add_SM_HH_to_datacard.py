@@ -4,14 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import itertools
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 import hist
 import numpy as np
+from tqdm import tqdm
 import uproot
 
 import tautaunn.config as cfg
@@ -45,6 +48,16 @@ def _hist(values, weights, edges, name):
     values[mask] = 1.0e-5
     result.view().variance[mask] = 0.0
     return result
+
+
+def _bin_edges(value):
+    if (
+        isinstance(value, (list, tuple))
+        and len(value) == 2
+        and isinstance(value[0], (list, tuple))
+    ):
+        value = value[0]
+    return sorted(set(value))
 
 
 def _variation_hist(data, nuisance, direction, variable, edges, name, scale):
@@ -205,6 +218,7 @@ def main(
     output_directory=".",
     cache_directory=None,
     skim_systs=("JERup", "JERdown"),
+    n_parallel=4,
 ):
     _spins = list(spins) if isinstance(spins, (tuple, list, set)) else [spins]
     _masses = list(masses) if isinstance(masses, (tuple, list, set)) else [masses]
@@ -234,62 +248,89 @@ def main(
         cache_directory=str(cache_directory),
     ) 
 
+    jobs = []
     for channel in cfg.channels:
         for name, selection in category_factory(channel).items():
-            prefix = f"{year}_{channel}_{name}"
-            categories = {
-                prefix: {"selection": selection, "name": name},
+            category_name = f"{year}_{channel}_{name}"
+            category = {"selection": selection, "name": name}
+            selected = {
+                syst: data[selection(data, year=year)]
+                for syst, data in sample_data.items()
             }
-            for category_name, category in categories.items():
-                for spin, mass in itertools.product(_spins, _masses):
-                    key = f"{category_name}__s{spin}__m{mass}"
-                    if key not in binnings:
-                        continue
-                    edges = sorted(set(binnings[key][0] if len(binnings[key]) == 2 else binnings[key]))
-                    selected = {
-                        syst: data[selection(data, year=year)]
-                        for syst, data in sample_data.items()
-                    }
-                    variable = variable_pattern.format(spin=spin, mass=mass)
-                    hists = _shape_hists(selected, category, variable, edges, year)
-                    nominal = hists[("nominal", "")]
-                    process_name = f"ggHH_{year}_hbbhtt"
-                    card_stem = f"cat_{category_name}_spin_{spin}_mass_{mass}"
-                    source_shapes_path = input_directory / f"shapes_{card_stem}.root"
-                    source_card_path = input_directory / f"datacard_{card_stem}.txt"
-                    shapes_path = output_directory / f"shapes_{card_stem}.root"
-                    card_path = output_directory / f"datacard_{card_stem}.txt"
-                    if not shapes_path.exists():
-                        if not source_shapes_path.exists():
-                            raise FileNotFoundError(f"missing input shapes file {source_shapes_path}")
-                        shutil.copy2(source_shapes_path, shapes_path)
-                    if not card_path.exists():
-                        if not source_card_path.exists():
-                            raise FileNotFoundError(f"missing input datacard {source_card_path}")
-                        shutil.copy2(source_card_path, card_path)
-                    if not shapes_path.exists() or not card_path.exists():
-                        raise FileNotFoundError(f"missing datacard inputs for {category_name}, s{spin}, m{mass}")
-                    with uproot.update(shapes_path) as root_file:
-                        root_file[f"cat_{category_name}/{process_name}"] = nominal
-                        for (nuisance, direction), shape in hists.items():
-                            if nuisance == "nominal":
-                                continue
-                            root_file[
-                                f"cat_{category_name}/{process_name}__{nuisance}{direction.capitalize()}"
-                            ] = shape
-                    shape_names = [
-                        nuisance
-                        for nuisance, direction in hists
-                        if nuisance != "nominal" and direction in {"up", "down"}
-                    ]
-                    _update_card(
-                        card_path,
-                        process_name,
-                        nominal.sum().value,
-                        category,
-                        year,
-                        shape_names,
-                    )
+            for spin, mass in itertools.product(_spins, _masses):
+                key = f"{category_name}__s{spin}__m{mass}"
+                if key not in binnings:
+                    continue
+                edges = _bin_edges(binnings[key])
+                jobs.append((category_name, category, selected, spin, mass, edges))
+
+    def process_card(job):
+        category_name, category, selected, spin, mass, edges = job
+        variable = variable_pattern.format(spin=spin, mass=mass)
+        hists = _shape_hists(selected, category, variable, edges, year)
+        nominal = hists[("nominal", "")]
+        process_name = f"ggHH_{year}_hbbhtt"
+        card_stem = f"cat_{category_name}_spin_{spin}_mass_{mass}"
+        source_shapes_path = input_directory / f"shapes_{card_stem}.root"
+        source_card_path = input_directory / f"datacard_{card_stem}.txt"
+        shapes_path = output_directory / f"shapes_{card_stem}.root"
+        card_path = output_directory / f"datacard_{card_stem}.txt"
+        if not shapes_path.exists():
+            if not source_shapes_path.exists():
+                raise FileNotFoundError(f"missing input shapes file {source_shapes_path}")
+            shutil.copy2(source_shapes_path, shapes_path)
+        if not card_path.exists():
+            if not source_card_path.exists():
+                raise FileNotFoundError(f"missing input datacard {source_card_path}")
+            shutil.copy2(source_card_path, card_path)
+        if not shapes_path.exists() or not card_path.exists():
+            raise FileNotFoundError(f"missing datacard inputs for {category_name}, s{spin}, m{mass}")
+        with uproot.open(shapes_path) as source_file:
+            with tempfile.NamedTemporaryFile(
+                dir=shapes_path.parent,
+                prefix=f".{shapes_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+            try:
+                with uproot.recreate(temporary_path) as root_file:
+                    for key in source_file.keys():
+                        key_without_cycle = key.split(";", 1)[0]
+                        source_object = source_file[key]
+                        if hasattr(source_object, "to_hist"):
+                            root_file[key_without_cycle] = source_object.to_hist()
+                    root_file[f"cat_{category_name}/{process_name}"] = nominal
+                    for (nuisance, direction), shape in hists.items():
+                        if nuisance == "nominal":
+                            continue
+                        root_file[
+                            f"cat_{category_name}/{process_name}__"
+                            f"{nuisance}{direction.capitalize()}"
+                        ] = shape
+                os.replace(temporary_path, shapes_path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+        shape_names = [
+            nuisance
+            for nuisance, direction in hists
+            if nuisance != "nominal" and direction in {"up", "down"}
+        ]
+        _update_card(
+            card_path,
+            process_name,
+            nominal.sum().value,
+            category,
+            year,
+            shape_names,
+        )
+
+    if n_parallel < 1:
+        raise ValueError("n_parallel must be at least 1")
+    with ThreadPoolExecutor(max_workers=n_parallel) as executor:
+        futures = [executor.submit(process_card, job) for job in jobs]
+        for future in tqdm(as_completed(futures), total=len(futures), desc="writing HH shapes"):
+            future.result()
 
 
 if __name__ == "__main__":
@@ -302,5 +343,6 @@ if __name__ == "__main__":
     parser.add_argument("--cache-directory", default=None)
     parser.add_argument("--spins", nargs="+", type=int, default=spins)
     parser.add_argument("--masses", nargs="+", type=int, default=masses)
+    parser.add_argument("--n-parallel", type=int, default=4)
     args = parser.parse_args()
     main(**vars(args))
