@@ -20,7 +20,7 @@ import uproot
 import tautaunn.config as cfg
 from tautaunn.cat_selectors import category_factory
 from tautaunn.nuisances import shape_nuisances, rate_nuisances
-from tautaunn.write_datacards_stack import load_sample_data
+from tautaunn.write_datacards_stack import align_rates_and_parameters, load_sample_data
 
 
 spins = tuple(cfg.spins)
@@ -166,13 +166,23 @@ def _update_card(path, process_name, rate, category, year, shape_names):
     process_lines = [i for i, line in enumerate(lines) if line.split()[:1] == ["process"]]
     if len(process_lines) != 2:
         raise ValueError(f"expected two process lines in {path}")
-    if process_name in lines[process_lines[0]].split():
-        return
-    lines[process_lines[0]] += f"  {process_name}"
-    existing_ids = [int(value) for value in lines[process_lines[1]].split()[1:]]
-    lines[process_lines[1]] += f"  {max(existing_ids) + 1}"
+    process_exists = process_name in lines[process_lines[0]].split()
+    if not process_exists:
+        lines[process_lines[0]] += f"  {process_name}"
+        existing_ids = [int(value) for value in lines[process_lines[1]].split()[1:]]
+        lines[process_lines[1]] += f"  {max(existing_ids) + 1}"
+    bin_line = next(
+        i for i in range(process_lines[0] - 1, -1, -1)
+        if lines[i].split()[:1] == ["bin"] and len(lines[i].split()) > 2
+    )
+    process_count = len(lines[process_lines[0]].split()) - 1
+    bin_fields = lines[bin_line].split()
+    while len(bin_fields) - 1 < process_count:
+        bin_fields.append(bin_fields[1])
+    lines[bin_line] = "  ".join(bin_fields)
     rate_line = next(i for i, line in enumerate(lines) if line.split()[:1] == ["rate"])
-    lines[rate_line] += f"  {rate:.4f}"
+    if not process_exists:
+        lines[rate_line] += f"  {rate:.4f}"
 
     shape_names = set(shape_names)
     parameter_names = set()
@@ -205,6 +215,38 @@ def _update_card(path, process_name, rate, category, year, shape_names):
             len(lines),
         )
         lines[insert_at:insert_at] = missing_parameters
+
+    process_lines = [i for i, line in enumerate(lines) if line.split()[:1] == ["process"]]
+    rate_line = next(i for i, line in enumerate(lines) if line.split()[:1] == ["rate"])
+    bin_line = next(
+        i for i in range(process_lines[0] - 1, -1, -1)
+        if lines[i].split()[:1] == ["bin"] and len(lines[i].split()) > 2
+    )
+    rate_lines = lines[bin_line:rate_line + 1]
+    parameter_indices = [
+        i for i in range(rate_line + 1, len(lines))
+        if len(lines[i].split()) > 1 and lines[i].split()[1] in {"lnN", "shape"}
+    ]
+    parameter_lines = [lines[i] for i in parameter_indices]
+    if parameter_lines:
+        expected_rate_columns = n_existing_processes + 1
+        rate_lines = [
+            "  ".join(line.split()[:expected_rate_columns])
+            for line in rate_lines
+        ]
+        expected_parameter_columns = n_existing_processes + 2
+        parameter_lines = [
+            "  ".join(line.split() + ["-"] * max(0, expected_parameter_columns - len(line.split())))
+            for line in parameter_lines
+        ]
+        parameter_lines = [
+            "  ".join(line.split()[:expected_parameter_columns])
+            for line in parameter_lines
+        ]
+        aligned_rates, aligned_parameters = align_rates_and_parameters(rate_lines, parameter_lines)
+        lines[bin_line:rate_line + 1] = aligned_rates
+        for index, line in zip(parameter_indices, aligned_parameters):
+            lines[index] = line
     path.write_text("\n".join(lines) + "\n")
 
 
